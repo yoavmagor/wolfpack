@@ -51,6 +51,35 @@ const DEV_DIR =
 const SETTINGS_PATH = join(import.meta.dirname, "bridge-settings.json");
 const VERSION = "1.1.0";
 
+// CORS origin allowlist — replaces wildcard "*"
+const ALLOWED_ORIGINS = new Set<string>([
+  `http://localhost:${PORT}`,
+  `http://127.0.0.1:${PORT}`,
+]);
+
+// Extract tailnet suffix (e.g. "tailnet-name.ts.net") from config
+const TAILNET_SUFFIX = (() => {
+  try {
+    const cfg = JSON.parse(readFileSync(join(process.env.HOME ?? "~", ".wolfpack", "config.json"), "utf-8"));
+    const h = cfg.tailscaleHostname as string; // e.g. "machine.tailnet-name.ts.net"
+    const dot = h.indexOf(".");
+    if (dot !== -1) return h.substring(dot + 1); // "tailnet-name.ts.net"
+  } catch {}
+  return "";
+})();
+
+function isAllowedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.has(origin)) return true;
+  // Allow devices on the same tailnet only
+  if (TAILNET_SUFFIX) {
+    try {
+      const url = new URL(origin);
+      if (url.protocol === "https:" && url.hostname.endsWith("." + TAILNET_SUFFIX)) return true;
+    } catch {}
+  }
+  return false;
+}
+
 interface Settings {
   agentCmd: string;
   customCmds?: string[];
@@ -86,25 +115,20 @@ async function tmuxList(): Promise<string[]> {
     const { stdout } = await exec(TMUX, [
       "list-sessions",
       "-F",
-      "#{session_name}:#{pane_current_path}",
+      "#{session_name}|||#{pane_current_path}",
     ]);
+    const SEP = "|||";
     return stdout
       .trim()
       .split("\n")
       .filter(Boolean)
-      .filter((line) => line.split(":").slice(1).join(":").startsWith(DEV_DIR))
-      .map((line) => line.split(":")[0]);
+      .filter((line) => {
+        const idx = line.indexOf(SEP);
+        return idx !== -1 && line.substring(idx + SEP.length).startsWith(DEV_DIR);
+      })
+      .map((line) => line.substring(0, line.indexOf(SEP)));
   } catch {
     return [];
-  }
-}
-
-async function tmuxExists(session: string): Promise<boolean> {
-  try {
-    await exec(TMUX, ["has-session", "-t", session]);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -117,7 +141,7 @@ async function tmuxSend(
 ): Promise<void> {
   await exec(TMUX, ["send-keys", "-l", "-t", session, text]);
   if (!noEnter) {
-    await sleep(100);
+    await sleep(50);
     await exec(TMUX, ["send-keys", "-t", session, "Enter"]);
   }
 }
@@ -142,7 +166,7 @@ async function tmuxResize(
   ]);
 }
 
-async function capturePane(session: string, history = false): Promise<string> {
+async function capturePane(session: string): Promise<string> {
   try {
     const args = ["capture-pane", "-t", session, "-p", "-J"];
     // Always capture some scrollback so the PWA terminal can scroll
@@ -206,14 +230,8 @@ async function isAllowedSession(session: string): Promise<boolean> {
 
 // ── HTTP helpers ──
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
-
 function json(res: ServerResponse, data: unknown, status = 200): void {
-  res.writeHead(status, { "Content-Type": "application/json", ...CORS_HEADERS });
+  res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
 }
 
@@ -263,23 +281,11 @@ const routes: Record<
 > = {
   "GET /": (_req, res) =>
     serveFile(res, "index.html", "text/html; charset=utf-8"),
-  "GET /manifest.json": (req, res) => {
+  "GET /manifest.json": (_req, res) => {
     try {
-      const url = new URL(req.url ?? "/", "http://localhost");
-      const customName = url.searchParams.get("name");
-      const host = (req.headers.host ?? "localhost").replace(/[:.]/g, "-");
       const manifest = JSON.parse(
         readFileSync(join(PUBLIC_DIR, "manifest.json"), "utf-8"),
       );
-      manifest.id = `/?host=${host}`;
-      if (customName) {
-        manifest.name = customName;
-        manifest.short_name = customName;
-      } else {
-        const label = host.split("-").slice(0, -1).join("-") || host;
-        manifest.name = `Wolfpack (${label})`;
-        manifest.short_name = label;
-      }
       res.writeHead(200, { "Content-Type": "application/manifest+json" });
       res.end(JSON.stringify(manifest, null, 2));
     } catch {
@@ -507,8 +513,7 @@ const routes: Record<
     if (!session) return json(res, { error: "missing session param" }, 400);
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
-    const history = url.searchParams.get("history") === "1";
-    const pane = await capturePane(session, history);
+    const pane = await capturePane(session);
     json(res, { pane });
   },
 };
@@ -516,9 +521,24 @@ const routes: Record<
 // ── Server ──
 
 const server = createServer(async (req, res) => {
+  // CORS origin check
+  const origin = req.headers.origin;
+  if (origin) {
+    if (isAllowedOrigin(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Vary", "Origin");
+    } else {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "origin not allowed" }));
+      return;
+    }
+  }
+
   // CORS preflight
   if (req.method === "OPTIONS") {
-    res.writeHead(204, CORS_HEADERS);
+    res.writeHead(204);
     res.end();
     return;
   }
