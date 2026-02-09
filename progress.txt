@@ -376,3 +376,20 @@
 - Kept `#xterm-container` base CSS (still needed for desktop terminal container)
 - Regenerated `public-assets.ts` (6 files embedded)
 - All 410 tests pass
+
+## Replace #xterm-container with styled `<pre>` — DONE
+- Replaced `<div id="xterm-container">` with `<pre id="desktop-terminal">` in HTML
+- Replaced `#xterm-container` CSS rules with `#desktop-terminal` styled `<pre>`:
+  - `background: #0a0a0a`, `color: #e0e0e0` (dark theme)
+  - `font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace`
+  - `font-size: 13px`, `line-height: 1.4`, `padding: 4px 8px`
+  - `overflow-y: auto` for scrollback
+  - `white-space: pre` to preserve spacing
+  - `user-select: text` + `-webkit-user-select: text` for copy support
+  - `display: none` by default (hidden on mobile, shown via JS on desktop)
+  - `flex: 1`, `min-height: 0` for flexbox layout
+- Removed old `#xterm-container pre` sub-rule (no longer needed — element IS the `<pre>`)
+- Updated both JS references: `getElementById("xterm-container")` → `getElementById("desktop-terminal")` in `initXterm()` and `destroyXterm()`
+- Zero `xterm-container` references remain in codebase
+- Regenerated `public-assets.ts` via build script
+- All 410 tests pass

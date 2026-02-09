@@ -767,16 +767,21 @@
         transition: all 0.15s ease;
       }
       .ralph-nav-btn:active { background: #1a1a1a; }
-      #xterm-container {
+      #desktop-terminal {
         display: none;
         flex: 1;
         min-height: 0;
-        background: #0a0a0a;
-      }
-      #xterm-container pre {
-        height: 100%;
         margin: 0;
-        overflow: auto;
+        background: #0a0a0a;
+        color: #e0e0e0;
+        font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+        font-size: 13px;
+        line-height: 1.4;
+        padding: 4px 8px;
+        overflow-y: auto;
+        white-space: pre;
+        user-select: text;
+        -webkit-user-select: text;
       }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/ansi_up@6/ansi_up.min.js"></script>
@@ -872,7 +877,7 @@
         Reconnecting...
       </div>
       <div id="terminal"></div>
-      <div id="xterm-container"></div>
+      <pre id="desktop-terminal"></pre>
       <div id="action-bar" class="visible">
         <button class="action-btn" onclick="sendKey('Enter')">Enter</button>
         <button class="action-btn" onclick="sendKey('Escape')">Esc</button>
@@ -1733,7 +1738,7 @@
 
       function initXterm() {
         if (xtermInstance) return;
-        const container = document.getElementById("xterm-container");
+        const container = document.getElementById("desktop-terminal");
         container.style.display = "flex";
         document.getElementById("terminal").style.display = "none";
         document.getElementById("action-bar").style.display = "none";
@@ -1825,7 +1830,7 @@
           xtermFitAddon = null;
           xtermSearchAddon = null;
         }
-        const container = document.getElementById("xterm-container");
+        const container = document.getElementById("desktop-terminal");
         container.style.display = "none";
         container.innerHTML = "";
         // Restore mobile element defaults
