@@ -393,3 +393,24 @@
 - Zero `xterm-container` references remain in codebase
 - Regenerated `public-assets.ts` via build script
 - All 410 tests pass
+
+## Replace `initXterm()` with `initDesktopTerminal()` — DONE
+- Replaced `initXterm()` with `initDesktopTerminal()` using AnsiUp instead of xterm.js
+- New function:
+  - Shows `#desktop-terminal` (`<pre>`), hides mobile elements (action-bar, input-bar, msg-preview, #terminal)
+  - Creates `AnsiUp` instance with `use_classes: false` (inline styles)
+  - Opens WebSocket to `/ws/terminal?session=X` (protocol-aware: ws/wss)
+  - On open: calculates cols/rows via `calcTermDimensions()` (probe span for char metrics), sends resize message
+  - On message: converts ANSI→HTML via `ansi_up.ansi_to_html()`, sets `pre.innerHTML` (atomic, no flicker)
+  - On close: shows connection status banner
+  - Keyboard listener: maps key events to terminal escape sequences (arrows, ctrl+keys, pgup/pgdn, etc.), sends as `input` messages
+  - Window resize listener: recalculates cols/rows, sends resize via WebSocket
+- Extracted `calcTermDimensions(pre)` helper (same font-probe approach as `resizePane()`, matched to 13px/1.4 line-height)
+- Replaced `destroyXterm()` with `destroyDesktopTerminal()`:
+  - Closes WebSocket, removes keydown + resize listeners, clears `<pre>` content, restores mobile elements
+- Removed all xterm.js state vars (`xtermInstance`, `xtermFitAddon`, `xtermSearchAddon`, `xtermWs`)
+- Added new state vars: `desktopAnsiUp`, `desktopWs`, `desktopResizeHandler`
+- Updated all 5 call sites: openSession, switchSession, back button, closeSession, createSessionWithAgent
+- Simplified search functions: removed `xtermSearchAddon` branches (desktop terminal is a `<pre>` DOM node, so DOM-based search from mobile works for both — search will be addressed separately in Phase 2)
+- Regenerated `public-assets.ts`
+- All 410 tests pass

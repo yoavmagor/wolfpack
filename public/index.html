@@ -966,10 +966,9 @@
       let currentRalphProject = null;
       let ralphLogPollTimer = null;
       let currentRalphPlanFile = "";
-      let xtermInstance = null;
-      let xtermFitAddon = null;
-      let xtermSearchAddon = null;
-      let xtermWs = null;
+      let desktopAnsiUp = null;
+      let desktopWs = null;
+      let desktopResizeHandler = null;
       let useDesktopTerminal = false;
 
       function isDesktop() {
@@ -1113,7 +1112,7 @@
           back.style.display = "block";
           back.onclick = () => {
             if (useDesktopTerminal) {
-              destroyXterm();
+              destroyDesktopTerminal();
             } else {
               stopPolling();
             }
@@ -1583,7 +1582,7 @@
         useDesktopTerminal = isDesktop() && !machineUrl;
         showView("terminal");
         if (useDesktopTerminal) {
-          initXterm();
+          initDesktopTerminal();
         } else {
           document.getElementById("terminal").textContent = "";
           resizePane();
@@ -1716,7 +1715,7 @@
             await loadSessions();
             loadSessionSwitcher();
             if (useDesktopTerminal) {
-              initXterm();
+              initDesktopTerminal();
             } else {
               resizePane();
               startPolling();
@@ -1734,47 +1733,44 @@
         }
       }
 
-      // ── Desktop Terminal (xterm.js + WebSocket) ──
+      // ── Desktop Terminal (AnsiUp + WebSocket) ──
 
-      function initXterm() {
-        if (xtermInstance) return;
-        const container = document.getElementById("desktop-terminal");
-        container.style.display = "flex";
+      function calcTermDimensions(pre) {
+        const probe = document.createElement("span");
+        probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-size:13px;line-height:1.4;font-family:inherit';
+        probe.textContent = "X";
+        pre.appendChild(probe);
+        const charW = probe.offsetWidth;
+        const charH = probe.offsetHeight;
+        pre.removeChild(probe);
+        if (!charW || !charH) return null;
+        const cols = Math.floor(pre.clientWidth / charW);
+        const rows = Math.floor(pre.clientHeight / charH);
+        return (cols > 0 && rows > 0) ? { cols, rows } : null;
+      }
+
+      function initDesktopTerminal() {
+        if (desktopWs) return;
+        const pre = document.getElementById("desktop-terminal");
+        pre.style.display = "block";
+        pre.innerHTML = "";
         document.getElementById("terminal").style.display = "none";
         document.getElementById("action-bar").style.display = "none";
         document.getElementById("input-bar").style.display = "none";
         document.getElementById("msg-preview").style.display = "none";
 
-        const term = new Terminal({
-          theme: { background: "#0a0a0a", foreground: "#e0e0e0" },
-          fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
-          fontSize: 13,
-          lineHeight: 1.3,
-          cursorBlink: false,
-          cursorStyle: "bar",
-          cursorInactiveStyle: "none",
-          allowProposedApi: true,
-        });
-        const fitAddon = new FitAddon.FitAddon();
-        term.loadAddon(fitAddon);
-        const searchAddon = new SearchAddon.SearchAddon();
-        term.loadAddon(searchAddon);
-
-        term.open(container);
-        fitAddon.fit();
-        xtermInstance = term;
-        xtermFitAddon = fitAddon;
-        xtermSearchAddon = searchAddon;
+        const ansi = new AnsiUp();
+        ansi.use_classes = false;
+        desktopAnsiUp = ansi;
 
         // Connect WebSocket
         const proto = location.protocol === "https:" ? "wss:" : "ws:";
         const wsUrl = proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(currentSession);
         const ws = new WebSocket(wsUrl);
-        xtermWs = ws;
+        desktopWs = ws;
 
         ws.onopen = () => {
-          // Send initial resize
-          const dims = fitAddon.proposeDimensions();
+          const dims = calcTermDimensions(pre);
           if (dims) {
             ws.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
           }
@@ -1784,9 +1780,7 @@
           try {
             const msg = JSON.parse(ev.data);
             if (msg.type === "output") {
-              // \x1b[?2026h = begin synchronized update (buffer, don't render)
-              // \x1b[?2026l = end synchronized update (render all at once)
-              term.write("\x1b[?2026h\x1b[H" + msg.data + "\x1b[?25l\x1b[?2026l");
+              pre.innerHTML = ansi.ansi_to_html(msg.data);
             }
           } catch {}
         };
@@ -1796,43 +1790,67 @@
           if (statusEl && currentView === "terminal") statusEl.style.display = "block";
         };
 
-        // xterm input → WebSocket
-        term.onData((data) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "input", data }));
+        // Keyboard input → WebSocket
+        const onKeyDown = (e) => {
+          if (!desktopWs || desktopWs.readyState !== WebSocket.OPEN) return;
+          if (searchActive) return;
+          let data = "";
+          if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+            data = e.key;
+          } else if (e.key === "Enter") { data = "\r";
+          } else if (e.key === "Backspace") { data = "\x7f";
+          } else if (e.key === "Tab") { data = "\t"; e.preventDefault();
+          } else if (e.key === "Escape") { data = "\x1b";
+          } else if (e.key === "ArrowUp") { data = "\x1b[A";
+          } else if (e.key === "ArrowDown") { data = "\x1b[B";
+          } else if (e.key === "ArrowRight") { data = "\x1b[C";
+          } else if (e.key === "ArrowLeft") { data = "\x1b[D";
+          } else if (e.key === "Home") { data = "\x1b[H";
+          } else if (e.key === "End") { data = "\x1b[F";
+          } else if (e.key === "PageUp") { data = "\x1b[5~";
+          } else if (e.key === "PageDown") { data = "\x1b[6~";
+          } else if (e.key === "Delete") { data = "\x1b[3~";
+          } else if (e.ctrlKey && e.key.length === 1) {
+            const code = e.key.toLowerCase().charCodeAt(0) - 96;
+            if (code >= 0 && code <= 31) data = String.fromCharCode(code);
           }
-        });
+          if (data) {
+            e.preventDefault();
+            desktopWs.send(JSON.stringify({ type: "input", data }));
+          }
+        };
+        document.addEventListener("keydown", onKeyDown);
+        pre._onKeyDown = onKeyDown;
 
-        // Handle resize
+        // Window resize → recalculate cols/rows
         const onResize = () => {
-          if (!xtermFitAddon || !xtermWs) return;
-          xtermFitAddon.fit();
-          const dims = xtermFitAddon.proposeDimensions();
-          if (dims && xtermWs.readyState === WebSocket.OPEN) {
-            xtermWs.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
+          if (!desktopWs || desktopWs.readyState !== WebSocket.OPEN) return;
+          const dims = calcTermDimensions(pre);
+          if (dims) {
+            desktopWs.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
           }
         };
         window.addEventListener("resize", onResize);
-        term._onResizeHandler = onResize;
+        desktopResizeHandler = onResize;
       }
 
-      function destroyXterm() {
-        if (xtermWs) {
-          xtermWs.close();
-          xtermWs = null;
+      function destroyDesktopTerminal() {
+        if (desktopWs) {
+          desktopWs.close();
+          desktopWs = null;
         }
-        if (xtermInstance) {
-          if (xtermInstance._onResizeHandler) {
-            window.removeEventListener("resize", xtermInstance._onResizeHandler);
-          }
-          xtermInstance.dispose();
-          xtermInstance = null;
-          xtermFitAddon = null;
-          xtermSearchAddon = null;
+        if (desktopResizeHandler) {
+          window.removeEventListener("resize", desktopResizeHandler);
+          desktopResizeHandler = null;
         }
-        const container = document.getElementById("desktop-terminal");
-        container.style.display = "none";
-        container.innerHTML = "";
+        const pre = document.getElementById("desktop-terminal");
+        if (pre._onKeyDown) {
+          document.removeEventListener("keydown", pre._onKeyDown);
+          pre._onKeyDown = null;
+        }
+        pre.style.display = "none";
+        pre.innerHTML = "";
+        desktopAnsiUp = null;
         // Restore mobile element defaults
         document.getElementById("terminal").style.display = "";
         document.getElementById("action-bar").style.display = "";
@@ -2013,7 +2031,7 @@
         if (name === currentSession && machineUrl === currentMachine) return;
         // Tear down current mode
         if (useDesktopTerminal) {
-          destroyXterm();
+          destroyDesktopTerminal();
         } else {
           stopPolling();
         }
@@ -2021,7 +2039,7 @@
         currentMachine = machineUrl;
         useDesktopTerminal = isDesktop() && !machineUrl;
         if (useDesktopTerminal) {
-          initXterm();
+          initDesktopTerminal();
         } else {
           document.getElementById("terminal").textContent = "";
           resizePane();
@@ -2325,30 +2343,18 @@
         document.getElementById("search-bar").classList.remove("visible");
         document.getElementById("search-input").value = "";
         document.getElementById("search-count").textContent = "";
-        if (useDesktopTerminal && xtermSearchAddon) {
-          xtermSearchAddon.clearDecorations();
-        } else {
-          const term = document.getElementById("terminal");
-          if (lastRawPane) term.textContent = lastRawPane;
-        }
+        const term = document.getElementById("terminal");
+        if (lastRawPane) term.textContent = lastRawPane;
       }
 
       function doSearch() {
         searchTerm = document.getElementById("search-input").value;
         if (!searchTerm) {
           document.getElementById("search-count").textContent = "";
-          if (useDesktopTerminal && xtermSearchAddon) {
-            xtermSearchAddon.clearDecorations();
-          } else {
-            const term = document.getElementById("terminal");
-            if (lastRawPane) term.textContent = lastRawPane;
-          }
+          const term = document.getElementById("terminal");
+          if (lastRawPane) term.textContent = lastRawPane;
           searchMatches = [];
           searchIndex = -1;
-          return;
-        }
-        if (useDesktopTerminal && xtermSearchAddon) {
-          xtermSearchAddon.findNext(searchTerm);
           return;
         }
         searchIndex = 0;
@@ -2377,20 +2383,12 @@
       }
 
       function nextMatch() {
-        if (useDesktopTerminal && xtermSearchAddon) {
-          if (searchTerm) xtermSearchAddon.findNext(searchTerm);
-          return;
-        }
         if (searchMatches.length === 0) return;
         searchIndex = (searchIndex + 1) % searchMatches.length;
         applySearchHighlights();
       }
 
       function prevMatch() {
-        if (useDesktopTerminal && xtermSearchAddon) {
-          if (searchTerm) xtermSearchAddon.findPrevious(searchTerm);
-          return;
-        }
         if (searchMatches.length === 0) return;
         searchIndex = (searchIndex - 1 + searchMatches.length) % searchMatches.length;
         applySearchHighlights();
@@ -2400,7 +2398,7 @@
         const session = currentSession;
         const machine = currentMachine;
         if (useDesktopTerminal) {
-          destroyXterm();
+          destroyDesktopTerminal();
         } else {
           stopPolling();
         }
