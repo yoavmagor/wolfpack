@@ -33,7 +33,7 @@ Replace the `<div id="xterm-container">` with a `<pre id="desktop-terminal">` el
 - `user-select: text` so users can copy text
 - Hide on mobile, show on desktop
 
-### 3. Replace `initXterm()` with `initDesktopTerminal()`
+### ~~3. Replace `initXterm()` with `initDesktopTerminal()`~~
 New function that:
 - Shows `#desktop-terminal`, hides mobile elements (action-bar, input-bar, msg-preview, #terminal)
 - Creates `AnsiUp` instance with `use_classes: false` (inline styles)
@@ -44,14 +44,14 @@ New function that:
 - Attach keyboard listener (see Phase 2)
 - Attach window resize listener: recalculate cols/rows, send resize via WebSocket
 
-### 4. Replace `destroyXterm()` with `destroyDesktopTerminal()`
+### ~~4. Replace `destroyXterm()` with `destroyDesktopTerminal()`~~
 - Close WebSocket
 - Remove keyboard listener
 - Remove resize listener
 - Hide `#desktop-terminal`, restore mobile elements
 - Clear innerHTML
 
-### 5. Update all callsites
+### ~~5. Update all callsites~~
 Replace all references to `initXterm()` → `initDesktopTerminal()`, `destroyXterm()` → `destroyDesktopTerminal()`. Update variable names: remove `xtermInstance`, `xtermFitAddon`, `xtermSearchAddon`, `xtermWs` — replace with `desktopWs`, `desktopAnsi`, etc.
 
 ## Phase 2: Keyboard capture

@@ -414,3 +414,25 @@
 - Simplified search functions: removed `xtermSearchAddon` branches (desktop terminal is a `<pre>` DOM node, so DOM-based search from mobile works for both — search will be addressed separately in Phase 2)
 - Regenerated `public-assets.ts`
 - All 410 tests pass
+
+## Replace `destroyXterm()` with `destroyDesktopTerminal()` — ALREADY DONE (no-op)
+- Task 4 requested but `destroyDesktopTerminal()` already exists at `public/index.html:1837-1858`
+- Implemented as part of the `initDesktopTerminal()` refactor (previous iteration)
+- Verified all 5 spec points:
+  1. Close WebSocket — `desktopWs.close()` ✓
+  2. Remove keyboard listener — `removeEventListener("keydown", pre._onKeyDown)` ✓
+  3. Remove resize listener — `removeEventListener("resize", desktopResizeHandler)` ✓
+  4. Hide `#desktop-terminal`, restore mobile elements — `pre.style.display = "none"` + restores terminal/action-bar/input-bar ✓
+  5. Clear innerHTML — `pre.innerHTML = ""` ✓
+- Zero references to `destroyXterm` remain in code (only in plan doc)
+- 3 call sites wired: back button (line 1115), switchSession (line 2034), closeSession (line 2401)
+- Struck through plan item §4 in `desktop_terminal_plan.md`
+- All 410 tests pass
+
+## Update all callsites (task 5) — ALREADY DONE (no-op)
+- Task 5 requested updating all callsites from xterm → desktop terminal naming
+- Grep confirms ZERO references to `initXterm`, `destroyXterm`, `xtermInstance`, `xtermFitAddon`, `xtermSearchAddon`, `xtermWs` in any .ts/.js/.html file
+- All migrations were completed in commit 182a1e4 (replace initXterm with initDesktopTerminal)
+- Current state: `desktopWs`, `desktopAnsiUp`, `desktopResizeHandler` as globals, `initDesktopTerminal()` + `destroyDesktopTerminal()` at all 5+ call sites
+- Struck through plan item §5 in `desktop_terminal_plan.md`
+- All 410 tests pass
