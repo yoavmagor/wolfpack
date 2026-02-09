@@ -319,3 +319,41 @@
 - Modified `closeSession()`: same desktop/mobile teardown branching
 - Modified `createSessionWithAgent()`: sets useDesktopTerminal flag, branches init
 - Desktop mode only activates for local sessions (not remote/machineUrl) since WebSocket endpoint is local-only
+
+## Phase 2d: xterm.js initialization — ALREADY DONE (no-op)
+- Task 2d requested initXterm() implementation, but it already exists at public/index.html:1734-1806 (commit 568b7dd)
+- Verified all spec points implemented:
+  - Terminal config: cursorBlink, fontSize 13, SF Mono/Fira Code, dark theme ✓
+  - term.open(#xterm-container) ✓
+  - WebSocket connection to /ws/terminal?session=X ✓
+  - server→xterm: ws.onmessage → term.reset() + term.write() ✓
+  - xterm→server: term.onData → ws.send({type:"input"}) ✓
+  - resize: term resize → ws.send({type:"resize"}) + window resize → fitAddon.fit() ✓
+  - FitAddon loaded for auto-sizing ✓
+- Additional features beyond spec: ws/wss protocol detection, initial resize on open, destroyXterm() cleanup, reconnect status indicator
+- All 410 tests pass
+
+## Phase 2e: Output strategy (reset+write) — ALREADY DONE (no-op)
+- Task 2e described the output strategy: send full capture-pane output, use `term.reset()` + `term.write()` on each update
+- Server side already implements this at `serve.ts:1002-1047`:
+  - 100ms polling via `capturePane(session)`
+  - Diff check: only sends when `pane !== prev` (string equality)
+  - Sends `{ type: "output", data: pane }` with full pane content
+- Client side already implements this at `public/index.html:1773-1781`:
+  - `ws.onmessage` handler: `term.reset()` then `term.write(msg.data)`
+- No changes needed — strategy fully implemented in commits 0eefa31 + 568b7dd
+
+## Phase 2f: Search on desktop (xterm SearchAddon) — DONE
+- SearchAddon CDN script was already loaded (`@xterm/addon-search@0`) but never instantiated
+- Added `xtermSearchAddon` global variable alongside existing `xtermInstance`, `xtermFitAddon`, `xtermWs`
+- In `initXterm()`: instantiate `new SearchAddon.SearchAddon()`, load onto terminal via `term.loadAddon()`
+- In `destroyXterm()`: null out `xtermSearchAddon` reference (disposed with terminal)
+- Modified search functions to branch on `useDesktopTerminal && xtermSearchAddon`:
+  - `doSearch()`: calls `xtermSearchAddon.findNext(searchTerm)` on desktop, falls back to DOM regex on mobile
+  - `nextMatch()`: calls `xtermSearchAddon.findNext(searchTerm)` on desktop
+  - `prevMatch()`: calls `xtermSearchAddon.findPrevious(searchTerm)` on desktop
+  - `closeSearch()`: calls `xtermSearchAddon.clearDecorations()` on desktop, restores `textContent` on mobile
+- Search bar UI (input, prev/next/close buttons) unchanged — works as overlay for both modes
+- DOM-based search preserved for mobile (no xterm instance on mobile)
+- Regenerated `public-assets.ts` (6 files embedded)
+- All 410 tests pass

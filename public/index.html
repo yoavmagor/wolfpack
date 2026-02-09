@@ -964,6 +964,7 @@
       let currentRalphPlanFile = "";
       let xtermInstance = null;
       let xtermFitAddon = null;
+      let xtermSearchAddon = null;
       let xtermWs = null;
       let useDesktopTerminal = false;
 
@@ -1750,11 +1751,14 @@
         });
         const fitAddon = new FitAddon.FitAddon();
         term.loadAddon(fitAddon);
+        const searchAddon = new SearchAddon.SearchAddon();
+        term.loadAddon(searchAddon);
 
         term.open(container);
         fitAddon.fit();
         xtermInstance = term;
         xtermFitAddon = fitAddon;
+        xtermSearchAddon = searchAddon;
 
         // Connect WebSocket
         const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -1817,6 +1821,7 @@
           xtermInstance.dispose();
           xtermInstance = null;
           xtermFitAddon = null;
+          xtermSearchAddon = null;
         }
         const container = document.getElementById("xterm-container");
         container.style.display = "none";
@@ -2313,18 +2318,30 @@
         document.getElementById("search-bar").classList.remove("visible");
         document.getElementById("search-input").value = "";
         document.getElementById("search-count").textContent = "";
-        const term = document.getElementById("terminal");
-        if (lastRawPane) term.textContent = lastRawPane;
+        if (useDesktopTerminal && xtermSearchAddon) {
+          xtermSearchAddon.clearDecorations();
+        } else {
+          const term = document.getElementById("terminal");
+          if (lastRawPane) term.textContent = lastRawPane;
+        }
       }
 
       function doSearch() {
         searchTerm = document.getElementById("search-input").value;
         if (!searchTerm) {
           document.getElementById("search-count").textContent = "";
-          const term = document.getElementById("terminal");
-          if (lastRawPane) term.textContent = lastRawPane;
+          if (useDesktopTerminal && xtermSearchAddon) {
+            xtermSearchAddon.clearDecorations();
+          } else {
+            const term = document.getElementById("terminal");
+            if (lastRawPane) term.textContent = lastRawPane;
+          }
           searchMatches = [];
           searchIndex = -1;
+          return;
+        }
+        if (useDesktopTerminal && xtermSearchAddon) {
+          xtermSearchAddon.findNext(searchTerm);
           return;
         }
         searchIndex = 0;
@@ -2353,12 +2370,20 @@
       }
 
       function nextMatch() {
+        if (useDesktopTerminal && xtermSearchAddon) {
+          if (searchTerm) xtermSearchAddon.findNext(searchTerm);
+          return;
+        }
         if (searchMatches.length === 0) return;
         searchIndex = (searchIndex + 1) % searchMatches.length;
         applySearchHighlights();
       }
 
       function prevMatch() {
+        if (useDesktopTerminal && xtermSearchAddon) {
+          if (searchTerm) xtermSearchAddon.findPrevious(searchTerm);
+          return;
+        }
         if (searchMatches.length === 0) return;
         searchIndex = (searchIndex - 1 + searchMatches.length) % searchMatches.length;
         applySearchHighlights();
