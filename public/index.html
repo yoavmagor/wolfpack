@@ -161,12 +161,6 @@
         flex: 1;
         min-width: 0;
       }
-      .card-sub {
-        font-size: 12px;
-        color: #333;
-        margin-left: auto;
-      }
-
       .new-btn {
         background: none;
         border: 1px solid #00ff41;
@@ -583,6 +577,196 @@
         -webkit-tap-highlight-color: transparent;
       }
       .machine-remove-btn:active { color: #ff4444; }
+
+      /* Ralph loop styles */
+      .ralph-card {
+        background: #111;
+        border: 1px solid #222;
+        border-radius: 2px;
+        padding: 12px 14px;
+        margin-bottom: 6px;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        transition: all 0.15s ease;
+      }
+      .ralph-card.running { border-left: 3px solid #00ff41; }
+      .ralph-card.cleanup { border-left: 3px solid #3498db; }
+      .ralph-card.done { border-left: 3px solid #00ff41; }
+      .ralph-card.limit { border-left: 3px solid #ff6600; }
+      .ralph-card.idle { border-left: 3px solid #333; }
+      .ralph-card:active {
+        background: #1a1a1a;
+        border-top-color: #9b59b6;
+        border-right-color: #9b59b6;
+        border-bottom-color: #9b59b6;
+      }
+      .ralph-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .ralph-card-name {
+        font-size: 14px;
+        color: #e0e0e0;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .ralph-progress {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .ralph-bar {
+        flex: 1;
+        height: 4px;
+        background: #222;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .ralph-bar-fill {
+        height: 100%;
+        border-radius: 2px;
+        transition: width 0.3s ease;
+      }
+      .ralph-bar-fill.running { background: #00ff41; }
+      .ralph-bar-fill.cleanup { background: #3498db; }
+      .ralph-bar-fill.done { background: #00ff41; }
+      .ralph-bar-fill.limit { background: #ff6600; }
+      .ralph-bar-fill.idle { background: #333; }
+      .ralph-iter {
+        font-size: 11px;
+        color: #666;
+        white-space: nowrap;
+      }
+      .ralph-status {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-weight: bold;
+        padding: 2px 6px;
+        border-radius: 2px;
+      }
+      .ralph-status.running { color: #00ff41; background: #00ff4115; }
+      .ralph-status.cleanup { color: #3498db; background: #3498db15; }
+      .ralph-status.done { color: #00ff41; background: #00ff4115; }
+      .ralph-status.idle { color: #555; background: #55555515; }
+      .ralph-status.limit { color: #ff6600; background: #ff660015; }
+      .ralph-status.failed { color: #cc3333; }
+      .dot.purple {
+        background: #9b59b6;
+        box-shadow: 0 0 6px #9b59b680;
+        animation: dot-pulse 1.5s ease-in-out infinite;
+      }
+      .ralph-last-output {
+        font-size: 11px;
+        color: #555;
+        margin-top: 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .ralph-detail-header {
+        padding: 12px 14px;
+        border-bottom: 1px solid #222;
+      }
+      .ralph-log {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px 14px;
+        font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+        font-size: 11px;
+        color: #888;
+        white-space: pre-wrap;
+        word-break: break-all;
+        -webkit-overflow-scrolling: touch;
+      }
+      .ralph-actions {
+        display: flex;
+        gap: 8px;
+        padding: 10px 14px;
+        border-top: 1px solid #222;
+      }
+      .ralph-actions button {
+        flex: 1;
+        padding: 10px;
+        border: 1px solid #333;
+        border-radius: 2px;
+        background: #111;
+        color: #b0b0b0;
+        font-size: 13px;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .ralph-actions button:active { background: #1a1a1a; }
+      .ralph-actions button.danger { border-color: #cc3333; color: #cc3333; }
+      .ralph-actions button.danger:active { background: #1a0a0a; }
+      .ralph-start-form {
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .ralph-start-form label {
+        font-size: 11px;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .ralph-start-form select,
+      .ralph-start-form input {
+        width: 100%;
+        padding: 10px;
+        background: #111;
+        border: 1px solid #333;
+        border-radius: 2px;
+        color: #e0e0e0;
+        font-size: 14px;
+        box-sizing: border-box;
+      }
+      .ralph-start-form select:focus,
+      .ralph-start-form input:focus {
+        border-color: #9b59b6;
+        outline: none;
+      }
+      .ralph-launch-btn {
+        padding: 12px;
+        background: #9b59b6;
+        border: none;
+        border-radius: 2px;
+        color: #fff;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .ralph-launch-btn:active { background: #8e44ad; }
+      .ralph-empty {
+        text-align: center;
+        color: #444;
+        padding: 40px 14px;
+        font-size: 13px;
+      }
+      .ralph-nav-btn {
+        background: none;
+        border: 1px solid #9b59b6;
+        border-radius: 2px;
+        color: #b0b0b0;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 6px;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-tap-highlight-color: transparent;
+        transition: all 0.15s ease;
+      }
+      .ralph-nav-btn:active { background: #1a1a1a; }
     </style>
   </head>
   <body>
@@ -605,6 +789,7 @@
         </div>
       </div>
       <div class="header-right">
+        <button class="ralph-nav-btn" id="ralph-btn" onclick="showView('ralph')" style="display:none">&#129355;</button>
         <button class="search-btn" id="search-btn" onclick="toggleSearch()">&#128269;</button>
         <button class="settings-gear" id="gear-btn" onclick="showSettings()">&#9881;</button>
       </div>
@@ -644,14 +829,6 @@
           <div id="machines-list"></div>
           <button onclick="discoverMachines()" style="margin-top:12px;background:none;border:1px solid #00ff41;border-radius:2px;padding:10px 20px;color:#00ff41;font-size:13px;font-family:inherit;text-transform:uppercase;letter-spacing:1px;cursor:pointer;transition:all 0.15s ease;width:100%">Discover Tailnet</button>
           <div id="discover-status" style="margin-top:6px;font-size:11px;color:#555"></div>
-        </div>
-        <div class="settings-section">
-          <div class="settings-label">Claude Config (~/.claude/CLAUDE.md)</div>
-          <div id="claude-config-preview" style="background:#0a0a0a;border:1px solid #222;border-radius:2px;padding:10px;font-size:11px;color:#888;max-height:200px;overflow-y:auto;white-space:pre-wrap;margin-bottom:12px">Loading...</div>
-          <div class="settings-label">Push to machines</div>
-          <div id="claude-config-machines" style="margin-bottom:12px"></div>
-          <button onclick="pushClaudeConfig()" style="background:none;border:1px solid #00ff41;border-radius:2px;padding:10px 20px;color:#00ff41;font-size:13px;font-family:inherit;text-transform:uppercase;letter-spacing:1px;cursor:pointer;transition:all 0.15s ease">Push Selected</button>
-          <div id="claude-config-status" style="margin-top:8px;font-size:11px;color:#555"></div>
         </div>
       </div>
     </div>
@@ -705,6 +882,60 @@
       <div id="msg-preview"></div>
     </div>
 
+    <!-- Ralph loops list view -->
+    <div id="ralph-view" class="view">
+      <div id="ralph-list" class="list"></div>
+      <button class="ralph-launch-btn" onclick="showView('ralph-start')">+ Start Ralph Loop</button>
+    </div>
+
+    <!-- Ralph detail view -->
+    <div id="ralph-detail-view" class="view">
+      <div id="ralph-detail-header" class="ralph-detail-header"></div>
+      <pre id="ralph-log" class="ralph-log"></pre>
+      <div id="ralph-actions" class="ralph-actions"></div>
+    </div>
+
+    <!-- Ralph start form view -->
+    <div id="ralph-start-view" class="view">
+      <div class="ralph-start-form">
+        <label for="ralph-project-select">Project</label>
+        <select id="ralph-project-select"></select>
+
+        <label for="ralph-iterations-input">Iterations</label>
+        <input
+          id="ralph-iterations-input"
+          type="number"
+          min="1"
+          max="50"
+          value="5"
+          autocomplete="off"
+        />
+
+        <label for="ralph-agent-select">Agent</label>
+        <select id="ralph-agent-select">
+          <option value="claude">claude</option>
+          <option value="codex">codex</option>
+          <option value="gemini">gemini</option>
+        </select>
+
+        <label for="ralph-plan-select">Plan file</label>
+        <select id="ralph-plan-select"></select>
+
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="ralph-branch-toggle" onchange="toggleBranchFields()" style="width:auto;accent-color:#9b59b6" />
+          <label for="ralph-branch-toggle" style="margin:0;cursor:pointer">New branch</label>
+        </div>
+        <div id="ralph-branch-fields" style="display:none;flex-direction:column;gap:12px">
+          <label for="ralph-branch-name">Branch name</label>
+          <input id="ralph-branch-name" type="text" placeholder="feature/my-branch" autocomplete="off" autocorrect="off" autocapitalize="off" />
+          <label for="ralph-source-branch">Branch from</label>
+          <select id="ralph-source-branch"></select>
+        </div>
+
+        <button class="ralph-launch-btn" onclick="startRalph()">Launch Ralph</button>
+      </div>
+    </div>
+
     <script>
       let currentSession = null;
       let currentMachine = ""; // "" = self, URL string = remote
@@ -713,6 +944,10 @@
       let fastPoll = false;
       let allSessions = [];
       let sessionRefreshTimer = null;
+      let ralphRefreshTimer = null;
+      let currentRalphProject = null;
+      let ralphLogPollTimer = null;
+      let currentRalphPlanFile = "";
 
       // ── Machine registry ──
 
@@ -765,6 +1000,11 @@
       async function api(path, opts, machineUrl) {
         const base = machineUrl ? machineUrl + "/api" : "/api";
         const res = await fetch(base + path, opts);
+        if (!res.ok) {
+          const body = await res.text();
+          try { return JSON.parse(body); } catch {}
+          throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+        }
         return res.json();
       }
 
@@ -779,6 +1019,7 @@
         const title = document.getElementById("header-title");
 
         const gear = document.getElementById("gear-btn");
+        const ralphBtn = document.getElementById("ralph-btn");
 
         const switcher = document.getElementById("session-switcher");
         const wolfIcon = document.getElementById("wolf-icon");
@@ -788,17 +1029,28 @@
         document.getElementById("search-btn").style.display = "none";
         document.getElementById("header-machine-label").style.display = "none";
         headerCenter.style.transform = "";
+        ralphBtn.style.display = "none";
 
         // Stop session auto-refresh when leaving sessions view
         if (sessionRefreshTimer) {
           clearInterval(sessionRefreshTimer);
           sessionRefreshTimer = null;
         }
+        // Stop ralph timers when leaving ralph views
+        if (ralphRefreshTimer) {
+          clearInterval(ralphRefreshTimer);
+          ralphRefreshTimer = null;
+        }
+        if (ralphLogPollTimer) {
+          clearInterval(ralphLogPollTimer);
+          ralphLogPollTimer = null;
+        }
 
         if (name === "sessions") {
           back.style.display = "none";
           back.onclick = null;
           gear.style.display = "";
+          ralphBtn.style.display = "";
           title.textContent = "wolfpack";
           wolfIcon.style.display = "";
           // Auto-refresh session list every 5s
@@ -855,6 +1107,296 @@
             hml.style.display = "";
           }
           loadSessionSwitcher();
+        } else if (name === "ralph") {
+          back.style.display = "block";
+          back.onclick = () => {
+            showView("sessions");
+            loadSessions();
+          };
+          gear.style.display = "none";
+          title.textContent = "ralph loops";
+          wolfIcon.style.display = "none";
+          loadRalphLoops();
+          ralphRefreshTimer = setInterval(loadRalphLoops, 3000);
+        } else if (name === "ralph-detail") {
+          back.style.display = "block";
+          back.onclick = () => {
+            showView("ralph");
+          };
+          gear.style.display = "none";
+          title.textContent = currentRalphProject || "ralph";
+          wolfIcon.style.display = "none";
+          refreshRalphDetail();
+          ralphLogPollTimer = setInterval(refreshRalphDetail, 2000);
+        } else if (name === "ralph-start") {
+          back.style.display = "block";
+          back.onclick = () => {
+            showView("ralph");
+          };
+          gear.style.display = "none";
+          title.textContent = "start ralph";
+          wolfIcon.style.display = "none";
+          loadRalphStartForm();
+        }
+      }
+
+      // ── Ralph Loop Functions ──
+
+      async function loadRalphLoops() {
+        const el = document.getElementById("ralph-list");
+        try {
+          const data = await api("/ralph");
+          const loops = data.loops || [];
+          if (loops.length === 0) {
+            el.innerHTML = '<div class="ralph-empty">no ralph loops detected</div>';
+            return;
+          }
+          // sort: active first, then by started desc
+          loops.sort((a, b) => {
+            if (a.active !== b.active) return a.active ? -1 : 1;
+            return (b.started || "").localeCompare(a.started || "");
+          });
+          el.innerHTML = loops.map(loop => {
+            const hitLimit = !loop.active && !loop.completed && loop.finished;
+            const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
+            const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
+            const dotClass = loop.active ? "purple" : "gray";
+            const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
+            const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
+            const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
+            const lastOut = loop.lastOutput ? '<div class="ralph-last-output">' + esc(loop.lastOutput) + '</div>' : '';
+            return '<div class="ralph-card ' + status + '" onclick="openRalphDetail(\'' + escAttr(loop.project) + '\')">' +
+              '<div class="ralph-card-header">' +
+                '<span class="ralph-card-name"><span class="dot ' + dotClass + '"></span>' + esc(loop.project) + '</span>' +
+                '<span class="ralph-status ' + status + '">' + statusLabel + '</span>' +
+                '<button class="kill-btn" onclick="dismissRalph(\'' + escAttr(loop.project) + '\', event)">&times;</button>' +
+              '</div>' +
+              '<div class="ralph-progress">' +
+                '<div class="ralph-bar"><div class="ralph-bar-fill ' + status + '" style="width:' + taskPct + '%"></div></div>' +
+                '<span class="ralph-iter">' + taskLabel + '</span>' +
+              '</div>' +
+              (iterLabel ? '<div class="ralph-iter" style="text-align:right;margin-top:2px">' + iterLabel + '</div>' : '') +
+              lastOut +
+            '</div>';
+          }).join("");
+        } catch (e) {
+          el.innerHTML = '<div class="ralph-empty">failed to load ralph loops</div>';
+        }
+      }
+
+      function openRalphDetail(project) {
+        currentRalphProject = project;
+        showView("ralph-detail");
+      }
+
+      async function refreshRalphDetail() {
+        if (!currentRalphProject) return;
+        const header = document.getElementById("ralph-detail-header");
+        const logEl = document.getElementById("ralph-log");
+        const actions = document.getElementById("ralph-actions");
+        try {
+          const data = await api("/ralph");
+          const loop = (data.loops || []).find(l => l.project === currentRalphProject);
+          if (!loop) {
+            header.innerHTML = '<span class="ralph-status failed">NOT FOUND</span>';
+            logEl.textContent = "no ralph log for this project";
+            actions.innerHTML = '';
+            return;
+          }
+          const hitLimit = !loop.active && !loop.completed && loop.finished;
+          const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
+          const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
+          const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
+          const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
+          const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
+          header.innerHTML =
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+              '<span class="ralph-status ' + status + '">' + statusLabel + '</span>' +
+              '<div style="display:flex;gap:12px">' +
+                '<span class="ralph-iter">' + taskLabel + '</span>' +
+                (iterLabel ? '<span class="ralph-iter">' + iterLabel + '</span>' : '') +
+              '</div>' +
+            '</div>' +
+            '<div class="ralph-progress">' +
+              '<div class="ralph-bar"><div class="ralph-bar-fill ' + status + '" style="width:' + taskPct + '%"></div></div>' +
+            '</div>' +
+            (loop.planFile ? '<div style="color:#888;font-size:12px;margin-top:4px">plan: ' + esc(loop.planFile) + '</div>' : '') +
+            (loop.started ? '<div style="color:#888;font-size:12px">started: ' + esc(loop.started) + '</div>' : '') +
+            (loop.finished ? '<div style="color:#888;font-size:12px">finished: ' + esc(loop.finished) + '</div>' : '');
+
+          // actions
+          if (loop.active) {
+            actions.innerHTML = '<button class="ralph-launch-btn" style="background:#e74c3c" onclick="cancelRalph()">Cancel</button>';
+          } else {
+            actions.innerHTML = '<button class="ralph-launch-btn" onclick="restartRalph(\'' + escAttr(loop.planFile || '') + '\')">Restart</button>';
+          }
+
+          // stop polling if loop finished
+          if (!loop.active && ralphLogPollTimer) {
+            clearInterval(ralphLogPollTimer);
+            ralphLogPollTimer = null;
+          }
+        } catch {
+          header.innerHTML = '<span class="ralph-status failed">ERROR</span>';
+        }
+
+        // fetch log
+        try {
+          const logData = await api("/ralph/log?project=" + encodeURIComponent(currentRalphProject));
+          if (logData.log != null) {
+            const wasScrolled = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 20;
+            logEl.textContent = logData.log;
+            if (wasScrolled) logEl.scrollTop = logEl.scrollHeight;
+          }
+        } catch {}
+      }
+
+      async function cancelRalph() {
+        if (!currentRalphProject) return;
+        if (!confirm("cancel ralph loop for " + currentRalphProject + "?")) return;
+        try {
+          await api("/ralph/cancel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ project: currentRalphProject }),
+          });
+          refreshRalphDetail();
+        } catch (e) {
+          alert("failed to cancel: " + e.message);
+        }
+      }
+
+      async function loadRalphStartForm() {
+        const sel = document.getElementById("ralph-project-select");
+        try {
+          const data = await api("/projects");
+          const projects = data.projects || [];
+          sel.innerHTML = projects.map(p => '<option value="' + esc(p) + '">' + esc(p) + '</option>').join("");
+          if (currentRalphProject && projects.includes(currentRalphProject)) {
+            sel.value = currentRalphProject;
+          }
+        } catch {
+          sel.innerHTML = '<option value="">failed to load projects</option>';
+        }
+        sel.onchange = function() {
+          loadPlanFiles(sel.value);
+          if (document.getElementById("ralph-branch-toggle").checked) {
+            loadBranches(sel.value);
+          }
+        };
+        // Reset branch toggle on form load
+        document.getElementById("ralph-branch-toggle").checked = false;
+        document.getElementById("ralph-branch-fields").style.display = "none";
+        await loadPlanFiles(sel.value);
+        if (currentRalphPlanFile) {
+          document.getElementById("ralph-plan-select").value = currentRalphPlanFile;
+          currentRalphPlanFile = "";
+        }
+      }
+
+      async function loadPlanFiles(project) {
+        const planSel = document.getElementById("ralph-plan-select");
+        if (!project) { planSel.innerHTML = '<option value="">select a project first</option>'; return; }
+        try {
+          const data = await api("/ralph/plans?project=" + encodeURIComponent(project));
+          const plans = data.plans || [];
+          if (plans.length === 0) {
+            planSel.innerHTML = '<option value="">no .md files found</option>';
+          } else {
+            planSel.innerHTML = plans.map(p => '<option value="' + esc(p) + '">' + esc(p) + '</option>').join("");
+          }
+        } catch {
+          planSel.innerHTML = '<option value="">failed to load plans</option>';
+        }
+      }
+
+      function toggleBranchFields() {
+        const checked = document.getElementById("ralph-branch-toggle").checked;
+        const fields = document.getElementById("ralph-branch-fields");
+        fields.style.display = checked ? "flex" : "none";
+        if (checked) {
+          loadBranches(document.getElementById("ralph-project-select").value);
+        }
+      }
+
+      async function loadBranches(project) {
+        const sel = document.getElementById("ralph-source-branch");
+        if (!project) { sel.innerHTML = '<option value="">select a project first</option>'; return; }
+        try {
+          const data = await api("/ralph/branches?project=" + encodeURIComponent(project));
+          const branches = data.branches || [];
+          if (branches.length === 0) {
+            sel.innerHTML = '<option value="">no branches found</option>';
+          } else {
+            sel.innerHTML = branches.map(b => '<option value="' + esc(b) + '"' + (b === data.current ? ' selected' : '') + '>' + esc(b) + '</option>').join("");
+            // Default to main/master if available
+            const defaultBranch = branches.find(b => b === "main") || branches.find(b => b === "master");
+            if (defaultBranch) sel.value = defaultBranch;
+          }
+        } catch {
+          sel.innerHTML = '<option value="">not a git repo</option>';
+        }
+      }
+
+      async function startRalph() {
+        const project = document.getElementById("ralph-project-select").value;
+        const iterations = parseInt(document.getElementById("ralph-iterations-input").value) || 5;
+        const planFile = document.getElementById("ralph-plan-select").value || undefined;
+        const agent = document.getElementById("ralph-agent-select").value;
+        if (!project) { alert("select a project"); return; }
+        if (!planFile) { alert("select a plan file"); return; }
+
+        // Warn if plan has no numbered tasks — worker will auto-number
+        let format = false;
+        try {
+          const tc = await api("/ralph/task-count?project=" + encodeURIComponent(project) + "&plan=" + encodeURIComponent(planFile));
+          if (tc.total === 0) {
+            if (!confirm("No numbered tasks in " + planFile + ". Ralph will number them automatically. Continue?")) return;
+            format = true;
+          }
+        } catch {}
+
+        const body = { project, iterations, planFile, agent, format };
+        const branchToggle = document.getElementById("ralph-branch-toggle").checked;
+        if (branchToggle) {
+          const newBranch = document.getElementById("ralph-branch-name").value.trim();
+          const sourceBranch = document.getElementById("ralph-source-branch").value;
+          if (!newBranch) { alert("enter a branch name"); return; }
+          body.newBranch = newBranch;
+          body.sourceBranch = sourceBranch;
+        }
+
+        try {
+          const data = await api("/ralph/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (data.error) { alert(data.error); return; }
+          currentRalphProject = project;
+          showView("ralph");
+        } catch (e) {
+          alert("failed to start: " + e.message);
+        }
+      }
+
+      function restartRalph(planFile) {
+        currentRalphPlanFile = planFile || "";
+        showView("ralph-start");
+      }
+
+      async function dismissRalph(project, event) {
+        event.stopPropagation();
+        if (!confirm("delete plan file for " + project + "?")) return;
+        try {
+          await api("/ralph/dismiss", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ project }),
+          });
+          loadRalphLoops();
+        } catch (e) {
+          alert("failed to dismiss: " + e.message);
         }
       }
 
@@ -865,11 +1407,12 @@
 
       function renderGroupHtml(g) {
         const mUrl = esc(g.machine.url);
+        const mUrlAttr = escAttr(g.machine.url);
         const mName = esc(g.machine.name);
         const statusDot = g.online ? "green" : (g.pending ? "gray" : "red");
-        const versionWarning = g.outdated ? `<span style="color:#ff6600;margin-left:6px;font-size:11px;padding:3px 8px;border:1px solid #00ff41;border-radius:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;letter-spacing:1px" onclick="event.stopPropagation();alert('Running v${esc(g.machine.version || "?")} — newer version available on another machine')">⚠ UPDATE</span>` : "";
+        const versionWarning = g.outdated ? `<span style="color:#ff6600;margin-left:6px;font-size:11px;padding:3px 8px;border:1px solid #00ff41;border-radius:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;letter-spacing:1px" onclick="event.stopPropagation();alert('Running v${escAttr(g.machine.version || "?")} — newer version available on another machine')">⚠ UPDATE</span>` : "";
         let html = `<div class="machine-group" data-machine="${mUrl}">`;
-        html += `<div class="machine-header"><div class="dot ${statusDot}"></div>${mName}${versionWarning}<button class="machine-add-btn" onclick="showProjectPicker('${mUrl}')">+</button></div>`;
+        html += `<div class="machine-header"><div class="dot ${statusDot}"></div>${mName}${versionWarning}<button class="machine-add-btn" onclick="showProjectPicker('${mUrlAttr}')">+</button></div>`;
         if (g.pending) {
           html += `<div style="padding:4px 4px;color:#555;font-size:11px">Connecting...</div>`;
         } else if (g.online && g.sessions.length) {
@@ -877,14 +1420,14 @@
             const lastLine = s.lastLine || "";
             const needsAttention = ATTENTION_PATTERNS.some(p => p.test(lastLine));
             const dotClass = needsAttention ? "yellow" : "green";
-            return `<div class="card" onclick="openSession('${esc(s.name)}', '${mUrl}')">
+            return `<div class="card" onclick="openSession('${escAttr(s.name)}', '${mUrlAttr}')">
               <div class="dot ${dotClass}"></div>
               <div class="card-info">
                 <div class="card-machine">${mName}</div>
                 <div class="card-name">${esc(s.name)}</div>
                 <div class="card-preview">${esc(lastLine)}</div>
               </div>
-              <button class="kill-btn" onclick="killSession('${esc(s.name)}', event, '${mUrl}')">&times;</button>
+              <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event, '${mUrlAttr}')">&times;</button>
             </div>`;
           }).join("");
         } else if (!g.online) {
@@ -901,13 +1444,13 @@
             const lastLine = s.lastLine || "";
             const needsAttention = ATTENTION_PATTERNS.some(p => p.test(lastLine));
             const dotClass = needsAttention ? "yellow" : "green";
-            return `<div class="card" onclick="openSession('${esc(s.name)}')">
+            return `<div class="card" onclick="openSession('${escAttr(s.name)}')">
               <div class="dot ${dotClass}"></div>
               <div class="card-info">
                 <div class="card-name">${esc(s.name)}</div>
                 <div class="card-preview">${esc(lastLine)}</div>
               </div>
-              <button class="kill-btn" onclick="killSession('${esc(s.name)}', event)">&times;</button>
+              <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event)">&times;</button>
             </div>`;
           }).join("");
         }
@@ -1054,7 +1597,7 @@
           el.innerHTML = data.projects
             .map(
               (p) => `
-      <div class="card" onclick="selectProject('${esc(p)}')">
+      <div class="card" onclick="selectProject('${escAttr(p)}')">
         <div class="dot blue"></div>
         <div class="card-name">${esc(p)}</div>
       </div>
@@ -1099,13 +1642,13 @@
           const presets = Object.entries(data.presets || {});
           const customCmds = data.settings?.customCmds || [];
           let html = presets.map(([label, cmd]) => `
-            <div class="card" onclick="createSessionWithAgent('${esc(cmd)}')">
+            <div class="card" onclick="createSessionWithAgent('${escAttr(cmd)}')">
               <div class="dot blue"></div>
               <div class="card-name">${esc(label)}</div>
             </div>
           `).join("");
           html += customCmds.map(cmd => `
-            <div class="card" onclick="createSessionWithAgent('${esc(cmd)}')">
+            <div class="card" onclick="createSessionWithAgent('${escAttr(cmd)}')">
               <div class="dot green"></div>
               <div class="card-name">${esc(cmd)}</div>
             </div>
@@ -1243,9 +1786,14 @@
 
           // Enter retry: if pane hasn't changed within 800ms, Enter may have been dropped.
           // Timer is cleared on any pane change (in poll()), so this only fires if truly stuck.
+          // Scope to the session that was active at send time to prevent phantom Enter on other sessions.
           if (enterRetryTimer) clearTimeout(enterRetryTimer);
+          const retrySession = currentSession;
+          const retryMachine = currentMachine;
           enterRetryTimer = setTimeout(() => {
-            if (currentSession) sendKey("Enter");
+            if (currentSession === retrySession && currentMachine === retryMachine) {
+              sendKey("Enter");
+            }
             enterRetryTimer = null;
           }, 800);
         } catch {
@@ -1525,73 +2073,6 @@
       async function showSettings() {
         showView("settings");
         renderMachinesList();
-        loadClaudeConfig();
-      }
-
-      let currentClaudeConfig = "";
-
-      async function loadClaudeConfig() {
-        const preview = document.getElementById("claude-config-preview");
-        const machinesEl = document.getElementById("claude-config-machines");
-        preview.textContent = "Loading...";
-        try {
-          const data = await api("/claude-config");
-          currentClaudeConfig = data.content || "";
-          preview.textContent = currentClaudeConfig || "(empty or not found)";
-        } catch {
-          preview.textContent = "(failed to load)";
-        }
-        // Render machine checkboxes
-        const machines = getMachines();
-        if (!machines.length) {
-          machinesEl.innerHTML = '<div style="color:#444;font-size:12px">No remote machines to push to</div>';
-        } else {
-          machinesEl.innerHTML = machines.map(m => `
-            <label style="display:flex;align-items:center;gap:8px;padding:6px 0;color:#b0b0b0;font-size:13px;cursor:pointer">
-              <input type="checkbox" class="claude-config-target" value="${esc(m.url)}" style="width:18px;height:18px">
-              ${esc(m.name)}
-            </label>
-          `).join("");
-        }
-      }
-
-      async function pushClaudeConfig() {
-        const statusEl = document.getElementById("claude-config-status");
-        const checkboxes = document.querySelectorAll(".claude-config-target:checked");
-        const targets = Array.from(checkboxes).map(cb => cb.value);
-        if (!targets.length) {
-          statusEl.textContent = "No machines selected";
-          statusEl.style.color = "#cc3333";
-          return;
-        }
-        if (!currentClaudeConfig) {
-          statusEl.textContent = "No config to push";
-          statusEl.style.color = "#cc3333";
-          return;
-        }
-        statusEl.textContent = "Pushing...";
-        statusEl.style.color = "#555";
-        const results = await Promise.all(targets.map(async url => {
-          try {
-            const res = await api("/claude-config", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ content: currentClaudeConfig }),
-            }, url);
-            return { url, ok: res.ok };
-          } catch {
-            return { url, ok: false };
-          }
-        }));
-        const success = results.filter(r => r.ok).length;
-        const failed = results.filter(r => !r.ok).length;
-        if (failed === 0) {
-          statusEl.textContent = `Pushed to ${success} machine${success > 1 ? "s" : ""}`;
-          statusEl.style.color = "#00ff41";
-        } else {
-          statusEl.textContent = `${success} ok, ${failed} failed`;
-          statusEl.style.color = "#ff6600";
-        }
       }
 
       async function renderMachinesList() {
@@ -1611,7 +2092,7 @@
           return `<div class="machine-item">
             <div class="dot ${dot}"></div>
             <span class="machine-item-name">${esc(m.name)}<span class="machine-item-url">${esc(m.url)}</span></span>
-            <button class="machine-remove-btn" onclick="removeMachineUI('${esc(m.url)}')">&times;</button>
+            <button class="machine-remove-btn" onclick="removeMachineUI('${escAttr(m.url)}')">&times;</button>
           </div>`;
         }).join("");
       }
@@ -1772,12 +2253,22 @@
       });
 
       function esc(s) {
+        if (s == null) return "";
         const d = document.createElement("div");
-        d.textContent = s;
+        d.textContent = String(s);
         return d.innerHTML.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
       }
 
+      // JS-safe escaper for use inside onclick="func('...')" attribute contexts.
+      // Backslash-escapes characters that could break out of a JS string literal
+      // AFTER HTML attribute decoding.
+      function escAttr(s) {
+        if (s == null) return "";
+        return String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, '\\"')
+          .replace(/</g, "\\x3c").replace(/>/g, "\\x3e").replace(/&/g, "\\x26");
+      }
 
+      showView("sessions");
       loadSessions();
 
       // Register service worker for offline caching
