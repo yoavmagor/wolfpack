@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeAll, afterAll, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { describe, expect, test, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
 import {
   createServer,
   type IncomingMessage,

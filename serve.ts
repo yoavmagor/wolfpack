@@ -999,36 +999,66 @@ const routes: Record<
 
 const wss = new WebSocketServer({ noServer: true });
 
+async function capturePaneAnsi(session: string): Promise<string> {
+  try {
+    // -e: include ANSI escapes for color rendering via ansi_up
+    const { stdout } = await exec(TMUX, ["capture-pane", "-t", session, "-p", "-e"]);
+    return stdout;
+  } catch {
+    return "";
+  }
+}
+
 function handleTerminalWs(ws: WebSocket, session: string): void {
   let prev = "";
   let alive = true;
+  let sized = false;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let updating = false;
 
-  const poll = setInterval(async () => {
-    if (!alive) return;
+  async function sendUpdate() {
+    if (!alive || updating) return;
+    updating = true;
     try {
-      const pane = await capturePane(session);
+      const pane = await capturePaneAnsi(session);
       if (pane !== prev) {
         prev = pane;
         ws.send(JSON.stringify({ type: "output", data: pane }));
       }
-    } catch {
-      // session may have been killed — ignore
-    }
-  }, 100);
+    } catch {}
+    updating = false;
+    schedulePoll();
+  }
+
+  function schedulePoll() {
+    if (!alive) return;
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = setTimeout(sendUpdate, 100);
+  }
+
+  // kick off the initial poll immediately
+  schedulePoll();
 
   ws.on("message", async (raw) => {
     try {
       const msg = JSON.parse(String(raw));
       if (msg.type === "input" && typeof msg.data === "string") {
         await tmuxSend(session, msg.data, true);
+        // immediate update after input for snappy feedback
+        setTimeout(sendUpdate, 15);
       } else if (msg.type === "key" && typeof msg.key === "string") {
         await tmuxSendKey(session, msg.key);
+        setTimeout(sendUpdate, 15);
       } else if (
         msg.type === "resize" &&
         typeof msg.cols === "number" &&
         typeof msg.rows === "number"
       ) {
         await tmuxResize(session, msg.cols, msg.rows);
+        if (!sized) {
+          sized = true;
+          setTimeout(sendUpdate, 50);
+        }
       }
     } catch {
       // malformed message — ignore
@@ -1037,12 +1067,12 @@ function handleTerminalWs(ws: WebSocket, session: string): void {
 
   ws.on("close", () => {
     alive = false;
-    clearInterval(poll);
+    if (pollTimer) clearTimeout(pollTimer);
   });
 
   ws.on("error", () => {
     alive = false;
-    clearInterval(poll);
+    if (pollTimer) clearTimeout(pollTimer);
   });
 }
 

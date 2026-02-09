@@ -784,7 +784,7 @@
         -webkit-user-select: text;
       }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/ansi_up@6/ansi_up.min.js"></script>
+    <script src="/ansi_up.min.js"></script>
   </head>
   <body>
     <header>
@@ -1769,7 +1769,6 @@
         const wsUrl = proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(currentSession);
         const ws = new WebSocket(wsUrl);
         desktopWs = ws;
-
         ws.onopen = () => {
           const dims = calcTermDimensions(pre);
           if (dims) {
@@ -2361,12 +2360,6 @@
           bar.classList.add("visible");
           document.getElementById("search-input").focus();
         }
-      }
-
-      function getSearchTarget() {
-        return useDesktopTerminal
-          ? document.getElementById("desktop-terminal")
-          : document.getElementById("terminal");
       }
 
       function closeSearch() {
