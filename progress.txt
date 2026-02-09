@@ -467,3 +467,14 @@
 - Also added Escape key handling when search is active but focus is outside the search input — now closes search from anywhere
 - Regenerated `public-assets.ts`
 - All 410 tests pass
+
+## Task 8: Remove xterm.js dead code — DONE (already clean)
+- Audit confirmed xterm.js was fully removed in prior iterations (commits e0d12ba → 182a1e4)
+- **No xterm.js CDN tags** remain in `public/index.html` (replaced by single ansi_up script)
+- **No `#xterm-container`** div or CSS (replaced by `<pre id="desktop-terminal">`)
+- **No xterm variables/functions** (`xtermInstance`, `xtermFitAddon`, `xtermSearchAddon`, `xtermWs`, `initXterm`, `destroyXterm` — all gone)
+- **No `FitAddon`/`SearchAddon`** references in source
+- **No `.xterm-cursor-layer`** CSS hack
+- Only cleanup: updated 2 stale comments in `serve.ts` (lines 1004, 1006) that still referenced "xterm.js" → now say "ansi_up" and "terminal display"
+- `desktop_terminal_plan.md` has historical xterm references (expected — it's the plan doc)
+- All 410 tests pass

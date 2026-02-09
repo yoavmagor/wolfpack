@@ -82,7 +82,7 @@ Since we're using a `<pre>` with HTML content, the existing search implementatio
 
 ## Phase 4: Cleanup
 
-### 8. Remove xterm.js dead code
+### ~~8. Remove xterm.js dead code~~
 - Remove xterm.js CDN script/link tags
 - Remove `#xterm-container` div and its CSS
 - Remove all xterm-related variables and functions
