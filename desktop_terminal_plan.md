@@ -56,7 +56,7 @@ Replace all references to `initXterm()` → `initDesktopTerminal()`, `destroyXte
 
 ## Phase 2: Keyboard capture
 
-### 6. Direct keyboard input handler
+### ~~6. Direct keyboard input handler~~
 On desktop terminal init, add a `keydown` event listener to `document`:
 - Capture all keystrokes when desktop terminal is active and focused
 - Map keypresses to tmux-compatible sequences:
@@ -77,7 +77,7 @@ On desktop terminal init, add a `keydown` event listener to `document`:
 
 ## Phase 3: Search on desktop
 
-### 7. Desktop search using browser find-in-page
+### ~~7. Desktop search using browser find-in-page~~
 Since we're using a `<pre>` with HTML content, the existing search implementation (DOM-based text search with highlights) should work as-is. Verify it works and fix any issues with ANSI HTML spans interfering with search highlighting.
 
 ## Phase 4: Cleanup

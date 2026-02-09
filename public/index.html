@@ -1799,7 +1799,19 @@
         // Keyboard input → WebSocket (tmux-compatible key names)
         const onKeyDown = (e) => {
           if (!desktopWs || desktopWs.readyState !== WebSocket.OPEN) return;
-          if (searchActive) return;
+
+          // Ctrl+F / Cmd+F → open search bar (not sent to tmux)
+          if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+            e.preventDefault();
+            if (!searchActive) toggleSearch();
+            return;
+          }
+
+          // Escape closes search even when focus is outside the input
+          if (searchActive) {
+            if (e.key === "Escape") { e.preventDefault(); closeSearch(); }
+            return;
+          }
           // Skip when an input/textarea/select is focused
           const tag = document.activeElement && document.activeElement.tagName;
           if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;

@@ -458,3 +458,12 @@
 - Also clears `desktopRawAnsi` in `destroyDesktopTerminal()` for clean teardown
 - Regenerated `public-assets.ts`
 - All 264 unit tests pass
+
+## Task 7 (follow-up): Ctrl+F keyboard shortcut for search — DONE
+- **Bug**: Ctrl+F was intercepted by the desktop terminal keyboard handler and sent to tmux as `C-f` (page-forward). Users couldn't open search via keyboard.
+- Fixed by adding Ctrl+F / Cmd+F interception at the TOP of the `onKeyDown` handler (before `searchActive` guard):
+  - `Ctrl+F` (Linux/Windows) and `Cmd+F` (macOS) now call `toggleSearch()` instead of forwarding to tmux
+  - `preventDefault()` suppresses browser native find-in-page (custom search bar is used instead)
+- Also added Escape key handling when search is active but focus is outside the search input — now closes search from anywhere
+- Regenerated `public-assets.ts`
+- All 410 tests pass
