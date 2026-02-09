@@ -357,3 +357,22 @@
 - DOM-based search preserved for mobile (no xterm instance on mobile)
 - Regenerated `public-assets.ts` (6 files embedded)
 - All 410 tests pass
+
+## Cleanup Pass (desktop terminal session) — DONE
+- Reviewed all files changed in last 10 commits + uncommitted changes
+- **Dead code found**: unused `spyOn` import in `tests/integration/ralph-api.test.ts` — removed (again; previous cleanup didn't persist)
+- **No other dead code**: all functions, exports, imports, types across serve.ts, cli.ts, ralph-macchio.ts, public/index.html, public-assets.ts, and all 10 test files are actively used
+- **Cross-file exports verified**: all exports (xmlEsc, systemdEsc from cli.ts; assets from public-assets.ts; printQR from qr.ts) have consumers
+- All 410 tests pass after cleanup
+
+## Replace xterm.js CDN with ansi_up — DONE
+- Removed 4 xterm.js CDN tags from `public/index.html`:
+  - `<link>` for `@xterm/xterm@5` CSS
+  - `<script>` for `@xterm/xterm@5` main lib
+  - `<script>` for `@xterm/addon-fit@0`
+  - `<script>` for `@xterm/addon-search@0`
+- Added single ansi_up CDN script: `https://cdn.jsdelivr.net/npm/ansi_up@6/ansi_up.min.js` (~5KB vs ~200KB+ for xterm)
+- Replaced xterm-specific CSS rules (`.xterm`, `.xterm-cursor-layer`) with `#xterm-container pre` styling
+- Kept `#xterm-container` base CSS (still needed for desktop terminal container)
+- Regenerated `public-assets.ts` (6 files embedded)
+- All 410 tests pass
