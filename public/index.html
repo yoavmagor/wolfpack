@@ -1790,33 +1790,42 @@
           if (statusEl && currentView === "terminal") statusEl.style.display = "block";
         };
 
-        // Keyboard input → WebSocket
+        // Keyboard input → WebSocket (tmux-compatible key names)
         const onKeyDown = (e) => {
           if (!desktopWs || desktopWs.readyState !== WebSocket.OPEN) return;
           if (searchActive) return;
-          let data = "";
-          if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-            data = e.key;
-          } else if (e.key === "Enter") { data = "\r";
-          } else if (e.key === "Backspace") { data = "\x7f";
-          } else if (e.key === "Tab") { data = "\t"; e.preventDefault();
-          } else if (e.key === "Escape") { data = "\x1b";
-          } else if (e.key === "ArrowUp") { data = "\x1b[A";
-          } else if (e.key === "ArrowDown") { data = "\x1b[B";
-          } else if (e.key === "ArrowRight") { data = "\x1b[C";
-          } else if (e.key === "ArrowLeft") { data = "\x1b[D";
-          } else if (e.key === "Home") { data = "\x1b[H";
-          } else if (e.key === "End") { data = "\x1b[F";
-          } else if (e.key === "PageUp") { data = "\x1b[5~";
-          } else if (e.key === "PageDown") { data = "\x1b[6~";
-          } else if (e.key === "Delete") { data = "\x1b[3~";
-          } else if (e.ctrlKey && e.key.length === 1) {
-            const code = e.key.toLowerCase().charCodeAt(0) - 96;
-            if (code >= 0 && code <= 31) data = String.fromCharCode(code);
+          // Skip when an input/textarea/select is focused
+          const tag = document.activeElement && document.activeElement.tagName;
+          if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+          if (document.activeElement && document.activeElement.isContentEditable) return;
+
+          // Ctrl+key → tmux C-x notation
+          if (e.ctrlKey && !e.metaKey && e.key.length === 1) {
+            const ch = e.key.toLowerCase();
+            if (ch >= "a" && ch <= "z") {
+              e.preventDefault();
+              desktopWs.send(JSON.stringify({ type: "key", key: "C-" + ch }));
+              return;
+            }
           }
-          if (data) {
+
+          // Special keys → tmux key names
+          const keyMap = {
+            Enter: "Enter", Escape: "Escape", Backspace: "BSpace",
+            Tab: "Tab", Delete: "DC",
+            ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
+            Home: "Home", End: "End", PageUp: "PPage", PageDown: "NPage",
+          };
+          if (keyMap[e.key]) {
             e.preventDefault();
-            desktopWs.send(JSON.stringify({ type: "input", data }));
+            desktopWs.send(JSON.stringify({ type: "key", key: keyMap[e.key] }));
+            return;
+          }
+
+          // Printable chars → send as literal input
+          if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            desktopWs.send(JSON.stringify({ type: "input", data: e.key }));
           }
         };
         document.addEventListener("keydown", onKeyDown);

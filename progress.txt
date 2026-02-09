@@ -436,3 +436,14 @@
 - Current state: `desktopWs`, `desktopAnsiUp`, `desktopResizeHandler` as globals, `initDesktopTerminal()` + `destroyDesktopTerminal()` at all 5+ call sites
 - Struck through plan item §5 in `desktop_terminal_plan.md`
 - All 410 tests pass
+
+## Task 6: Direct keyboard input handler — DONE
+- Refactored `onKeyDown` handler in `initDesktopTerminal()` (public/index.html:1793-1830)
+- **Focus guard**: skip capture when `INPUT`, `TEXTAREA`, `SELECT`, or `contentEditable` element is focused
+- **Ctrl+key combos**: send as `{ type: "key", key: "C-x" }` tmux notation (covers C-c, C-d, C-z, C-l, C-a, C-e and all other ctrl+letter combos)
+- **Special keys via keyMap**: `Enter`, `Escape`, `BSpace`, `Tab`, `DC`, `Up`/`Down`/`Left`/`Right`, `Home`, `End`, `PPage`, `NPage` — sent as `{ type: "key", key: "..." }`
+- **Printable chars**: sent as `{ type: "input", data: char }` (unchanged)
+- **preventDefault()**: applied on all captured keys to suppress browser defaults
+- Server already handles both `type: "input"` (tmuxSend with -l) and `type: "key"` (tmuxSendKey without -l) — no server changes needed
+- Regenerated `public-assets.ts`
+- All 410 tests pass
