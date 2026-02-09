@@ -447,3 +447,14 @@
 - Server already handles both `type: "input"` (tmuxSend with -l) and `type: "key"` (tmuxSendKey without -l) — no server changes needed
 - Regenerated `public-assets.ts`
 - All 410 tests pass
+
+## Task 7: Desktop search using browser find-in-page — DONE
+- Search was broken on desktop terminal: all search functions targeted `#terminal` (mobile polling element) instead of `#desktop-terminal` (AnsiUp `<pre>`)
+- Fixed 4 issues:
+  1. **Raw data storage**: Added `desktopRawAnsi` variable; `ws.onmessage` now stores raw ANSI string and triggers search highlights when search is active
+  2. **Search function branching**: Updated `closeSearch()` and `doSearch()` to branch on `useDesktopTerminal` — desktop restores via `ansi_to_html(desktopRawAnsi)`, mobile restores via `textContent = lastRawPane`
+  3. **ANSI-aware highlighting**: Added `applyDesktopSearchHighlights()` — uses `TreeWalker` to find text nodes inside AnsiUp `<span>` tags, wraps matches in `<mark>` without breaking HTML structure. This preserves ANSI colors while highlighting search matches.
+  4. **CSS selectors**: Changed `#terminal mark` to `#terminal mark, #desktop-terminal mark` (and same for `.search-current`) so highlight styles apply to both elements
+- Also clears `desktopRawAnsi` in `destroyDesktopTerminal()` for clean teardown
+- Regenerated `public-assets.ts`
+- All 264 unit tests pass

@@ -506,12 +506,12 @@
         font-size: 11px;
         white-space: nowrap;
       }
-      #terminal mark {
+      #terminal mark, #desktop-terminal mark {
         background: #6e5c00;
         color: #e0e0e0;
         border-radius: 2px;
       }
-      #terminal mark.search-current {
+      #terminal mark.search-current, #desktop-terminal mark.search-current {
         background: #ff6600;
         color: #fff;
       }
@@ -970,6 +970,7 @@
       let desktopWs = null;
       let desktopResizeHandler = null;
       let useDesktopTerminal = false;
+      let desktopRawAnsi = null;  // raw ANSI string from server (for search)
 
       function isDesktop() {
         return !('ontouchstart' in window) && window.innerWidth > 768;
@@ -1780,7 +1781,12 @@
           try {
             const msg = JSON.parse(ev.data);
             if (msg.type === "output") {
-              pre.innerHTML = ansi.ansi_to_html(msg.data);
+              desktopRawAnsi = msg.data;
+              if (searchActive && searchTerm) {
+                applySearchHighlights();
+              } else {
+                pre.innerHTML = ansi.ansi_to_html(msg.data);
+              }
             }
           } catch {}
         };
@@ -1860,6 +1866,7 @@
         pre.style.display = "none";
         pre.innerHTML = "";
         desktopAnsiUp = null;
+        desktopRawAnsi = null;
         // Restore mobile element defaults
         document.getElementById("terminal").style.display = "";
         document.getElementById("action-bar").style.display = "";
@@ -2344,6 +2351,12 @@
         }
       }
 
+      function getSearchTarget() {
+        return useDesktopTerminal
+          ? document.getElementById("desktop-terminal")
+          : document.getElementById("terminal");
+      }
+
       function closeSearch() {
         searchActive = false;
         searchTerm = "";
@@ -2352,16 +2365,26 @@
         document.getElementById("search-bar").classList.remove("visible");
         document.getElementById("search-input").value = "";
         document.getElementById("search-count").textContent = "";
-        const term = document.getElementById("terminal");
-        if (lastRawPane) term.textContent = lastRawPane;
+        if (useDesktopTerminal) {
+          const pre = document.getElementById("desktop-terminal");
+          if (desktopRawAnsi && desktopAnsiUp) pre.innerHTML = desktopAnsiUp.ansi_to_html(desktopRawAnsi);
+        } else {
+          const term = document.getElementById("terminal");
+          if (lastRawPane) term.textContent = lastRawPane;
+        }
       }
 
       function doSearch() {
         searchTerm = document.getElementById("search-input").value;
         if (!searchTerm) {
           document.getElementById("search-count").textContent = "";
-          const term = document.getElementById("terminal");
-          if (lastRawPane) term.textContent = lastRawPane;
+          if (useDesktopTerminal) {
+            const pre = document.getElementById("desktop-terminal");
+            if (desktopRawAnsi && desktopAnsiUp) pre.innerHTML = desktopAnsiUp.ansi_to_html(desktopRawAnsi);
+          } else {
+            const term = document.getElementById("terminal");
+            if (lastRawPane) term.textContent = lastRawPane;
+          }
           searchMatches = [];
           searchIndex = -1;
           return;
@@ -2371,6 +2394,10 @@
       }
 
       function applySearchHighlights() {
+        if (useDesktopTerminal) {
+          applyDesktopSearchHighlights();
+          return;
+        }
         const term = document.getElementById("terminal");
         if (!searchTerm || !lastRawPane) return;
         const escaped = lastRawPane.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -2388,6 +2415,58 @@
         document.getElementById("search-count").textContent = count > 0 ? `${searchIndex + 1}/${count}` : "0/0";
         term.innerHTML = html;
         const cur = term.querySelector("mark.search-current");
+        if (cur) cur.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+
+      // Search highlighting for desktop terminal (preserves AnsiUp <span> colors)
+      // Uses TreeWalker to find and wrap text matches without breaking HTML structure.
+      function applyDesktopSearchHighlights() {
+        const pre = document.getElementById("desktop-terminal");
+        if (!searchTerm || !desktopRawAnsi || !desktopAnsiUp) return;
+
+        // Re-render from raw ANSI to get clean HTML (removes prior <mark> tags)
+        pre.innerHTML = desktopAnsiUp.ansi_to_html(desktopRawAnsi);
+
+        const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const re = new RegExp(escapedTerm, "gi");
+
+        // Collect all text nodes
+        const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
+        const textNodes = [];
+        while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+        let count = 0;
+        for (const node of textNodes) {
+          const parts = [];
+          let text = node.textContent;
+          let lastIdx = 0;
+          let m;
+          re.lastIndex = 0;
+          while ((m = re.exec(text)) !== null) {
+            if (m.index > lastIdx) {
+              parts.push(document.createTextNode(text.slice(lastIdx, m.index)));
+            }
+            const mark = document.createElement("mark");
+            if (count === searchIndex) mark.className = "search-current";
+            mark.textContent = m[0];
+            parts.push(mark);
+            count++;
+            lastIdx = re.lastIndex;
+          }
+          if (parts.length > 0) {
+            if (lastIdx < text.length) {
+              parts.push(document.createTextNode(text.slice(lastIdx)));
+            }
+            const frag = document.createDocumentFragment();
+            parts.forEach(p => frag.appendChild(p));
+            node.parentNode.replaceChild(frag, node);
+          }
+        }
+
+        searchMatches = Array.from({ length: count });
+        if (count > 0 && searchIndex >= count) searchIndex = 0;
+        document.getElementById("search-count").textContent = count > 0 ? `${searchIndex + 1}/${count}` : "0/0";
+        const cur = pre.querySelector("mark.search-current");
         if (cur) cur.scrollIntoView({ block: "center", behavior: "smooth" });
       }
 
