@@ -36,9 +36,14 @@ Manage your AI wolfpack from anywhere — spin up sessions, send prompts, monito
 install it on your phone's home screen for a native app experience. After setup, scan the QR code with your phone and tap **"Add to Home Screen"** .
 
 <p align="center">
-  <img src="docs/menu.jpeg" width="300" alt="Session list" />
+  <img src="docs/main_menu.jpeg" width="300" alt="Session list" />
   &nbsp;&nbsp;
-  <img src="docs/session.jpeg" width="300" alt="Terminal view" />
+  <img src="docs/terminal.jpeg" width="300" alt="Terminal view" />
+</p>
+<p align="center">
+  <img src="docs/ralph_menu.jpeg" width="300" alt="Ralph loop panel" />
+  &nbsp;&nbsp;
+  <img src="docs/ralph_log.jpeg" width="300" alt="Ralph log view" />
 </p>
 
 
@@ -66,37 +71,12 @@ Supported platforms: macOS (Apple Silicon, Intel), Linux (x64, arm64).
 
 No Node.js or npm required — wolfpack ships as a standalone binary.
 
-## Workflow
-
-Wolfpack is opinionated. It assumes you keep your projects in a single directory (`~/Dev` by default) and that each AI agent session maps to one project folder.
-
-**The loop:**
-
-1. Open Wolfpack on your phone
-2. Tap **+ New Session** — pick an existing project or create a new one
-3. Wolfpack starts a tmux session in that project's directory and launches your configured agent (Claude, Codex, etc.)
-4. You interact with the agent from your phone — send prompts, approve actions, answer questions
-5. When done, kill the session or leave it running for later
-
-**Key assumptions:**
-
-- Sessions are scoped to project directories, but you can have multiple sessions per project
-- Sessions live in tmux — they persist if you close the app or lose connection
-- The projects directory is the source of truth for what you can launch sessions against
-- You pick the agent command once in settings, and every new session uses it
-- This is a control surface, not a full terminal emulator — it's built for the back-and-forth of AI coding, not for running vim
-
 ## How It Works
 
 ```
 Phone (Web App) ←→ Tailscale HTTPS ←→ wolfpack server (HTTP) ←→ tmux sessions
 ```
 
-- Server uses `tmux capture-pane` to snapshot terminal output
-- Client polls every 500ms for updates (100ms after recent input)
-- Text input and key presses are sent via `tmux send-keys`
-- Tailscale provides encrypted transport and DNS — no port forwarding needed
-- **Tailscale is the security layer.** The server has no built-in authentication — only devices on your tailnet can reach it. Do not expose the port to the public internet.
 
 ## Usage
 
@@ -162,6 +142,30 @@ You can connect one phone to multiple computers running Wolfpack. Sessions from 
 5. The new machine's sessions appear in the session list, grouped by machine name
 
 Each machine runs its own independent Wolfpack server with its own projects directory and config. Your phone fetches sessions from all registered machines in parallel and routes commands to the correct server.
+
+## Workflow
+
+Wolfpack is opinionated. It assumes you keep your projects in a single directory (`~/Dev` by default) and that each AI agent session maps to one project folder.
+
+**The loop:**
+
+1. Open Wolfpack on your phone
+2. Tap **+ New Session** — pick an existing project or create a new one
+3. Wolfpack starts a tmux session in that project's directory and launches your configured agent (Claude, Codex, etc.)
+4. You interact with the agent from your phone — send prompts, approve actions, answer questions
+5. When done, kill the session or leave it running for later
+
+**Key assumptions:**
+
+- Sessions are scoped to project directories, but you can have multiple sessions per project
+- Sessions live in tmux — they persist if you close the app or lose connection
+- The projects directory is the source of truth for what you can launch sessions against
+- You pick the agent command once in settings, and every new session uses it
+- This is a control surface, not a full terminal emulator — it's built for the back-and-forth of AI coding, not for running vim
+
+## Ralph Loop
+
+Autonomous task runner. Write a markdown plan file with numbered sections or checkboxes, pick an agent (Claude, Codex, or Gemini), set the number of iterations, and let it rip. Ralph iterates through tasks one by one — implementing, testing, committing, and marking done — until the plan is complete or iterations run out. Start, monitor, and cancel loops from your phone.
 
 ## Config
 
