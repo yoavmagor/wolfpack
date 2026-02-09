@@ -10,6 +10,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { WebSocketServer, type WebSocket } from "ws";
 import {
   readFileSync,
   writeFileSync,
@@ -994,6 +995,57 @@ const routes: Record<
   },
 };
 
+// ── WebSocket ──
+
+const wss = new WebSocketServer({ noServer: true });
+
+function handleTerminalWs(ws: WebSocket, session: string): void {
+  let prev = "";
+  let alive = true;
+
+  const poll = setInterval(async () => {
+    if (!alive) return;
+    try {
+      const pane = await capturePane(session);
+      if (pane !== prev) {
+        prev = pane;
+        ws.send(JSON.stringify({ type: "output", data: pane }));
+      }
+    } catch {
+      // session may have been killed — ignore
+    }
+  }, 100);
+
+  ws.on("message", async (raw) => {
+    try {
+      const msg = JSON.parse(String(raw));
+      if (msg.type === "input" && typeof msg.data === "string") {
+        await tmuxSend(session, msg.data, true);
+      } else if (msg.type === "key" && typeof msg.key === "string") {
+        await tmuxSendKey(session, msg.key);
+      } else if (
+        msg.type === "resize" &&
+        typeof msg.cols === "number" &&
+        typeof msg.rows === "number"
+      ) {
+        await tmuxResize(session, msg.cols, msg.rows);
+      }
+    } catch {
+      // malformed message — ignore
+    }
+  });
+
+  ws.on("close", () => {
+    alive = false;
+    clearInterval(poll);
+  });
+
+  ws.on("error", () => {
+    alive = false;
+    clearInterval(poll);
+  });
+}
+
 // ── Server ──
 
 const server = createServer(async (req, res) => {
@@ -1042,6 +1094,24 @@ const server = createServer(async (req, res) => {
     }
     res.writeHead(404);
     res.end("Not Found");
+  }
+});
+
+server.on("upgrade", async (req, socket, head) => {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  if (url.pathname === "/ws/terminal") {
+    const session = url.searchParams.get("session");
+    if (!session || !(await isAllowedSession(session))) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      handleTerminalWs(ws, session);
+    });
+  } else {
+    socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+    socket.destroy();
   }
 });
 
