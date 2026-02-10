@@ -1100,13 +1100,18 @@ function handleTerminalWs(ws: WebSocket, session: string): void {
         prev = pane;
         const msg: Record<string, unknown> = { type: "output", data: pane };
         // Query cursor position (best-effort — some sessions may not report it)
+        // cursor_y is relative to visible pane, so offset by scrollback lines
         try {
-          const { stdout } = await exec(TMUX, ["display-message", "-t", session, "-p", "#{cursor_x},#{cursor_y}"]);
+          const { stdout } = await exec(TMUX, ["display-message", "-t", session, "-p", "#{cursor_x},#{cursor_y},#{pane_height}"]);
           const parts = stdout.trim().split(",");
-          if (parts.length === 2) {
+          if (parts.length === 3) {
             const x = Number(parts[0]);
-            const y = Number(parts[1]);
-            if (Number.isFinite(x) && Number.isFinite(y)) {
+            const rawY = Number(parts[1]);
+            const paneHeight = Number(parts[2]);
+            if (Number.isFinite(x) && Number.isFinite(rawY) && Number.isFinite(paneHeight)) {
+              // total captured lines minus pane height = scrollback offset
+              const totalLines = pane.split("\n").length;
+              const y = totalLines - paneHeight + rawY;
               msg.cursor = { x, y };
             }
           }
