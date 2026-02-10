@@ -36,9 +36,9 @@ Agent-agnostic — run Claude, Codex, Gemini, or any custom command. Manage your
 install it on your phone's home screen for a native app experience. After setup, scan the QR code with your phone and tap **"Add to Home Screen"** .
 
 <p align="center">
-  <img src="docs/menu.jpeg" width="300" alt="Session list" />
+  <img src="docs/main_menu.jpeg" width="300" alt="Session list" />
   &nbsp;&nbsp;
-  <img src="docs/session.jpeg" width="300" alt="Terminal view" />
+  <img src="docs/terminal.jpeg" width="300" alt="Terminal view" />
 </p>
 
 <p align="center">

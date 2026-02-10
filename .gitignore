@@ -10,6 +10,7 @@ CLAUDE.md
 !public/icon-*.png
 !public/wolf-face.png
 !docs/Wolf-Face.png
+!docs/desktop.png
 *.jpeg
 !docs/*.jpeg
 *.jpg
