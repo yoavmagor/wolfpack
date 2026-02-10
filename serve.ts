@@ -1057,6 +1057,15 @@ const routes: Record<
 
 // ── WebSocket ──
 
+// SE-03: key allowlist for WS — superset of HTTP /api/key + desktop terminal keys
+const WS_ALLOWED_KEYS = new Set([
+  "Enter", "Tab", "Escape", "Up", "Down", "Left", "Right",
+  "BTab", "BSpace", "DC", "Home", "End", "PPage", "NPage",
+  "y", "n",
+  "C-a", "C-b", "C-c", "C-d", "C-e", "C-f", "C-g", "C-h",
+  "C-k", "C-l", "C-n", "C-p", "C-r", "C-u", "C-w", "C-z",
+]);
+
 const wss = new WebSocketServer({ noServer: true });
 
 async function capturePaneAnsi(session: string): Promise<string> {
@@ -1108,14 +1117,22 @@ function handleTerminalWs(ws: WebSocket, session: string): void {
         // immediate update after input for snappy feedback
         setTimeout(sendUpdate, 15);
       } else if (msg.type === "key" && typeof msg.key === "string") {
-        await tmuxSendKey(session, msg.key);
-        setTimeout(sendUpdate, 15);
+        // SE-03: allowlist matching HTTP /api/key + desktop terminal keys
+        if (WS_ALLOWED_KEYS.has(msg.key)) {
+          await tmuxSendKey(session, msg.key);
+          setTimeout(sendUpdate, 15);
+        }
       } else if (
         msg.type === "resize" &&
         typeof msg.cols === "number" &&
         typeof msg.rows === "number"
       ) {
-        await tmuxResize(session, msg.cols, msg.rows);
+        // SE-04: clamp bounds matching HTTP /api/resize
+        await tmuxResize(
+          session,
+          Math.max(20, Math.min(msg.cols, 300)),
+          Math.max(5, Math.min(msg.rows, 100)),
+        );
         if (!sized) {
           sized = true;
           setTimeout(sendUpdate, 50);
@@ -1191,6 +1208,13 @@ const server = createServer(async (req, res) => {
 });
 
 server.on("upgrade", async (req, socket, head) => {
+  // SE-01: enforce same origin check as HTTP routes
+  const origin = req.headers.origin;
+  if (origin && !isAllowedOrigin(origin)) {
+    socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+    socket.destroy();
+    return;
+  }
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname === "/ws/terminal") {
     const session = url.searchParams.get("session");
@@ -1208,6 +1232,7 @@ server.on("upgrade", async (req, socket, head) => {
   }
 });
 
-server.listen(PORT, () => {
+// SE-18: bind to localhost only — Tailscale proxy handles external access
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`Wolfpack PWA: http://localhost:${PORT}/`);
 });
