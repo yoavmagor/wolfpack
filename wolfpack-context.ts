@@ -8,7 +8,7 @@ export const TASK_HEADER = /^#{2,3} (?:~~)?(?:\w+ )?\d+[a-z]?[\.\):]\s+/;
 
 export const WOLFPACK_CONTEXT = `## Wolfpack / Ralph Context
 
-You are running inside a wolfpack-managed session. Wolfpack is a mobile command center for tmux-based AI agent sessions. "Ralph" is the automated iteration loop that works through plan files.
+You are running inside a wolfpack-managed session. Wolfpack is a mobile & desktop command center for tmux-based AI agent sessions across multiple machines. It is agent-agnostic — supports Claude, Codex, Gemini, and custom commands. "Ralph" is the automated iteration loop that works through plan files.
 
 ### Plan File Format (CRITICAL)
 
