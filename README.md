@@ -29,7 +29,7 @@
              :+**++++++*++*+=-:: .. ...... ..   .:..::
 ```
 
-Mobile command center for your AI coding agents. Control tmux-based agent sessions (Claude, Codex, Gemini, etc.) from your phone via a Web App.
+Mobile & desktop command center for your AI coding agents. Control tmux-based agent sessions (Claude, Codex, Gemini, etc.) across multiple machines from your phone or browser via a Web App.
 
 Manage your AI wolfpack from anywhere — spin up sessions, send prompts, monitor output, and wrangle multiple agents all from one screen on multiple machines.
 

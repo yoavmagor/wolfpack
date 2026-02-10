@@ -29,6 +29,7 @@ import { assets } from "./public-assets.js";
 import { hostname, homedir } from "node:os";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { WOLFPACK_CONTEXT } from "./wolfpack-context.js";
 
 const exec = promisify(execFile);
 
@@ -201,6 +202,10 @@ async function capturePane(session: string): Promise<string> {
   }
 }
 
+function shellEscape(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
 async function tmuxNewSession(
   name: string,
   cwd: string,
@@ -208,9 +213,16 @@ async function tmuxNewSession(
 ): Promise<void> {
   const agentCmd = cmd || loadSettings().agentCmd || "claude";
   // "shell" = plain interactive shell, no command
-  const shellCmd = agentCmd === "shell"
-    ? SHELL
-    : `${SHELL} -lic '${agentCmd.replace(/'/g, "'\\''")}; exec ${SHELL}'`;
+  if (agentCmd === "shell") {
+    await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, SHELL]);
+    return;
+  }
+  // Inject wolfpack context into claude sessions
+  let fullCmd = agentCmd;
+  if (/^claude\b/.test(agentCmd)) {
+    fullCmd += " --append-system-prompt " + shellEscape(WOLFPACK_CONTEXT);
+  }
+  const shellCmd = `${SHELL} -lic ${shellEscape(fullCmd + "; exec " + SHELL)}`;
   await exec(TMUX, [
     "new-session",
     "-d",
@@ -271,7 +283,6 @@ function countPlanTasks(planPath: string): { done: number; total: number } {
       return { done, total: done + pending };
     }
     // section mode: ## or ### numbered headers (with optional ~~ strikethrough)
-    const TASK_HEADER = /^#{2,3} (?:~~)?\d+[a-z]?[\.\)]\s+/;
     let total = 0;
     let done = 0;
     for (const line of plan.split("\n")) {
@@ -387,6 +398,8 @@ function parseRalphLog(projectDir: string): RalphStatus | null {
     return null;
   }
 }
+
+const TASK_HEADER = /^#{2,3} (?:~~)?(?:\w+ )?\d+[a-z]?[\.\):]\s+/;
 
 function isValidProjectName(name: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(name) && name !== "." && name !== "..";
@@ -1050,7 +1063,8 @@ const wss = new WebSocketServer({ noServer: true });
 async function capturePaneAnsi(session: string): Promise<string> {
   try {
     // -e: include ANSI escapes for color rendering via ansi_up
-    const { stdout } = await exec(TMUX, ["capture-pane", "-t", session, "-p", "-e"]);
+    // -S -2000: capture scrollback history so desktop terminal can scroll back
+    const { stdout } = await exec(TMUX, ["capture-pane", "-t", session, "-p", "-e", "-S", "-2000"]);
     return stdout;
   } catch {
     return "";
