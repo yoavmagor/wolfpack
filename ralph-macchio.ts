@@ -10,7 +10,7 @@
  *   --agent NAME      agent to use: claude|codex|gemini (default claude)
  *   --format          number plan tasks before starting
  */
-import { execFileSync, execSync, spawn as nodeSpawn } from "node:child_process";
+import { execFileSync, spawn as nodeSpawn } from "node:child_process";
 import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -252,7 +252,7 @@ appendFileSync(LOG_FILE, `started: ${new Date().toString()}\n\n`);
 
 // capture starting commit for summary diff
 let START_COMMIT = "";
-try { START_COMMIT = execSync("git rev-parse HEAD", { cwd: PROJECT_DIR, encoding: "utf-8" }).trim(); } catch {}
+try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_DIR, encoding: "utf-8" }).trim(); } catch {}
 
 function parseSubtasks(output: string): string[] {
   const match = output.match(/<subtasks>([\s\S]*?)<\/subtasks>/);
@@ -351,12 +351,12 @@ function logSummary(tasksCompleted: number, subtasksAdded: number): void {
   let uncommitted: string[] = [];
   try {
     const ref = START_COMMIT || "HEAD";
-    const diff = execSync(`git diff --name-only ${ref} HEAD`, { cwd: PROJECT_DIR, encoding: "utf-8" });
+    const diff = execFileSync("git", ["diff", "--name-only", ref, "HEAD"], { cwd: PROJECT_DIR, encoding: "utf-8" });
     filesChanged = diff.trim().split("\n").filter(Boolean);
   } catch {}
   try {
-    const wt = execSync("git diff --name-only HEAD", { cwd: PROJECT_DIR, encoding: "utf-8" });
-    const untracked = execSync("git ls-files --others --exclude-standard", { cwd: PROJECT_DIR, encoding: "utf-8" });
+    const wt = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: PROJECT_DIR, encoding: "utf-8" });
+    const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: PROJECT_DIR, encoding: "utf-8" });
     uncommitted = [...wt.trim().split("\n"), ...untracked.trim().split("\n")].filter(Boolean);
   } catch {}
 
