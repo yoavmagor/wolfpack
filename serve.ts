@@ -88,6 +88,10 @@ const TAILNET_SUFFIX = (() => {
   return "";
 })();
 
+if (!TAILNET_SUFFIX) {
+  console.warn("⚠ No tailscaleHostname in config — remote browser access will be blocked by CORS. Run 'wolfpack setup' to fix.");
+}
+
 function isAllowedOrigin(origin: string): boolean {
   if (ALLOWED_ORIGINS.has(origin)) return true;
   // Allow devices on the same tailnet only
@@ -255,6 +259,7 @@ function listDevProjects(): string[] {
 
 const BUN_BIN = process.execPath;
 const RALPH_WORKER = join(import.meta.dir, "ralph-macchio.ts");
+const RALPH_AGENTS = new Set(["claude", "codex", "gemini"]);
 
 interface RalphStatus {
   project: string;
@@ -958,7 +963,7 @@ const routes: Record<
       RALPH_WORKER,
       "--plan", resolvedPlan,
       "--iterations", String(iters),
-      "--agent", agent || "claude",
+      "--agent", RALPH_AGENTS.has(agent || "claude") ? (agent || "claude") : "claude",
       "--progress", "progress.txt",
       ...(format ? ["--format"] : []),
     ];
@@ -1093,7 +1098,20 @@ function handleTerminalWs(ws: WebSocket, session: string): void {
       const pane = await capturePaneAnsi(session);
       if (pane !== prev) {
         prev = pane;
-        ws.send(JSON.stringify({ type: "output", data: pane }));
+        const msg: Record<string, unknown> = { type: "output", data: pane };
+        // Query cursor position (best-effort — some sessions may not report it)
+        try {
+          const { stdout } = await exec(TMUX, ["display-message", "-t", session, "-p", "#{cursor_x},#{cursor_y}"]);
+          const parts = stdout.trim().split(",");
+          if (parts.length === 2) {
+            const x = Number(parts[0]);
+            const y = Number(parts[1]);
+            if (Number.isFinite(x) && Number.isFinite(y)) {
+              msg.cursor = { x, y };
+            }
+          }
+        } catch {}
+        ws.send(JSON.stringify(msg));
       }
     } catch {}
     updating = false;
@@ -1138,8 +1156,10 @@ function handleTerminalWs(ws: WebSocket, session: string): void {
           setTimeout(sendUpdate, 50);
         }
       }
-    } catch {
-      // malformed message — ignore
+    } catch (err: any) {
+      // SE-15: log operational errors, silently drop parse errors
+      if (err instanceof SyntaxError) return;
+      console.error(`WS error [${session}]:`, err?.message || err);
     }
   });
 
