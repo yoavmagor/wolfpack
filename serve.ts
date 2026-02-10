@@ -217,10 +217,11 @@ async function tmuxNewSession(
     await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, SHELL]);
     return;
   }
-  // Inject wolfpack context into claude sessions
+  // Inject wolfpack context into claude sessions (try with flag, fall back without)
   let fullCmd = agentCmd;
   if (/^claude\b/.test(agentCmd)) {
-    fullCmd += " --append-system-prompt " + shellEscape(WOLFPACK_CONTEXT);
+    const withContext = agentCmd + " --append-system-prompt " + shellEscape(WOLFPACK_CONTEXT);
+    fullCmd = withContext + " || " + agentCmd;
   }
   const shellCmd = `${SHELL} -lic ${shellEscape(fullCmd + "; exec " + SHELL)}`;
   await exec(TMUX, [
