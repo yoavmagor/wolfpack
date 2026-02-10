@@ -107,6 +107,11 @@ if (!agent) {
 
 const PLAN_PATH = join(PROJECT_DIR, PLAN_FILE);
 const PROGRESS_PATH = join(PROJECT_DIR, PROGRESS_FILE);
+const LOCK_FILE = join(PROJECT_DIR, ".ralph.lock");
+
+function removeLock(): void {
+  try { unlinkSync(LOCK_FILE); } catch {}
+}
 
 function readPlan(): string {
   return readFileSync(PLAN_PATH, "utf-8");
@@ -297,7 +302,7 @@ function runIteration(prompt: string): Promise<{ exitCode: number; output: strin
   });
 }
 
-// clean up child process on SIGTERM
+// clean up child process and lock on SIGTERM
 process.on("SIGTERM", () => {
   appendFileSync(LOG_FILE, `\n=== 🛑 Received SIGTERM — cleaning up ===\n`);
   if (activeChild) {
@@ -305,6 +310,7 @@ process.on("SIGTERM", () => {
     setTimeout(() => { try { activeChild?.kill("SIGKILL"); } catch {} }, 3000);
   }
   appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
+  removeLock();
   setTimeout(() => process.exit(0), 3500);
 });
 
@@ -494,8 +500,11 @@ async function runCleanup(): Promise<void> {
   try { unlinkSync(ITER_FILE); } catch {}
 }
 
-main().catch((err) => {
+main().then(() => {
+  removeLock();
+}).catch((err) => {
   appendFileSync(LOG_FILE, `\nFATAL: ${err.message}\n`);
   appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
+  removeLock();
   process.exit(1);
 });

@@ -792,11 +792,9 @@
         <button class="back-btn" id="back-btn">&lt; BACK</button>
       </div>
       <div class="header-center" id="header-center">
-        <div id="header-machine-label" style="display:none;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;text-align:center;line-height:1;margin-bottom:8px"></div>
         <div style="display:flex;align-items:center;gap:8px">
-          <span id="wolf-icon" style="font-size:20px;line-height:1">🐺</span>
+          <img id="wolf-icon" src="/wolf-face.png" width="60" height="60" alt="wolfpack" style="object-fit:contain;filter:invert(1) brightness(2);margin:-22px -4px -18px -8px" />
           <h1 id="header-title">wolfpack</h1>
-          <span id="header-version" style="font-size:9px;color:#444;letter-spacing:1px"></span>
           <select
             id="session-switcher"
             class="session-select"
@@ -806,6 +804,7 @@
         </div>
       </div>
       <div class="header-right">
+        <div id="header-machine-label" style="display:none;font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;line-height:1"></div>
         <button class="ralph-nav-btn" id="ralph-btn" onclick="showView('ralph')" style="display:none">&#129355;</button>
         <button class="search-btn" id="search-btn" onclick="toggleSearch()">&#128269;</button>
         <button class="settings-gear" id="gear-btn" onclick="showSettings()">&#9881;</button>
@@ -846,6 +845,10 @@
           <div id="machines-list"></div>
           <button onclick="discoverMachines()" style="margin-top:12px;background:none;border:1px solid #00ff41;border-radius:2px;padding:10px 20px;color:#00ff41;font-size:13px;font-family:inherit;text-transform:uppercase;letter-spacing:1px;cursor:pointer;transition:all 0.15s ease;width:100%">Discover Tailnet</button>
           <div id="discover-status" style="margin-top:6px;font-size:11px;color:#555"></div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-label">About</div>
+          <div id="settings-version" style="font-size:12px;color:#666;padding:4px 0"></div>
         </div>
       </div>
     </div>
@@ -1003,8 +1006,8 @@
           selfName = info.name || "this machine";
           selfVersion = info.version || "";
           // Show version in header
-          const vEl = document.getElementById("header-version");
-          if (vEl && selfVersion) vEl.textContent = "v" + selfVersion;
+          const vEl = document.getElementById("settings-version");
+          if (vEl && selfVersion) vEl.textContent = "wolfpack v" + selfVersion;
         } catch { selfName = "this machine"; }
         // Auto-discover wolfpack peers on tailnet
         try {
@@ -1053,6 +1056,8 @@
         const headerCenter = document.getElementById("header-center");
 
         switcher.style.display = "none";
+        title.style.cursor = "";
+        title.onclick = null;
         document.getElementById("search-btn").style.display = "none";
         document.getElementById("header-machine-label").style.display = "none";
         headerCenter.style.transform = "";
@@ -1125,9 +1130,11 @@
             loadSessions();
           };
           gear.style.display = "none";
-          title.textContent = "";
+          title.textContent = currentSession || "";
+          title.style.cursor = "pointer";
+          title.onclick = () => { title.style.display = "none"; switcher.style.display = ""; switcher.focus(); };
           wolfIcon.style.display = "";
-          switcher.style.display = "";
+          switcher.style.display = "none";
           headerCenter.style.transform = "";
           document.getElementById("search-btn").style.display = "";
           const hml = document.getElementById("header-machine-label");
@@ -1848,6 +1855,19 @@
         document.addEventListener("keydown", onKeyDown);
         pre._onKeyDown = onKeyDown;
 
+        // Paste → send clipboard text to tmux
+        const onPaste = (e) => {
+          if (!desktopWs || desktopWs.readyState !== WebSocket.OPEN) return;
+          if (searchActive) return;
+          const text = (e.clipboardData || window.clipboardData).getData("text");
+          if (text) {
+            e.preventDefault();
+            desktopWs.send(JSON.stringify({ type: "input", data: text }));
+          }
+        };
+        document.addEventListener("paste", onPaste);
+        pre._onPaste = onPaste;
+
         // Window resize → recalculate cols/rows
         const onResize = () => {
           if (!desktopWs || desktopWs.readyState !== WebSocket.OPEN) return;
@@ -1873,6 +1893,10 @@
         if (pre._onKeyDown) {
           document.removeEventListener("keydown", pre._onKeyDown);
           pre._onKeyDown = null;
+        }
+        if (pre._onPaste) {
+          document.removeEventListener("paste", pre._onPaste);
+          pre._onPaste = null;
         }
         pre.style.display = "none";
         pre.innerHTML = "";
@@ -2064,6 +2088,10 @@
         }
         currentSession = name;
         currentMachine = machineUrl;
+        const _title = document.getElementById("header-title");
+        _title.textContent = name;
+        _title.style.display = "";
+        document.getElementById("session-switcher").style.display = "none";
         useDesktopTerminal = isDesktop() && !machineUrl;
         if (useDesktopTerminal) {
           initDesktopTerminal();
@@ -2258,7 +2286,9 @@
       // Global arrow keys → tmux when in terminal and textarea not focused
       document.addEventListener("keydown", (e) => {
         if (currentView !== "terminal") return;
-        if (document.activeElement === msgInput) return;
+        if (useDesktopTerminal) return; // desktop terminal has its own handler
+        const tag = document.activeElement && document.activeElement.tagName;
+        if (document.activeElement === msgInput || tag === "SELECT" || tag === "INPUT") return;
         const keyMap = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Enter: "Enter", Escape: "Escape" };
         const mapped = keyMap[e.key];
         if (mapped) { e.preventDefault(); sendKey(mapped); }

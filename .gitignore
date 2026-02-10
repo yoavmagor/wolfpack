@@ -8,6 +8,8 @@ CLAUDE.md
 *.gif
 *.png
 !public/icon-*.png
+!public/wolf-face.png
+!docs/Wolf-Face.png
 *.jpeg
 !docs/*.jpeg
 *.jpg

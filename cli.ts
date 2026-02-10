@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import {
   closeSync,
   constants as fsConstants,
@@ -137,7 +137,7 @@ function loadConfig(): Config | null {
 }
 
 function saveConfig(c: Config) {
-  mkdirSync(WOLFPACK_DIR, { recursive: true });
+  mkdirSync(WOLFPACK_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2));
 }
 
@@ -265,8 +265,19 @@ async function setup() {
 
   // Dev directory
   const defaultDev = join(homedir(), "Dev");
-  const devDir =
+  const rawDevDir =
     (ask(`  Projects directory [${defaultDev}]: `)) || defaultDev;
+  const devDir = resolve(rawDevDir);
+
+  // Validate devDir
+  const SYSTEM_PREFIXES = ["/etc", "/var", "/usr", "/bin", "/sbin", "/sys", "/proc"];
+  if (SYSTEM_PREFIXES.some(p => devDir === p || devDir.startsWith(p + "/"))) {
+    print(red(`  Refusing to use system directory: ${devDir}`));
+    process.exit(1);
+  }
+  if (!devDir.startsWith(homedir())) {
+    print(yellow(`  Warning: projects directory is outside your home folder.`));
+  }
 
   if (!existsSync(devDir)) {
     const create = ask(`  ${devDir} doesn't exist. Create it? (y/n) `);
@@ -281,7 +292,7 @@ async function setup() {
 
   // Port
   const portStr = ask("  Server port [18790]: ");
-  const port = Number(portStr) || 18790;
+  const port = Math.max(1024, Math.min(65535, Number(portStr) || 18790));
 
   // Tailscale hostname
   let tailscaleHostname: string | undefined;
@@ -591,7 +602,12 @@ function serviceInstall() {
 
     // Enable linger so user services start at boot, not just on login
     try {
-      execSync(`sudo loginctl enable-linger ${process.env.USER}`);
+      const user = process.env.USER || "";
+      if (!/^[a-z_][a-z0-9_-]*$/.test(user)) {
+        print(dim("  Note: Could not validate USER for linger. Skipping."));
+      } else {
+        execFileSync("sudo", ["loginctl", "enable-linger", user]);
+      }
     } catch {
       print(dim("  Note: Could not enable linger. Service may not start at boot."));
       print(dim("  Run: sudo loginctl enable-linger $USER"));

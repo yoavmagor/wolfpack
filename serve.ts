@@ -20,6 +20,9 @@ import {
   lstatSync,
   existsSync,
   unlinkSync,
+  openSync,
+  readSync,
+  closeSync,
 } from "node:fs";
 import { join } from "node:path";
 import { assets } from "./public-assets.js";
@@ -453,6 +456,8 @@ async function parseBody<T = any>(req: IncomingMessage, res: ServerResponse): Pr
   }
 }
 
+const CSP = "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' wss: https:; img-src 'self' data:";
+
 function serveFile(res: ServerResponse, filename: string): void {
   const asset = assets.get(filename);
   if (!asset) {
@@ -460,7 +465,11 @@ function serveFile(res: ServerResponse, filename: string): void {
     res.end("Not Found");
     return;
   }
-  res.writeHead(200, { "Content-Type": asset.mime });
+  const headers: Record<string, string> = { "Content-Type": asset.mime };
+  if (asset.mime === "text/html") {
+    headers["Content-Security-Policy"] = CSP;
+  }
+  res.writeHead(200, headers);
   res.end(asset.content);
 }
 
@@ -812,11 +821,23 @@ const routes: Record<
       return json(res, { error: "no ralph log found" }, 404);
     }
     try {
-      const content = readFileSync(logPath, "utf-8");
-      const lines = content.split("\n");
-      const totalLines = lines.length;
-      const log = lines.slice(-500).join("\n");
-      json(res, { log, totalLines });
+      const MAX_TAIL = 128 * 1024; // read last 128KB max
+      const fd = openSync(logPath, "r");
+      try {
+        const size = statSync(logPath).size;
+        const offset = Math.max(0, size - MAX_TAIL);
+        const buf = Buffer.alloc(Math.min(size, MAX_TAIL));
+        readSync(fd, buf, 0, buf.length, offset);
+        const content = buf.toString("utf-8");
+        const lines = content.split("\n");
+        // if we read a partial file, drop the first (likely truncated) line
+        if (offset > 0) lines.shift();
+        const totalLines = lines.length;
+        const log = lines.slice(-500).join("\n");
+        json(res, { log, totalLines });
+      } finally {
+        closeSync(fd);
+      }
     } catch {
       json(res, { error: "failed to read log" }, 500);
     }
@@ -849,6 +870,30 @@ const routes: Record<
     const existing = parseRalphLog(projectDir);
     if (existing?.active) {
       return json(res, { error: "ralph loop already running", pid: existing.pid }, 409);
+    }
+
+    // Acquire lock file atomically to prevent TOCTOU race
+    const lockPath = join(projectDir, ".ralph.lock");
+    try {
+      // check for stale lock — if PID is dead, remove it
+      if (existsSync(lockPath)) {
+        try {
+          const lockPid = Number(readFileSync(lockPath, "utf-8").trim());
+          if (lockPid > 1) {
+            process.kill(lockPid, 0); // throws if dead
+            return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
+          }
+        } catch {
+          // PID is dead — stale lock, remove it
+          try { unlinkSync(lockPath); } catch {}
+        }
+      }
+      writeFileSync(lockPath, "", { flag: "wx" }); // create-exclusive
+    } catch (e: any) {
+      if (e?.code === "EEXIST") {
+        return json(res, { error: "ralph loop already starting (lock contention)" }, 409);
+      }
+      return json(res, { error: "failed to acquire lock" }, 500);
     }
 
     // Branch creation (optional)
@@ -911,6 +956,9 @@ const routes: Record<
       stdio: "ignore",
     });
     child.unref();
+
+    // Write PID to lock file so stale lock detection works
+    try { writeFileSync(lockPath, String(child.pid ?? 0)); } catch {}
 
     json(res, { ok: true, pid: child.pid ?? 0, branch: newBranch || undefined });
   },
@@ -1117,7 +1165,9 @@ const server = createServer(async (req, res) => {
     if (safePath && !safePath.includes("\0") && !safePath.includes("/")) {
       const asset = assets.get(safePath);
       if (asset) {
-        res.writeHead(200, { "Content-Type": asset.mime });
+        const hdrs: Record<string, string> = { "Content-Type": asset.mime };
+        if (asset.mime === "text/html") hdrs["Content-Security-Policy"] = CSP;
+        res.writeHead(200, hdrs);
         res.end(asset.content);
         return;
       }
