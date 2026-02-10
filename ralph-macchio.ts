@@ -14,7 +14,7 @@ import { execFileSync, execSync, spawn as nodeSpawn } from "node:child_process";
 import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { WOLFPACK_CONTEXT } from "./wolfpack-context.js";
+import { WOLFPACK_CONTEXT, TASK_HEADER } from "./wolfpack-context.js";
 
 const { values: args } = parseArgs({
   args: process.argv.slice(2),
@@ -109,7 +109,7 @@ if (!agent) {
 const PLAN_PATH = join(PROJECT_DIR, PLAN_FILE);
 const PROGRESS_PATH = join(PROJECT_DIR, PROGRESS_FILE);
 const LOCK_FILE = join(PROJECT_DIR, ".ralph.lock");
-const TASK_HEADER = /^#{2,3} (?:~~)?(?:\w+ )?\d+[a-z]?[\.\):]\s+/;
+
 
 function removeLock(): void {
   try { unlinkSync(LOCK_FILE); } catch {}

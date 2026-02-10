@@ -29,7 +29,7 @@ import { assets } from "./public-assets.js";
 import { hostname, homedir } from "node:os";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { WOLFPACK_CONTEXT } from "./wolfpack-context.js";
+import { WOLFPACK_CONTEXT, TASK_HEADER } from "./wolfpack-context.js";
 
 const exec = promisify(execFile);
 
@@ -399,8 +399,6 @@ function parseRalphLog(projectDir: string): RalphStatus | null {
     return null;
   }
 }
-
-const TASK_HEADER = /^#{2,3} (?:~~)?(?:\w+ )?\d+[a-z]?[\.\):]\s+/;
 
 function isValidProjectName(name: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(name) && name !== "." && name !== "..";
