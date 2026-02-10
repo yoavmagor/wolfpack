@@ -10,6 +10,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { WebSocketServer, type WebSocket } from "ws";
 import {
   readFileSync,
   writeFileSync,
@@ -19,12 +20,16 @@ import {
   lstatSync,
   existsSync,
   unlinkSync,
+  openSync,
+  readSync,
+  closeSync,
 } from "node:fs";
 import { join } from "node:path";
 import { assets } from "./public-assets.js";
 import { hostname, homedir } from "node:os";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { WOLFPACK_CONTEXT, TASK_HEADER } from "./wolfpack-context.js";
 
 const exec = promisify(execFile);
 
@@ -197,6 +202,10 @@ async function capturePane(session: string): Promise<string> {
   }
 }
 
+function shellEscape(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
 async function tmuxNewSession(
   name: string,
   cwd: string,
@@ -204,9 +213,17 @@ async function tmuxNewSession(
 ): Promise<void> {
   const agentCmd = cmd || loadSettings().agentCmd || "claude";
   // "shell" = plain interactive shell, no command
-  const shellCmd = agentCmd === "shell"
-    ? SHELL
-    : `${SHELL} -lic '${agentCmd.replace(/'/g, "'\\''")}; exec ${SHELL}'`;
+  if (agentCmd === "shell") {
+    await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, SHELL]);
+    return;
+  }
+  // Inject wolfpack context into claude sessions (try with flag, fall back without)
+  let fullCmd = agentCmd;
+  if (/^claude\b/.test(agentCmd)) {
+    const withContext = agentCmd + " --append-system-prompt " + shellEscape(WOLFPACK_CONTEXT);
+    fullCmd = withContext + " || " + agentCmd;
+  }
+  const shellCmd = `${SHELL} -lic ${shellEscape(fullCmd + "; exec " + SHELL)}`;
   await exec(TMUX, [
     "new-session",
     "-d",
@@ -267,7 +284,6 @@ function countPlanTasks(planPath: string): { done: number; total: number } {
       return { done, total: done + pending };
     }
     // section mode: ## or ### numbered headers (with optional ~~ strikethrough)
-    const TASK_HEADER = /^#{2,3} (?:~~)?\d+[a-z]?[\.\)]\s+/;
     let total = 0;
     let done = 0;
     for (const line of plan.split("\n")) {
@@ -452,6 +468,8 @@ async function parseBody<T = any>(req: IncomingMessage, res: ServerResponse): Pr
   }
 }
 
+const CSP = "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' wss: https:; img-src 'self' data:";
+
 function serveFile(res: ServerResponse, filename: string): void {
   const asset = assets.get(filename);
   if (!asset) {
@@ -459,7 +477,11 @@ function serveFile(res: ServerResponse, filename: string): void {
     res.end("Not Found");
     return;
   }
-  res.writeHead(200, { "Content-Type": asset.mime });
+  const headers: Record<string, string> = { "Content-Type": asset.mime };
+  if (asset.mime === "text/html") {
+    headers["Content-Security-Policy"] = CSP;
+  }
+  res.writeHead(200, headers);
   res.end(asset.content);
 }
 
@@ -811,11 +833,23 @@ const routes: Record<
       return json(res, { error: "no ralph log found" }, 404);
     }
     try {
-      const content = readFileSync(logPath, "utf-8");
-      const lines = content.split("\n");
-      const totalLines = lines.length;
-      const log = lines.slice(-500).join("\n");
-      json(res, { log, totalLines });
+      const MAX_TAIL = 128 * 1024; // read last 128KB max
+      const fd = openSync(logPath, "r");
+      try {
+        const size = statSync(logPath).size;
+        const offset = Math.max(0, size - MAX_TAIL);
+        const buf = Buffer.alloc(Math.min(size, MAX_TAIL));
+        readSync(fd, buf, 0, buf.length, offset);
+        const content = buf.toString("utf-8");
+        const lines = content.split("\n");
+        // if we read a partial file, drop the first (likely truncated) line
+        if (offset > 0) lines.shift();
+        const totalLines = lines.length;
+        const log = lines.slice(-500).join("\n");
+        json(res, { log, totalLines });
+      } finally {
+        closeSync(fd);
+      }
     } catch {
       json(res, { error: "failed to read log" }, 500);
     }
@@ -848,6 +882,30 @@ const routes: Record<
     const existing = parseRalphLog(projectDir);
     if (existing?.active) {
       return json(res, { error: "ralph loop already running", pid: existing.pid }, 409);
+    }
+
+    // Acquire lock file atomically to prevent TOCTOU race
+    const lockPath = join(projectDir, ".ralph.lock");
+    try {
+      // check for stale lock — if PID is dead, remove it
+      if (existsSync(lockPath)) {
+        try {
+          const lockPid = Number(readFileSync(lockPath, "utf-8").trim());
+          if (lockPid > 1) {
+            process.kill(lockPid, 0); // throws if dead
+            return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
+          }
+        } catch {
+          // PID is dead — stale lock, remove it
+          try { unlinkSync(lockPath); } catch {}
+        }
+      }
+      writeFileSync(lockPath, "", { flag: "wx" }); // create-exclusive
+    } catch (e: any) {
+      if (e?.code === "EEXIST") {
+        return json(res, { error: "ralph loop already starting (lock contention)" }, 409);
+      }
+      return json(res, { error: "failed to acquire lock" }, 500);
     }
 
     // Branch creation (optional)
@@ -910,6 +968,9 @@ const routes: Record<
       stdio: "ignore",
     });
     child.unref();
+
+    // Write PID to lock file so stale lock detection works
+    try { writeFileSync(lockPath, String(child.pid ?? 0)); } catch {}
 
     json(res, { ok: true, pid: child.pid ?? 0, branch: newBranch || undefined });
   },
@@ -994,6 +1055,88 @@ const routes: Record<
   },
 };
 
+// ── WebSocket ──
+
+const wss = new WebSocketServer({ noServer: true });
+
+async function capturePaneAnsi(session: string): Promise<string> {
+  try {
+    // -e: include ANSI escapes for color rendering via ansi_up
+    // -S -2000: capture scrollback history so desktop terminal can scroll back
+    const { stdout } = await exec(TMUX, ["capture-pane", "-t", session, "-p", "-e", "-S", "-2000"]);
+    return stdout;
+  } catch {
+    return "";
+  }
+}
+
+function handleTerminalWs(ws: WebSocket, session: string): void {
+  let prev = "";
+  let alive = true;
+  let sized = false;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let updating = false;
+
+  async function sendUpdate() {
+    if (!alive || updating) return;
+    updating = true;
+    try {
+      const pane = await capturePaneAnsi(session);
+      if (pane !== prev) {
+        prev = pane;
+        ws.send(JSON.stringify({ type: "output", data: pane }));
+      }
+    } catch {}
+    updating = false;
+    schedulePoll();
+  }
+
+  function schedulePoll() {
+    if (!alive) return;
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = setTimeout(sendUpdate, 100);
+  }
+
+  // kick off the initial poll immediately
+  schedulePoll();
+
+  ws.on("message", async (raw) => {
+    try {
+      const msg = JSON.parse(String(raw));
+      if (msg.type === "input" && typeof msg.data === "string") {
+        await tmuxSend(session, msg.data, true);
+        // immediate update after input for snappy feedback
+        setTimeout(sendUpdate, 15);
+      } else if (msg.type === "key" && typeof msg.key === "string") {
+        await tmuxSendKey(session, msg.key);
+        setTimeout(sendUpdate, 15);
+      } else if (
+        msg.type === "resize" &&
+        typeof msg.cols === "number" &&
+        typeof msg.rows === "number"
+      ) {
+        await tmuxResize(session, msg.cols, msg.rows);
+        if (!sized) {
+          sized = true;
+          setTimeout(sendUpdate, 50);
+        }
+      }
+    } catch {
+      // malformed message — ignore
+    }
+  });
+
+  ws.on("close", () => {
+    alive = false;
+    if (pollTimer) clearTimeout(pollTimer);
+  });
+
+  ws.on("error", () => {
+    alive = false;
+    if (pollTimer) clearTimeout(pollTimer);
+  });
+}
+
 // ── Server ──
 
 const server = createServer(async (req, res) => {
@@ -1035,13 +1178,33 @@ const server = createServer(async (req, res) => {
     if (safePath && !safePath.includes("\0") && !safePath.includes("/")) {
       const asset = assets.get(safePath);
       if (asset) {
-        res.writeHead(200, { "Content-Type": asset.mime });
+        const hdrs: Record<string, string> = { "Content-Type": asset.mime };
+        if (asset.mime === "text/html") hdrs["Content-Security-Policy"] = CSP;
+        res.writeHead(200, hdrs);
         res.end(asset.content);
         return;
       }
     }
     res.writeHead(404);
     res.end("Not Found");
+  }
+});
+
+server.on("upgrade", async (req, socket, head) => {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  if (url.pathname === "/ws/terminal") {
+    const session = url.searchParams.get("session");
+    if (!session || !(await isAllowedSession(session))) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      handleTerminalWs(ws, session);
+    });
+  } else {
+    socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+    socket.destroy();
   }
 });
 

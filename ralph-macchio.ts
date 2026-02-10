@@ -14,6 +14,7 @@ import { execFileSync, execSync, spawn as nodeSpawn } from "node:child_process";
 import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { WOLFPACK_CONTEXT, TASK_HEADER } from "./wolfpack-context.js";
 
 const { values: args } = parseArgs({
   args: process.argv.slice(2),
@@ -107,6 +108,12 @@ if (!agent) {
 
 const PLAN_PATH = join(PROJECT_DIR, PLAN_FILE);
 const PROGRESS_PATH = join(PROJECT_DIR, PROGRESS_FILE);
+const LOCK_FILE = join(PROJECT_DIR, ".ralph.lock");
+
+
+function removeLock(): void {
+  try { unlinkSync(LOCK_FILE); } catch {}
+}
 
 function readPlan(): string {
   return readFileSync(PLAN_PATH, "utf-8");
@@ -129,7 +136,6 @@ function extractCurrentTask(): { task: string; checkbox: boolean } | null {
 
     // section mode: find first ## or ### numbered header not struck through
     const lines = plan.split("\n");
-    const TASK_HEADER = /^(#{2,3}) \d+[a-z]?[\.\)]\s+/;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (TASK_HEADER.test(line) && !line.includes("~~")) {
@@ -174,23 +180,31 @@ function markCheckboxDone(taskText: string): void {
 }
 
 function numberPlanTasks(): Promise<{ exitCode: number; output: string }> {
-  const prompt = `You are reformatting a plan file for an automated task runner.
+  const prompt = `${WOLFPACK_CONTEXT}
 
-Read @${PLAN_FILE} — its implementation sections are NOT numbered with the format "### N. Title".
+You are reformatting a plan file for an automated task runner.
 
-Your job: Add sequential numbers to each implementation/task section header so they follow the pattern "### 1. Title", "### 2. Title", etc. Or if subsections exist, use "### 1a. Title", "### 1b. Title".
+Read @${PLAN_FILE} — convert ALL task/implementation section headers to the canonical format: \`## N. Title\`.
+
+Current headers may use ANY format — \`## Phase 1: Title\`, \`### Step 1 - Title\`, \`## 1) Title\`, \`### Task: Title\`, unnumbered \`## Title\`, etc. Convert them ALL to \`## N. Title\` (sequential numbering starting at 1).
+
+If a task has sub-sections, convert those to \`## Na. Title\` (e.g. \`## 1a.\`, \`## 1b.\`).
 
 Rules:
-- ONLY number headers that represent actionable tasks/steps
-- Do NOT number context/overview/architecture/verification sections
-- Keep ALL content exactly as-is — only modify the ### header lines to add numbers
+- ONLY convert headers that represent actionable tasks/steps
+- Do NOT number context/overview/architecture/verification/summary sections
+- Keep ALL content exactly as-is — only modify the header lines
+- Use \`##\` (h2) for all task headers, not \`###\`
+- Already-completed tasks (with ~~) should keep their ~~ markers
 - Write the result back to @${PLAN_FILE} using the Write tool — do not output the file content`;
 
   return runIteration(prompt);
 }
 
 function buildPrompt(taskDesc: string): string {
-  return `You may ONLY create/edit/delete files under ${PROJECT_DIR}. Do NOT touch files outside this directory.
+  return `${WOLFPACK_CONTEXT}
+
+You may ONLY create/edit/delete files under ${PROJECT_DIR}. Do NOT touch files outside this directory.
 
 YOUR TASK:
 ${taskDesc}
@@ -297,7 +311,7 @@ function runIteration(prompt: string): Promise<{ exitCode: number; output: strin
   });
 }
 
-// clean up child process on SIGTERM
+// clean up child process and lock on SIGTERM
 process.on("SIGTERM", () => {
   appendFileSync(LOG_FILE, `\n=== 🛑 Received SIGTERM — cleaning up ===\n`);
   if (activeChild) {
@@ -305,6 +319,7 @@ process.on("SIGTERM", () => {
     setTimeout(() => { try { activeChild?.kill("SIGKILL"); } catch {} }, 3000);
   }
   appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
+  removeLock();
   setTimeout(() => process.exit(0), 3500);
 });
 
@@ -323,7 +338,6 @@ function logSummary(tasksCompleted: number, subtasksAdded: number): void {
     done = (plan.match(/^- \[x\] /gm) || []).length;
     total = done + (plan.match(/^- \[ \] /gm) || []).length;
   } else {
-    const TASK_HEADER = /^#{2,3} (?:~~)?\d+[a-z]?[\.\)]\s+/;
     for (const line of plan.split("\n")) {
       if (TASK_HEADER.test(line)) {
         total++;
@@ -451,7 +465,9 @@ async function main() {
   appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
 }
 
-const CLEANUP_PROMPT = `You may ONLY create/edit/delete files under ${PROJECT_DIR}. Do NOT touch files outside this directory.
+const CLEANUP_PROMPT = `${WOLFPACK_CONTEXT}
+
+You may ONLY create/edit/delete files under ${PROJECT_DIR}. Do NOT touch files outside this directory.
 
 @${PLAN_FILE} @${PROGRESS_FILE}
 
@@ -494,8 +510,11 @@ async function runCleanup(): Promise<void> {
   try { unlinkSync(ITER_FILE); } catch {}
 }
 
-main().catch((err) => {
+main().then(() => {
+  removeLock();
+}).catch((err) => {
   appendFileSync(LOG_FILE, `\nFATAL: ${err.message}\n`);
   appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
+  removeLock();
   process.exit(1);
 });

@@ -29,9 +29,9 @@
              :+**++++++*++*+=-:: .. ...... ..   .:..::
 ```
 
-Mobile command center for your AI coding agents. Control tmux-based agent sessions (Claude, Codex, Gemini, etc.) from your phone via a Web App.
+Mobile & desktop command center for your AI coding agents. Control tmux-based agent sessions (Claude, Codex, Gemini, etc.) across multiple machines from your phone or browser via a Web App.
 
-Manage your AI wolfpack from anywhere — spin up sessions, send prompts, monitor output, and wrangle multiple agents all from one screen on multiple machines.
+Agent-agnostic — run Claude, Codex, Gemini, or any custom command. Manage your AI wolfpack from anywhere — spin up sessions, send prompts, monitor output, and wrangle multiple agents all from one screen across multiple machines.
 
 install it on your phone's home screen for a native app experience. After setup, scan the QR code with your phone and tap **"Add to Home Screen"** .
 
@@ -44,6 +44,10 @@ install it on your phone's home screen for a native app experience. After setup,
   <img src="docs/ralph_menu.jpeg" width="300" alt="Ralph loop panel" />
   &nbsp;&nbsp;
   <img src="docs/ralph_log.jpeg" width="300" alt="Ralph log view" />
+</p>
+
+<p align="center">
+  <img src="docs/desktop.png" width="700" alt="Desktop terminal view" />
 </p>
 
 
