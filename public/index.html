@@ -778,9 +778,16 @@
         -webkit-user-select: text;
       }
       .dt-cursor {
-        display: inline;
+        position: relative;
+      }
+      .dt-cursor::after {
+        content: '\00a0';
+        position: absolute;
+        left: 0;
+        top: 0;
         background: #e0e0e0;
         color: #0a0a0a;
+        pointer-events: none;
         animation: dt-blink 1s step-end infinite;
       }
       @keyframes dt-blink {
@@ -1852,7 +1859,7 @@
           if (textPos === cx) { insertIdx = i; break; }
           textPos++;
         }
-        const cursorSpan = '<span class="dt-cursor"> </span>';
+        const cursorSpan = '<span class="dt-cursor"></span>';
         if (insertIdx === -1) {
           // cursor beyond line end — append
           lines[cy] = line + cursorSpan;
