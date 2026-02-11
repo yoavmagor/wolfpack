@@ -31,12 +31,12 @@
         font-size: 13px;
       }
       header {
-        padding: 4px 10px;
+        padding: 3px 8px;
         background: #111;
         display: grid;
         grid-template-columns: 1fr auto 1fr;
         align-items: center;
-        min-height: 40px;
+        min-height: 32px;
         flex-shrink: 0;
         border-bottom: 1px solid #1a1a1a;
       }
@@ -59,6 +59,29 @@
         letter-spacing: 2px;
         color: #00ff41;
         white-space: nowrap;
+      }
+      .session-select.chip {
+        border: 1px solid #282828;
+        border-radius: 2px;
+        padding: 5px 24px 5px 10px;
+        -webkit-appearance: none;
+        appearance: none;
+        background:
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='4'%3E%3Cpath d='M0 0l3 4 3-4z' fill='%2300ff41' fill-opacity='0.4'/%3E%3C/svg%3E")
+          no-repeat right 9px center #0a0a0a;
+        cursor: pointer;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        -webkit-tap-highlight-color: transparent;
+        min-height: 28px;
+      }
+      .session-select.chip:focus {
+        outline: none;
+        border-color: #00ff41;
+        box-shadow: 0 0 0 1px #00ff4130;
+      }
+      .session-select.chip:active {
+        border-color: #00ff41;
+        background-color: #111;
       }
       .header-right {
         display: flex;
@@ -101,14 +124,14 @@
       .list {
         flex: 1;
         overflow-y: auto;
-        padding: 8px;
+        padding: 6px;
       }
       .card {
         background: #111;
         border: 1px solid #1a1a1a;
         border-radius: 3px;
-        padding: 8px 10px;
-        margin-bottom: 4px;
+        padding: 6px 8px;
+        margin-bottom: 3px;
         display: flex;
         align-items: center;
         gap: 8px;
@@ -159,14 +182,14 @@
         background: none;
         border: 1px solid #00ff41;
         border-radius: 3px;
-        padding: 18px 18px;
+        padding: 10px 14px;
         margin-bottom: 4px;
         display: flex;
         align-items: center;
         gap: 12px;
         cursor: pointer;
         color: #00ff41;
-        font-size: 16px;
+        font-size: 13px;
         font-weight: 500;
         font-family: inherit;
         text-transform: uppercase;
@@ -208,9 +231,9 @@
         background: none;
         border: 1px solid #282828;
         border-radius: 3px;
-        padding: 10px 16px;
-        min-height: 44px;
-        min-width: 44px;
+        padding: 6px 12px;
+        min-height: 36px;
+        min-width: 36px;
         color: #888;
         font-size: 12px;
         font-family: inherit;
@@ -258,7 +281,7 @@
         background: #0a0a0a;
         border: 1px solid #1e1e1e;
         border-radius: 3px;
-        padding: 6px 10px;
+        padding: 5px 8px;
         color: #e0e0e0;
         font-size: 15px;
         font-family: inherit;
@@ -295,8 +318,8 @@
         background: none;
         border: 1px solid #00ff41;
         border-radius: 3px;
-        width: 44px;
-        height: 44px;
+        width: 36px;
+        height: 36px;
         color: #00ff41;
         font-size: 18px;
         cursor: pointer;
@@ -359,7 +382,7 @@
       }
 
       .settings-section {
-        padding: 8px;
+        padding: 6px;
       }
       .settings-label {
         font-size: 10px;
@@ -425,8 +448,8 @@
         font-size: 18px;
         cursor: pointer;
         padding: 6px;
-        min-width: 40px;
-        min-height: 40px;
+        min-width: 36px;
+        min-height: 36px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -500,14 +523,21 @@
         font-size: 11px;
         white-space: nowrap;
       }
-      #terminal mark, #desktop-terminal mark {
+      #terminal mark {
         background: #6e5c00;
         color: #e0e0e0;
         border-radius: 2px;
       }
-      #terminal mark.search-current, #desktop-terminal mark.search-current {
+      #terminal mark.search-current {
         background: #ff6600;
         color: #fff;
+      }
+      /* xterm-addon-search decoration colors */
+      .xterm-find-result-decoration {
+        background-color: rgba(110, 92, 0, 0.6) !important;
+      }
+      .xterm-find-active-result-decoration {
+        background-color: rgba(255, 102, 0, 0.8) !important;
       }
       .dot.yellow {
         background: #ff6600;
@@ -552,7 +582,7 @@
         display: flex;
         align-items: center;
         gap: 6px;
-        padding: 6px 8px;
+        padding: 5px 8px;
         background: #111;
         border: 1px solid #1a1a1a;
         border-radius: 3px;
@@ -577,8 +607,8 @@
         background: #111;
         border: 1px solid #1a1a1a;
         border-radius: 3px;
-        padding: 8px 10px;
-        margin-bottom: 4px;
+        padding: 6px 8px;
+        margin-bottom: 3px;
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
         transition: all 0.15s ease;
@@ -752,8 +782,8 @@
         font-size: 16px;
         cursor: pointer;
         padding: 6px;
-        width: 40px;
-        height: 40px;
+        width: 36px;
+        height: 36px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -761,24 +791,23 @@
         transition: all 0.15s ease;
       }
       .ralph-nav-btn:active { background: #1a1a1a; }
-      #desktop-terminal {
+      #desktop-terminal-container {
         display: none;
         flex: 1;
         min-height: 0;
         margin: 0;
         background: #0a0a0a;
-        color: #e0e0e0;
-        font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
-        font-size: 12px;
-        line-height: 1.35;
-        padding: 4px 8px;
-        overflow-y: auto;
-        white-space: pre;
-        user-select: text;
-        -webkit-user-select: text;
+        overflow: hidden;
+      }
+      #desktop-terminal-container .xterm {
+        height: 100%;
+        padding: 4px;
       }
     </style>
-    <script src="/ansi_up.min.js"></script>
+    <link rel="stylesheet" href="/xterm.css" />
+    <script src="/xterm.min.js"></script>
+    <script src="/xterm-addon-fit.min.js"></script>
+    <script src="/xterm-addon-search.min.js"></script>
   </head>
   <body>
     <header>
@@ -874,7 +903,7 @@
         Reconnecting...
       </div>
       <div id="terminal"></div>
-      <pre id="desktop-terminal"></pre>
+      <div id="desktop-terminal-container"></div>
       <div id="action-bar" class="visible">
         <button class="action-btn" onclick="sendKey('Enter')">Enter</button>
         <button class="action-btn" onclick="sendKey('Escape')">Esc</button>
@@ -963,11 +992,12 @@
       let currentRalphProject = null;
       let ralphLogPollTimer = null;
       let currentRalphPlanFile = "";
-      let desktopAnsiUp = null;
+      let desktopTerm = null;       // xterm.js Terminal instance
+      let desktopFitAddon = null;   // FitAddon instance
+      let desktopSearchAddon = null; // SearchAddon instance
       let desktopWs = null;
       let desktopResizeHandler = null;
       let useDesktopTerminal = false;
-      let desktopRawAnsi = null;  // raw ANSI string from server (for search)
 
       function isDesktop() {
         return !('ontouchstart' in window) && window.innerWidth > 768;
@@ -1050,6 +1080,8 @@
         const headerCenter = document.getElementById("header-center");
 
         switcher.style.display = "none";
+        switcher.classList.remove("chip");
+        title.style.display = "";
         title.style.cursor = "";
         title.onclick = null;
         document.getElementById("search-btn").style.display = "none";
@@ -1124,11 +1156,11 @@
             loadSessions();
           };
           gear.style.display = "none";
-          title.textContent = currentSession || "";
-          title.style.cursor = "pointer";
-          title.onclick = () => { title.style.display = "none"; switcher.style.display = ""; switcher.focus(); };
+          title.style.display = "none";
           wolfIcon.style.display = "";
-          switcher.style.display = "none";
+          loadSessionSwitcher();
+          switcher.classList.add("chip");
+          switcher.style.display = "";
           headerCenter.style.transform = "";
           document.getElementById("search-btn").style.display = "";
           const hml = document.getElementById("header-machine-label");
@@ -1734,177 +1766,148 @@
         }
       }
 
-      // ── Desktop Terminal (AnsiUp + WebSocket) ──
-
-      function calcTermDimensions(pre) {
-        const probe = document.createElement("span");
-        probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-size:13px;line-height:1.4;font-family:inherit';
-        probe.textContent = "X";
-        pre.appendChild(probe);
-        const charW = probe.offsetWidth;
-        const charH = probe.offsetHeight;
-        pre.removeChild(probe);
-        if (!charW || !charH) return null;
-        const cols = Math.floor(pre.clientWidth / charW);
-        const rows = Math.floor(pre.clientHeight / charH);
-        return (cols > 0 && rows > 0) ? { cols, rows } : null;
-      }
+      // ── Desktop Terminal (xterm.js + /ws/pty binary WS) ──
 
       let desktopReconnectTimer = null;
       let desktopReconnectDelay = 1000;
 
-
-      function connectDesktopWs(pre, ansi) {
+      function connectDesktopWs() {
         if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
+        // Guard against duplicate connections (visibility handler + reconnect timer race)
+        if (desktopWs && desktopWs.readyState <= WebSocket.OPEN) return;
         const proto = location.protocol === "https:" ? "wss:" : "ws:";
-        const wsUrl = proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(currentSession);
+        const wsUrl = proto + "//" + location.host + "/ws/pty?session=" + encodeURIComponent(currentSession);
         const ws = new WebSocket(wsUrl);
+        ws.binaryType = "arraybuffer";
         desktopWs = ws;
 
         ws.onopen = () => {
-          desktopReconnectDelay = 1000; // reset backoff
+          desktopReconnectDelay = 1000;
           const statusEl = document.getElementById("conn-status");
           if (statusEl) statusEl.style.display = "none";
-          const dims = calcTermDimensions(pre);
-          if (dims) {
-            ws.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
+          // Send initial size
+          if (desktopFitAddon && desktopTerm) {
+            desktopFitAddon.fit();
+            ws.send(JSON.stringify({ type: "resize", cols: desktopTerm.cols, rows: desktopTerm.rows }));
           }
         };
 
         ws.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(ev.data);
-            if (msg.type === "output") {
-              desktopRawAnsi = msg.data;
-              const wasAtBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
-              if (searchActive && searchTerm) {
-                applySearchHighlights();
-              } else {
-                pre.innerHTML = ansi.ansi_to_html(msg.data);
-              }
-              if (wasAtBottom) pre.scrollTop = pre.scrollHeight;
-            }
-          } catch {}
+          if (desktopTerm) desktopTerm.write(new Uint8Array(ev.data));
         };
 
         ws.onclose = () => {
-          desktopWs = null;
+          // Only clobber ref if this is still the current WS (prevents stale close race)
+          if (desktopWs === ws) desktopWs = null;
           const statusEl = document.getElementById("conn-status");
           if (statusEl && currentView === "terminal" && useDesktopTerminal) statusEl.style.display = "block";
-          scheduleDesktopReconnect(pre, ansi);
+          scheduleDesktopReconnect();
         };
 
-        ws.onerror = () => {}; // onclose fires after onerror, reconnect handled there
+        ws.onerror = () => {};
       }
 
-      function scheduleDesktopReconnect(pre, ansi) {
-        if (desktopReconnectTimer) return; // already scheduled
-        if (!useDesktopTerminal) return;   // torn down, don't reconnect
+      function scheduleDesktopReconnect() {
+        if (desktopReconnectTimer) return;
+        if (!useDesktopTerminal) return;
         desktopReconnectTimer = setTimeout(() => {
           desktopReconnectTimer = null;
           if (useDesktopTerminal && (!desktopWs || desktopWs.readyState === WebSocket.CLOSED)) {
-            connectDesktopWs(pre, ansi);
+            connectDesktopWs();
           }
         }, desktopReconnectDelay);
         desktopReconnectDelay = Math.min(desktopReconnectDelay * 2, 5000);
       }
 
       function initDesktopTerminal() {
-        if (desktopWs) return;
-        const pre = document.getElementById("desktop-terminal");
-        pre.style.display = "block";
-        pre.innerHTML = "";
+        if (desktopTerm) return;
+        const container = document.getElementById("desktop-terminal-container");
+        container.style.display = "block";
+        container.innerHTML = "";
         document.getElementById("terminal").style.display = "none";
         document.getElementById("action-bar").style.display = "none";
         document.getElementById("input-bar").style.display = "none";
         document.getElementById("msg-preview").style.display = "none";
 
-        const ansi = new AnsiUp();
-        ansi.use_classes = false;
-        desktopAnsiUp = ansi;
+        // Create xterm.js Terminal
+        const term = new Terminal({
+          cursorBlink: true,
+          fontSize: 13,
+          fontFamily: '"SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace',
+          theme: {
+            background: "#0a0a0a",
+            foreground: "#e0e0e0",
+            cursor: "#e0e0e0",
+            selectionBackground: "rgba(255,255,255,0.2)",
+          },
+          scrollback: 5000,
+          allowProposedApi: true,
+        });
+        desktopTerm = term;
 
-        connectDesktopWs(pre, ansi);
+        // FitAddon — auto-sizes terminal to container
+        const fitAddon = new FitAddon.FitAddon();
+        desktopFitAddon = fitAddon;
+        term.loadAddon(fitAddon);
 
-        // Keyboard input → WebSocket (tmux-compatible key names)
+        // SearchAddon — xterm native search
+        const searchAddon = new SearchAddon.SearchAddon();
+        desktopSearchAddon = searchAddon;
+        term.loadAddon(searchAddon);
+
+        term.open(container);
+        fitAddon.fit();
+        term.focus();
+
+        // Pipe keyboard input to WS as raw bytes
+        term.onData((data) => {
+          if (desktopWs && desktopWs.readyState === WebSocket.OPEN) {
+            desktopWs.send(new TextEncoder().encode(data));
+          }
+        });
+
+        // Pipe binary data (e.g. from mouse events) to WS
+        term.onBinary((data) => {
+          if (desktopWs && desktopWs.readyState === WebSocket.OPEN) {
+            const buf = new Uint8Array(data.length);
+            for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
+            desktopWs.send(buf);
+          }
+        });
+
+        // Window resize → fit + notify server
+        const onResize = () => {
+          if (desktopFitAddon) desktopFitAddon.fit();
+        };
+        window.addEventListener("resize", onResize);
+        desktopResizeHandler = onResize;
+
+        // Terminal resize events → send to server
+        term.onResize(({ cols, rows }) => {
+          if (desktopWs && desktopWs.readyState === WebSocket.OPEN) {
+            desktopWs.send(JSON.stringify({ type: "resize", cols, rows }));
+          }
+        });
+
+        // Ctrl+F / Cmd+F → xterm search (intercept before xterm gets it)
         const onKeyDown = (e) => {
-          if (!desktopWs || desktopWs.readyState !== WebSocket.OPEN) return;
-
-          // Ctrl+F / Cmd+F → open search bar (not sent to tmux)
           if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
             e.preventDefault();
             if (!searchActive) toggleSearch();
             return;
           }
-
-          // Escape closes search even when focus is outside the input
-          if (searchActive) {
-            if (e.key === "Escape") { e.preventDefault(); closeSearch(); }
-            return;
-          }
-          // Skip when an input/textarea/select is focused
-          const tag = document.activeElement && document.activeElement.tagName;
-          if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-          if (document.activeElement && document.activeElement.isContentEditable) return;
-
-          // Ctrl+key → tmux C-x notation
-          if (e.ctrlKey && !e.metaKey && e.key.length === 1) {
-            const ch = e.key.toLowerCase();
-            if (ch >= "a" && ch <= "z") {
-              e.preventDefault();
-              desktopWs.send(JSON.stringify({ type: "key", key: "C-" + ch }));
-              return;
-            }
-          }
-
-          // Special keys → tmux key names
-          const keyMap = {
-            Enter: "Enter", Escape: "Escape", Backspace: "BSpace",
-            Tab: "Tab", Delete: "DC",
-            ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
-            Home: "Home", End: "End", PageUp: "PPage", PageDown: "NPage",
-          };
-          if (keyMap[e.key]) {
+          if (searchActive && e.key === "Escape") {
             e.preventDefault();
-            desktopWs.send(JSON.stringify({ type: "key", key: keyMap[e.key] }));
-            return;
-          }
-
-          // Printable chars → send as literal input
-          if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-            e.preventDefault();
-            desktopWs.send(JSON.stringify({ type: "input", data: e.key }));
+            closeSearch();
           }
         };
         document.addEventListener("keydown", onKeyDown);
-        pre._onKeyDown = onKeyDown;
+        container._onKeyDown = onKeyDown;
 
-        // Paste → send clipboard text to tmux
-        const onPaste = (e) => {
-          if (!desktopWs || desktopWs.readyState !== WebSocket.OPEN) return;
-          if (searchActive) return;
-          const text = (e.clipboardData || window.clipboardData).getData("text");
-          if (text) {
-            e.preventDefault();
-            desktopWs.send(JSON.stringify({ type: "input", data: text }));
-          }
-        };
-        document.addEventListener("paste", onPaste);
-        pre._onPaste = onPaste;
-
-        // Window resize → recalculate cols/rows
-        const onResize = () => {
-          if (!desktopWs || desktopWs.readyState !== WebSocket.OPEN) return;
-          const dims = calcTermDimensions(pre);
-          if (dims) {
-            desktopWs.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
-          }
-        };
-        window.addEventListener("resize", onResize);
-        desktopResizeHandler = onResize;
+        connectDesktopWs();
       }
 
       function destroyDesktopTerminal() {
-        // Clear reconnect timer first so it doesn't fight teardown
         if (desktopReconnectTimer) {
           clearTimeout(desktopReconnectTimer);
           desktopReconnectTimer = null;
@@ -1918,20 +1921,22 @@
           window.removeEventListener("resize", desktopResizeHandler);
           desktopResizeHandler = null;
         }
-        const pre = document.getElementById("desktop-terminal");
-        if (pre._onKeyDown) {
-          document.removeEventListener("keydown", pre._onKeyDown);
-          pre._onKeyDown = null;
+        const container = document.getElementById("desktop-terminal-container");
+        if (container._onKeyDown) {
+          document.removeEventListener("keydown", container._onKeyDown);
+          container._onKeyDown = null;
         }
-        if (pre._onPaste) {
-          document.removeEventListener("paste", pre._onPaste);
-          pre._onPaste = null;
+        if (desktopSearchAddon) {
+          desktopSearchAddon.dispose();
+          desktopSearchAddon = null;
         }
-        pre.style.display = "none";
-        pre.innerHTML = "";
-        desktopAnsiUp = null;
-        desktopRawAnsi = null;
-        desktopLastCursor = null;
+        if (desktopTerm) {
+          desktopTerm.dispose();
+          desktopTerm = null;
+        }
+        desktopFitAddon = null;
+        container.style.display = "none";
+        container.innerHTML = "";
         // Restore mobile element defaults
         document.getElementById("terminal").style.display = "";
         document.getElementById("action-bar").style.display = "";
@@ -2118,10 +2123,7 @@
         }
         currentSession = name;
         currentMachine = machineUrl;
-        const _title = document.getElementById("header-title");
-        _title.textContent = name;
-        _title.style.display = "";
-        document.getElementById("session-switcher").style.display = "none";
+        loadSessionSwitcher();
         useDesktopTerminal = isDesktop() && !machineUrl;
         if (useDesktopTerminal) {
           initDesktopTerminal();
@@ -2251,18 +2253,18 @@
             sessionRefreshTimer = setInterval(loadSessions, 5000);
           }
           if (currentSession && currentView === "terminal") {
-            // Desktop terminal: immediate reconnect if WS is dead
-            if (useDesktopTerminal && (!desktopWs || desktopWs.readyState !== WebSocket.OPEN)) {
-              const pre = document.getElementById("desktop-terminal");
-              if (pre && desktopAnsiUp) {
-                if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
+            if (useDesktopTerminal) {
+              // Desktop: reconnect if WS is dead (connectDesktopWs guards against duplicates)
+              if (desktopTerm) {
                 desktopReconnectDelay = 1000;
-                connectDesktopWs(pre, desktopAnsiUp);
+                connectDesktopWs();
               }
+            } else {
+              // Mobile: resume polling
+              poll();
+              enterFastPoll();
+              schedulePoll();
             }
-            poll();
-            enterFastPoll();
-            schedulePoll();
           }
         } else {
           // Stop session refresh when backgrounded — bgAttention covers notifications
@@ -2440,8 +2442,8 @@
         document.getElementById("search-input").value = "";
         document.getElementById("search-count").textContent = "";
         if (useDesktopTerminal) {
-          const pre = document.getElementById("desktop-terminal");
-          if (desktopRawAnsi && desktopAnsiUp) pre.innerHTML = desktopAnsiUp.ansi_to_html(desktopRawAnsi);
+          if (desktopSearchAddon) desktopSearchAddon.clearDecorations();
+          if (desktopTerm) desktopTerm.focus();
         } else {
           const term = document.getElementById("terminal");
           if (lastRawPane) term.textContent = lastRawPane;
@@ -2453,8 +2455,7 @@
         if (!searchTerm) {
           document.getElementById("search-count").textContent = "";
           if (useDesktopTerminal) {
-            const pre = document.getElementById("desktop-terminal");
-            if (desktopRawAnsi && desktopAnsiUp) pre.innerHTML = desktopAnsiUp.ansi_to_html(desktopRawAnsi);
+            if (desktopSearchAddon) desktopSearchAddon.clearDecorations();
           } else {
             const term = document.getElementById("terminal");
             if (lastRawPane) term.textContent = lastRawPane;
@@ -2463,15 +2464,19 @@
           searchIndex = -1;
           return;
         }
+        if (useDesktopTerminal && desktopSearchAddon) {
+          desktopSearchAddon.findNext(searchTerm, { caseSensitive: false, decorations: {
+            matchOverviewRuler: "#6e5c00",
+            activeMatchColorOverviewRuler: "#ff6600",
+          }});
+          return;
+        }
         searchIndex = 0;
         applySearchHighlights();
       }
 
       function applySearchHighlights() {
-        if (useDesktopTerminal) {
-          applyDesktopSearchHighlights();
-          return;
-        }
+        if (useDesktopTerminal) return; // handled by xterm-addon-search
         const term = document.getElementById("terminal");
         if (!searchTerm || !lastRawPane) return;
         const escaped = lastRawPane.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -2492,65 +2497,23 @@
         if (cur) cur.scrollIntoView({ block: "center", behavior: "smooth" });
       }
 
-      // Search highlighting for desktop terminal (preserves AnsiUp <span> colors)
-      // Uses TreeWalker to find and wrap text matches without breaking HTML structure.
-      function applyDesktopSearchHighlights() {
-        const pre = document.getElementById("desktop-terminal");
-        if (!searchTerm || !desktopRawAnsi || !desktopAnsiUp) return;
-
-        // Re-render from raw ANSI to get clean HTML (removes prior <mark> tags)
-        pre.innerHTML = desktopAnsiUp.ansi_to_html(desktopRawAnsi);
-
-        const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const re = new RegExp(escapedTerm, "gi");
-
-        // Collect all text nodes
-        const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
-        const textNodes = [];
-        while (walker.nextNode()) textNodes.push(walker.currentNode);
-
-        let count = 0;
-        for (const node of textNodes) {
-          const parts = [];
-          let text = node.textContent;
-          let lastIdx = 0;
-          let m;
-          re.lastIndex = 0;
-          while ((m = re.exec(text)) !== null) {
-            if (m.index > lastIdx) {
-              parts.push(document.createTextNode(text.slice(lastIdx, m.index)));
-            }
-            const mark = document.createElement("mark");
-            if (count === searchIndex) mark.className = "search-current";
-            mark.textContent = m[0];
-            parts.push(mark);
-            count++;
-            lastIdx = re.lastIndex;
-          }
-          if (parts.length > 0) {
-            if (lastIdx < text.length) {
-              parts.push(document.createTextNode(text.slice(lastIdx)));
-            }
-            const frag = document.createDocumentFragment();
-            parts.forEach(p => frag.appendChild(p));
-            node.parentNode.replaceChild(frag, node);
-          }
-        }
-
-        searchMatches = Array.from({ length: count });
-        if (count > 0 && searchIndex >= count) searchIndex = 0;
-        document.getElementById("search-count").textContent = count > 0 ? `${searchIndex + 1}/${count}` : "0/0";
-        const cur = pre.querySelector("mark.search-current");
-        if (cur) cur.scrollIntoView({ block: "center", behavior: "smooth" });
-      }
+      // Desktop search is handled by xterm-addon-search (see doSearch/nextMatch/prevMatch)
 
       function nextMatch() {
+        if (useDesktopTerminal && desktopSearchAddon && searchTerm) {
+          desktopSearchAddon.findNext(searchTerm, { caseSensitive: false });
+          return;
+        }
         if (searchMatches.length === 0) return;
         searchIndex = (searchIndex + 1) % searchMatches.length;
         applySearchHighlights();
       }
 
       function prevMatch() {
+        if (useDesktopTerminal && desktopSearchAddon && searchTerm) {
+          desktopSearchAddon.findPrevious(searchTerm, { caseSensitive: false });
+          return;
+        }
         if (searchMatches.length === 0) return;
         searchIndex = (searchIndex - 1 + searchMatches.length) % searchMatches.length;
         applySearchHighlights();
