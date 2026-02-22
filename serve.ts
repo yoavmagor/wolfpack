@@ -30,6 +30,7 @@ import { hostname, homedir } from "node:os";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { WOLFPACK_CONTEXT, TASK_HEADER } from "./wolfpack-context.js";
+import pkg from "./package.json";
 
 const exec = promisify(execFile);
 
@@ -69,7 +70,7 @@ const PORT =
 const DEV_DIR =
   process.env.WOLFPACK_DEV_DIR || join(homedir(), "Dev");
 const SETTINGS_PATH = join(homedir(), ".wolfpack", "bridge-settings.json");
-const VERSION = "1.2.0";
+const VERSION: string = pkg.version;
 
 // CORS origin allowlist — replaces wildcard "*"
 const ALLOWED_ORIGINS = new Set<string>([
@@ -197,10 +198,9 @@ async function tmuxResize(
 
 async function capturePane(session: string): Promise<string> {
   try {
-    const args = ["capture-pane", "-t", session, "-p", "-J"];
-    // Always capture some scrollback so the PWA terminal can scroll
-    args.push("-S", "-2000");
-    const { stdout } = await exec(TMUX, args);
+    const { stdout } = await exec(TMUX, [
+      "capture-pane", "-t", session, "-p", "-J", "-S", "-2000",
+    ]);
     return stdout;
   } catch {
     return "";
@@ -419,7 +419,6 @@ function isValidProjectName(name: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(name) && name !== "." && name !== "..";
 }
 
-
 function scanRalphLoops(): RalphStatus[] {
   const projects = listDevProjects();
   const results: RalphStatus[] = [];
@@ -546,7 +545,7 @@ const routes: Record<
       sessions.map(async (name) => {
         const pane = await capturePane(name);
         const lines = pane.trimEnd().split("\n");
-        const lastLine = lines[lines.length - 1]?.trim() || "";
+        const lastLine = lines.filter(l => l.trim()).slice(-2).map(l => l.trim()).join("\n") || "";
         return { name, lastLine };
       }),
     );
@@ -1043,9 +1042,9 @@ const routes: Record<
   },
 
   "POST /api/ralph/dismiss": async (req, res) => {
-    const body = await parseBody<{ project?: string }>(req, res);
+    const body = await parseBody<{ project?: string; deletePlan?: boolean }>(req, res);
     if (!body) return;
-    const { project } = body;
+    const { project, deletePlan } = body;
     if (!project || !isValidProjectName(project)) {
       return json(res, { error: "invalid project name" }, 400);
     }
@@ -1054,23 +1053,41 @@ const routes: Record<
     if (status?.active) {
       return json(res, { error: "cannot dismiss active loop — cancel it first" }, 409);
     }
-    if (!status?.planFile) {
-      return json(res, { error: "no plan file found" }, 404);
+    if (!status) {
+      return json(res, { error: "no ralph log found" }, 404);
     }
-    // validate plan file name from log to prevent path traversal
-    if (!/^[a-zA-Z0-9._\- ]+\.md$/.test(status.planFile) || status.planFile.includes("..")) {
-      return json(res, { error: "invalid plan file name in log" }, 400);
+
+    const SAFE_FILENAME = /^[a-zA-Z0-9._\- ]+$/;
+    const deleted: string[] = [];
+    const failed: string[] = [];
+
+    const tryDelete = (path: string, label: string) => {
+      try {
+        if (existsSync(path)) { unlinkSync(path); deleted.push(label); }
+      } catch { failed.push(label); }
+    };
+
+    // always delete .ralph.log (hides the card)
+    tryDelete(join(projectDir, ".ralph.log"), ".ralph.log");
+
+    // always clean up stale .ralph.lock
+    tryDelete(join(projectDir, ".ralph.lock"), ".ralph.lock");
+
+    // always delete progress file if valid
+    if (status.progressFile && SAFE_FILENAME.test(status.progressFile) && !status.progressFile.includes("..")) {
+      tryDelete(join(projectDir, status.progressFile), status.progressFile);
     }
-    const planPath = join(projectDir, status.planFile);
-    if (!existsSync(planPath)) {
-      return json(res, { error: "plan file already deleted" }, 404);
+
+    // conditionally delete plan file
+    if (deletePlan && status.planFile) {
+      if (SAFE_FILENAME.test(status.planFile) && !status.planFile.includes("..")) {
+        tryDelete(join(projectDir, status.planFile), status.planFile);
+      } else {
+        failed.push(status.planFile);
+      }
     }
-    try {
-      unlinkSync(planPath);
-      json(res, { ok: true, deleted: status.planFile });
-    } catch {
-      json(res, { error: "failed to delete plan file" }, 500);
-    }
+
+    json(res, { ok: true, deleted, failed });
   },
 };
 
@@ -1433,17 +1450,11 @@ const server = createServer(async (req, res) => {
     // Static file fallback from embedded assets
     const safePath = url.pathname.replace(/^\/+/, "");
     if (safePath && !safePath.includes("\0") && !safePath.includes("/")) {
-      const asset = assets.get(safePath);
-      if (asset) {
-        const hdrs: Record<string, string> = { "Content-Type": asset.mime };
-        if (asset.mime === "text/html") hdrs["Content-Security-Policy"] = CSP;
-        res.writeHead(200, hdrs);
-        res.end(asset.content);
-        return;
-      }
+      serveFile(res, safePath);
+    } else {
+      res.writeHead(404);
+      res.end("Not Found");
     }
-    res.writeHead(404);
-    res.end("Not Found");
   }
 });
 
@@ -1483,6 +1494,16 @@ server.on("upgrade", async (req, socket, head) => {
 });
 
 // SE-18: bind to localhost only — Tailscale proxy handles external access
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`wolfpack: port ${PORT} is already in use.`);
+    console.error("Run 'wolfpack service stop' first, or choose a different port.");
+    process.exit(1);
+  }
+  console.error(`wolfpack: server error — ${err.message}`);
+  process.exit(1);
+});
+
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`Wolfpack PWA: http://localhost:${PORT}/`);
 });

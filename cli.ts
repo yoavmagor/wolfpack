@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 import { execSync, execFileSync } from "node:child_process";
 import {
+  chmodSync,
   closeSync,
   constants as fsConstants,
+  copyFileSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -19,6 +21,10 @@ import { printQR } from "./qr.js";
 const IS_MACOS = platform() === "darwin";
 const IS_LINUX = platform() === "linux";
 
+// read from package.json at compile time via bun's import
+import pkg from "./package.json";
+const VERSION: string = pkg.version;
+
 const WOLFPACK_DIR = join(homedir(), ".wolfpack");
 const CONFIG_PATH = join(WOLFPACK_DIR, "config.json");
 
@@ -28,6 +34,7 @@ interface Config {
   tailscaleHostname?: string;
 }
 
+let hasTTY = true;
 function ask(question: string): string {
   process.stdout.write(question);
   const buf = Buffer.alloc(1024);
@@ -35,9 +42,9 @@ function ask(question: string): string {
   try {
     fd = openSync("/dev/tty", "r");
   } catch {
-    // No tty (piped context) — read from stdin
-    const n = readSync(0, buf, 0, buf.length, null);
-    return buf.subarray(0, n).toString("utf-8").split("\n")[0].trim();
+    hasTTY = false;
+    // No tty — return empty so callers use defaults
+    return "";
   }
   const n = readSync(fd, buf, 0, buf.length, null);
   closeSync(fd);
@@ -96,6 +103,37 @@ function sleepSync(ms: number) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function isPortInUse(port: number): boolean {
+  try {
+    const p = Math.floor(Number(port));
+    if (!Number.isFinite(p) || p < 1 || p > 65535) return false;
+    // execFileSync with array args — no shell interpolation
+    if (IS_MACOS) {
+      const out = execFileSync("lsof", ["-i", `:${p}`, "-t"], {
+        encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      return out.length > 0;
+    } else {
+      const out = execFileSync("ss", ["-tlnp", "sport", "=", `:${p}`], {
+        encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      // ss always outputs a header line, so >1 line means a listener exists
+      return out.split("\n").length > 1;
+    }
+  } catch {
+    return false;
+  }
+}
+
+function waitForPortFree(port: number, timeoutMs = 10000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!isPortInUse(port)) return;
+    sleepSync(500);
+  }
+  print(yellow(`  Warning: port ${port} still in use after ${timeoutMs / 1000}s`));
+}
+
 const TAILSCALE_MAC_CLI =
   "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 
@@ -121,7 +159,6 @@ function check(name: string, cmd: string): boolean {
     return false;
   }
 }
-
 
 function remoteUrl(config: Config): string | null {
   if (!config.tailscaleHostname) return null;
@@ -187,10 +224,12 @@ async function setup() {
     }
 
     print(`  Will install: ${bold(missing.join(", "))}`);
-    const proceed = ask("  Proceed? (y/n) ");
-    if (proceed.toLowerCase() !== "y") {
-      print(red("  Aborted."));
-      process.exit(1);
+    if (hasTTY) {
+      const proceed = ask("  Proceed? (y/n) ");
+      if (proceed.toLowerCase() !== "y") {
+        print(red("  Aborted."));
+        process.exit(1);
+      }
     }
 
     if (IS_MACOS) {
@@ -247,9 +286,7 @@ async function setup() {
           verifyFail = true;
         }
       } else {
-        if (check(pkg, `${pkg} --version`)) {
-          // check() already prints ✓
-        } else {
+        if (!check(pkg, `${pkg} --version`)) {
           verifyFail = true;
         }
       }
@@ -265,8 +302,7 @@ async function setup() {
 
   // Dev directory
   const defaultDev = join(homedir(), "Dev");
-  const rawDevDir =
-    (ask(`  Projects directory [${defaultDev}]: `)) || defaultDev;
+  const rawDevDir = ask(`  Projects directory [${defaultDev}]: `) || defaultDev;
   const devDir = resolve(rawDevDir);
 
   // Validate devDir
@@ -400,13 +436,18 @@ async function setup() {
   print(green("  Setup complete!"));
   print(`  Config saved to ${dim(CONFIG_PATH)}`);
   print("");
-  // Offer launchd service
-  const installService = ask(
-    "  Start wolfpack automatically on login? (y/n) ",
-  );
-  if (installService.toLowerCase() === "y") {
+  // Offer launchd service — default yes (interactive), skip (non-interactive)
+  const installService = hasTTY
+    ? ask("  Start wolfpack automatically on login? [Y/n] ")
+    : "n";
+  let serviceInstalled = false;
+  if (!hasTTY) {
+    print(dim("  Non-interactive mode — skipping service install."));
+    print(dim("  Run 'wolfpack service install' to start automatically on login."));
+  } else if (installService.toLowerCase() !== "n") {
     try {
       serviceInstall();
+      serviceInstalled = true;
     } catch (e) {
       print(red(`  Service install failed: ${e}`));
     }
@@ -422,6 +463,13 @@ async function setup() {
   print("");
   printQR(url);
   print("");
+
+  if (serviceInstalled) {
+    print(green("  Wolfpack is running as a background service."));
+    print(dim("  Use 'wolfpack service stop' to stop, 'wolfpack service status' to check."));
+    print("");
+    process.exit(0);
+  }
 }
 
 async function start() {
@@ -429,33 +477,43 @@ async function start() {
   if (!config) {
     print("  No config found. Running setup first...\n");
     await setup();
-    config = loadConfig();
-    if (!config) {
-      print(red("  Setup completed but config is still missing."));
-      process.exit(1);
-    }
+    // setup calls process.exit(0) on successful service install.
+    // if we're still here, service install failed or was declined — exit cleanly.
+    process.exit(0);
   }
 
-  // Inject config into env for serve.ts
-  process.env.WOLFPACK_DEV_DIR = config.devDir;
-  process.env.WOLFPACK_PORT = String(config.port);
+  // Service daemon mode — just start the server
+  if (process.env.WOLFPACK_SERVICE === "1") {
+    process.env.WOLFPACK_DEV_DIR = config.devDir;
+    process.env.WOLFPACK_PORT = String(config.port);
+    await import("./serve.js");
+    return;
+  }
+
+  // CLI invocation — ensure service is running, never start foreground
+  const url = remoteUrl(config);
+  const wasRunning = isServiceRunning();
+  try {
+    serviceInstall();
+  } catch (e) {
+    print(red(`  Service install failed: ${e}`));
+    print(dim("  Run 'wolfpack service install' to retry."));
+  }
+  if (wasRunning && !isServiceRunning()) {
+    print(yellow("  Service was running but didn't restart."));
+    print(yellow(`  Run ${bold("wolfpack service start")} to restart it.`));
+  }
 
   print(dim(WOLF));
   print(bold("  WOLFPACK"));
-  print(dim("  The pack is online."));
   print("");
-  print(`  Projects: ${dim(config.devDir)}`);
   print(`  Local:    ${dim(`http://localhost:${config.port}/`)}`);
-  const url = remoteUrl(config);
   if (url) print(`  Remote:   ${dim(url)}`);
   print("");
   print(dim("  Scan to open on your phone:"));
   print("");
   printQR(url ?? `http://localhost:${config.port}/`);
   print("");
-
-  // Import and run serve
-  await import("./serve.js");
 }
 
 // ── Service management (launchd on macOS, systemd on Linux) ──
@@ -489,13 +547,23 @@ function programArgs(): string[] {
   if (isBunRuntime && process.argv[1]) {
     return [exe, resolve(process.argv[1])];
   }
+  // Copy binary to stable path so service survives cache clearing
+  const stableBin = join(WOLFPACK_DIR, "bin", "wolfpack");
+  if (exe !== stableBin && existsSync(exe)) {
+    try {
+      mkdirSync(join(WOLFPACK_DIR, "bin"), { recursive: true });
+      copyFileSync(exe, stableBin);
+      chmodSync(stableBin, 0o755);
+      return [stableBin];
+    } catch {}
+  }
   return [exe];
 }
 
 function generatePlist(): string {
   const args = programArgs();
   const config = loadConfig();
-  const env: Record<string, string> = {};
+  const env: Record<string, string> = { WOLFPACK_SERVICE: "1" };
   if (config?.devDir) env.WOLFPACK_DEV_DIR = config.devDir;
   if (config?.port) env.WOLFPACK_PORT = String(config.port);
 
@@ -545,6 +613,7 @@ function generateSystemdUnit(): string {
   const config = loadConfig();
   const envLines: string[] = [
     `Environment=PATH=/usr/local/bin:/usr/bin:/bin`,
+    `Environment=WOLFPACK_SERVICE=1`,
   ];
   if (config?.devDir) envLines.push(`Environment="WOLFPACK_DEV_DIR=${systemdEsc(config.devDir)}"`);
   if (config?.port) envLines.push(`Environment="WOLFPACK_PORT=${config.port}"`);
@@ -566,11 +635,36 @@ WantedBy=default.target
 `;
 }
 
+// launchd domain target for the current user (e.g. "gui/501")
+const LAUNCHD_DOMAIN = `gui/${process.getuid()}`;
+const LAUNCHD_TARGET = `${LAUNCHD_DOMAIN}/${PLIST_LABEL}`;
+
+function launchdBootout() {
+  try {
+    execSync(`launchctl bootout ${LAUNCHD_TARGET} 2>/dev/null`);
+  } catch {}
+}
+
+function launchdBootstrap() {
+  execSync(`launchctl bootstrap ${LAUNCHD_DOMAIN} "${PLIST_PATH}"`);
+  execSync(`launchctl kickstart ${LAUNCHD_TARGET}`);
+}
+
 function serviceInstall() {
   const config = loadConfig();
   if (!config) {
     print(red("  Run 'wolfpack setup' first."));
     process.exit(1);
+  }
+
+  // stop gracefully first (handles both macOS and Linux)
+  if (isServiceRunning()) {
+    serviceStop();
+  }
+  // always wait for port — service may appear "stopped" to launchctl/systemd
+  // while the process is still dying and holding the port
+  if (isPortInUse(config.port)) {
+    waitForPortFree(config.port);
   }
 
   if (IS_MACOS) {
@@ -580,11 +674,9 @@ function serviceInstall() {
     });
     writeFileSync(PLIST_PATH, plist);
 
-    // Unload first if already loaded
-    try {
-      execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null`);
-    } catch {}
-    execSync(`launchctl load "${PLIST_PATH}"`);
+    // Stop existing service, then register and start fresh
+    launchdBootout();
+    launchdBootstrap();
 
     print("");
     print(green("  Wolfpack service installed and started."));
@@ -631,9 +723,7 @@ function serviceInstall() {
 
 function serviceUninstall() {
   if (IS_MACOS) {
-    try {
-      execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null`);
-    } catch {}
+    launchdBootout();
     try {
       unlinkSync(PLIST_PATH);
     } catch {}
@@ -657,7 +747,7 @@ function serviceUninstall() {
 function serviceStop() {
   try {
     if (IS_MACOS) {
-      execSync(`launchctl unload "${PLIST_PATH}"`);
+      launchdBootout();
     } else if (IS_LINUX) {
       execSync(`systemctl --user stop ${SYSTEMD_SERVICE}`);
     }
@@ -670,7 +760,7 @@ function serviceStop() {
 function serviceStart() {
   try {
     if (IS_MACOS) {
-      execSync(`launchctl load "${PLIST_PATH}"`);
+      launchdBootstrap();
     } else if (IS_LINUX) {
       execSync(`systemctl --user start ${SYSTEMD_SERVICE}`);
     }
@@ -680,19 +770,33 @@ function serviceStart() {
   }
 }
 
-function serviceStatus() {
-  if (IS_MACOS) {
-    try {
-      const out = execSync(`launchctl list ${PLIST_LABEL} 2>&1`, {
+function isServiceRunning(): boolean {
+  try {
+    if (IS_MACOS) {
+      const out = execSync(`launchctl print ${LAUNCHD_TARGET} 2>&1`, {
         encoding: "utf-8",
       });
-      if (out.includes("PID")) {
-        const pidMatch = out.match(/"PID"\s*=\s*(\d+)/);
-        print(
-          green(
-            `  Wolfpack is running${pidMatch ? ` (PID ${pidMatch[1]})` : ""}`,
-          ),
-        );
+      return /pid\s*=\s*\d+/i.test(out);
+    } else if (IS_LINUX) {
+      const out = execSync(`systemctl --user is-active ${SYSTEMD_SERVICE} 2>&1`, {
+        encoding: "utf-8",
+      }).trim();
+      return out === "active";
+    }
+  } catch {}
+  return false;
+}
+
+function serviceStatus() {
+  print(dim(`  Version: ${VERSION}`));
+  if (IS_MACOS) {
+    try {
+      const out = execSync(`launchctl print ${LAUNCHD_TARGET} 2>&1`, {
+        encoding: "utf-8",
+      });
+      const pidMatch = out.match(/pid\s*=\s*(\d+)/i);
+      if (pidMatch) {
+        print(green(`  Wolfpack is running (PID ${pidMatch[1]})`));
       } else {
         print(dim("  Wolfpack service is loaded but not running."));
       }
@@ -730,18 +834,15 @@ function serviceStatus() {
 }
 
 function uninstall() {
-  // Stop and remove launchd service
   serviceUninstall();
 
-  // Remove config dir
-  const rmDir = WOLFPACK_DIR;
   try {
-    rmSync(rmDir, { recursive: true, force: true });
+    rmSync(WOLFPACK_DIR, { recursive: true, force: true });
   } catch {}
 
   print("");
   print(green("  Wolfpack uninstalled."));
-  print(dim(`  Removed ${rmDir}`));
+  print(dim(`  Removed ${WOLFPACK_DIR}`));
   print("");
   print(dim("  The wolfpack binary remains at: " + process.execPath));
   print(dim("  Delete it manually if you want a full removal."));
