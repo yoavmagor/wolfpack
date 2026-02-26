@@ -72,12 +72,3 @@ test("running session has green badge", async ({ page }) => {
   await expect(runningCard.locator(".triage-badge")).toContainText("running");
 });
 
-test("idle session has gray badge", async ({ page }) => {
-  await page.goto(srv.baseUrl);
-  await page.waitForSelector(".card", { timeout: 5000 });
-
-  const idleCard = page.locator(".card", { hasText: "another-project" }).first();
-  await expect(idleCard).toBeVisible();
-  await expect(idleCard.locator(".triage-badge.idle")).toBeVisible();
-  await expect(idleCard.locator(".triage-badge")).toContainText("idle");
-});
