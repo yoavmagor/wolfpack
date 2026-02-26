@@ -63,7 +63,7 @@ async function _realTmuxListWithActivity(): Promise<{ name: string; activity: nu
     const { stdout } = await exec(TMUX, [
       "list-sessions",
       "-F",
-      "#{session_name}|||#{pane_current_path}|||#{session_activity}",
+      "#{session_name}|||#{pane_current_path}|||#{window_activity}",
     ]);
     const SEP = "|||";
     return stdout
