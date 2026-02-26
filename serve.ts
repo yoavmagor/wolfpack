@@ -38,6 +38,9 @@ import {
   clampCols,
   clampRows,
 } from "./validation.js";
+import { validateRequestJwt } from "./auth.js";
+import { classifySession, TRIAGE_ORDER } from "./triage.js";
+import { recordEvent, getTimeline, getRecentEvents, clearTimeline, detectTriageTransition, pruneTimelines } from "./timeline.js";
 import pkg from "./package.json";
 
 const exec = promisify(execFile);
@@ -105,6 +108,8 @@ if (!TAILNET_SUFFIX) {
 let cachedPeers: { url: string; name: string }[] = [];
 
 function isAllowedOrigin(origin: string): boolean {
+  // In test mode, allow any localhost origin (random port)
+  if (process.env.WOLFPACK_TEST && origin.startsWith("http://127.0.0.1:")) return true;
   if (ALLOWED_ORIGINS.has(origin)) return true;
   // Allow devices on the same tailnet only
   if (TAILNET_SUFFIX) {
@@ -149,19 +154,36 @@ function saveSettings(s: Settings): void {
 
 // Default tmuxList — overridable via __setTmuxList for testing
 let _tmuxListFn: () => Promise<string[]> = _realTmuxList;
+let _tmuxListWithActivityFn: () => Promise<{ name: string; activity: number }[]> = _realTmuxListWithActivity;
+
+function assertTestMode(hook: string): void {
+  if (!process.env.WOLFPACK_TEST) throw new Error(`${hook}() is only available in test mode (WOLFPACK_TEST=1)`);
+}
 
 /** Test hook: override tmuxList to avoid requiring real tmux */
 export function __setTmuxList(fn: () => Promise<string[]>): void {
+  assertTestMode("__setTmuxList");
   _tmuxListFn = fn;
+}
+
+/** Test hook: override tmuxListWithActivity */
+export function __setTmuxListWithActivity(fn: () => Promise<{ name: string; activity: number }[]>): void {
+  assertTestMode("__setTmuxListWithActivity");
+  _tmuxListWithActivityFn = fn;
 }
 
 /** Test hook: expose activePtySessions for assertions */
 export function __getActivePtySessions(): Map<string, { viewers: Set<any>; alive: boolean }> {
+  assertTestMode("__getActivePtySessions");
   return activePtySessions as any;
 }
 
 async function tmuxList(): Promise<string[]> {
   return _tmuxListFn();
+}
+
+async function tmuxListWithActivity(): Promise<{ name: string; activity: number }[]> {
+  return _tmuxListWithActivityFn();
 }
 
 async function _realTmuxList(): Promise<string[]> {
@@ -187,9 +209,36 @@ async function _realTmuxList(): Promise<string[]> {
   }
 }
 
+async function _realTmuxListWithActivity(): Promise<{ name: string; activity: number }[]> {
+  try {
+    const { stdout } = await exec(TMUX, [
+      "list-sessions",
+      "-F",
+      "#{session_name}|||#{pane_current_path}|||#{session_activity}",
+    ]);
+    const SEP = "|||";
+    return stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .filter((line) => {
+        const parts = line.split(SEP);
+        return parts.length >= 3 && parts[1].startsWith(DEV_DIR);
+      })
+      .filter((line) => !line.split(SEP)[0].startsWith("wp_"))
+      .map((line) => {
+        const parts = line.split(SEP);
+        return { name: parts[0], activity: parseInt(parts[2], 10) || 0 };
+      });
+  } catch {
+    return [];
+  }
+}
+
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function tmuxSend(
+async function _realTmuxSend(
   session: string,
   text: string,
   noEnter = false,
@@ -201,11 +250,41 @@ async function tmuxSend(
   }
 }
 
-async function tmuxSendKey(session: string, key: string): Promise<void> {
+async function _realTmuxSendKey(session: string, key: string): Promise<void> {
   await exec(TMUX, ["send-keys", "-t", session, key]);
 }
 
-async function tmuxResize(
+let _tmuxSendFn: (session: string, text: string, noEnter?: boolean) => Promise<void> = _realTmuxSend;
+let _tmuxSendKeyFn: (session: string, key: string) => Promise<void> = _realTmuxSendKey;
+
+/** Test hook: override tmuxSend to avoid requiring real tmux */
+export function __setTmuxSend(fn: (session: string, text: string, noEnter?: boolean) => Promise<void>): void {
+  assertTestMode("__setTmuxSend");
+  _tmuxSendFn = fn;
+}
+
+/** Test hook: override tmuxSendKey to avoid requiring real tmux */
+export function __setTmuxSendKey(fn: (session: string, key: string) => Promise<void>): void {
+  assertTestMode("__setTmuxSendKey");
+  _tmuxSendKeyFn = fn;
+}
+
+async function tmuxSend(session: string, text: string, noEnter = false): Promise<void> {
+  return _tmuxSendFn(session, text, noEnter);
+}
+
+async function tmuxSendKey(session: string, key: string): Promise<void> {
+  return _tmuxSendKeyFn(session, key);
+}
+
+let _tmuxResizeFn: (session: string, cols: number, rows: number) => Promise<void> = _realTmuxResize;
+/** Test hook: override tmuxResize to avoid requiring real tmux */
+export function __setTmuxResize(fn: (session: string, cols: number, rows: number) => Promise<void>): void {
+  assertTestMode("__setTmuxResize");
+  _tmuxResizeFn = fn;
+}
+
+async function _realTmuxResize(
   session: string,
   cols: number,
   rows: number,
@@ -221,7 +300,11 @@ async function tmuxResize(
   ]);
 }
 
-async function capturePane(session: string): Promise<string> {
+async function tmuxResize(session: string, cols: number, rows: number): Promise<void> {
+  return _tmuxResizeFn(session, cols, rows);
+}
+
+let _capturePane: (session: string) => Promise<string> = async (session) => {
   try {
     const { stdout } = await exec(TMUX, [
       "capture-pane", "-t", session, "-p", "-J", "-S", "-2000",
@@ -230,6 +313,29 @@ async function capturePane(session: string): Promise<string> {
   } catch {
     return "";
   }
+};
+
+async function capturePane(session: string): Promise<string> {
+  return _capturePane(session);
+}
+
+// Separate cache for /api/sessions triage — avoids O(n) tmux execs on rapid polling
+// Not used by terminal WS handler which needs real-time pane content
+const _triageCacheMap = new Map<string, { content: string; ts: number }>();
+const TRIAGE_CACHE_TTL_MS = 500;
+
+async function capturePaneForTriage(session: string): Promise<string> {
+  const cached = _triageCacheMap.get(session);
+  if (cached && Date.now() - cached.ts < TRIAGE_CACHE_TTL_MS) return cached.content;
+  const content = await _capturePane(session);
+  _triageCacheMap.set(session, { content, ts: Date.now() });
+  return content;
+}
+
+/** Test hook: override capturePane (used by /api/sessions triage classification) */
+export function __setCapturePane(fn: (session: string) => Promise<string>): void {
+  assertTestMode("__setCapturePane");
+  _capturePane = fn;
 }
 
 async function tmuxNewSession(
@@ -501,6 +607,20 @@ function json(res: ServerResponse, data: unknown, status = 200): void {
   res.end(JSON.stringify(data));
 }
 
+const PUBLIC_API_PATHS = new Set(["/api/info"]);
+
+function shouldAuthenticateApiPath(pathname: string): boolean {
+  return pathname.startsWith("/api/") && !PUBLIC_API_PATHS.has(pathname);
+}
+
+function writeUnauthorized(res: ServerResponse): void {
+  res.writeHead(401, {
+    "Content-Type": "application/json",
+    "WWW-Authenticate": 'Bearer realm="wolfpack"',
+  });
+  res.end(JSON.stringify({ error: "unauthorized" }));
+}
+
 const MAX_BODY = 64 * 1024; // 64KB
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -539,7 +659,10 @@ function serveFile(res: ServerResponse, filename: string): void {
     res.end("Not Found");
     return;
   }
-  const headers: Record<string, string> = { "Content-Type": asset.mime };
+  const headers: Record<string, string> = {
+    "Content-Type": asset.mime,
+    "Cache-Control": "no-cache",
+  };
   if (asset.mime === "text/html") {
     headers["Content-Security-Policy"] = CSP;
   }
@@ -637,16 +760,29 @@ const routes: Record<
   },
 
   "GET /api/sessions": async (_req, res) => {
-    const sessions = await tmuxList();
+    const sessionsWithActivity = await tmuxListWithActivity();
+    const now = Math.floor(Date.now() / 1000);
+    const activeNames = new Set<string>();
     const results = await Promise.all(
-      sessions.map(async (name) => {
-        const pane = await capturePane(name);
+      sessionsWithActivity.map(async ({ name, activity }) => {
+        activeNames.add(name);
+        const pane = await capturePaneForTriage(name);
         const lines = pane.trimEnd().split("\n");
         const lastLine = lines.filter(l => l.trim()).slice(-2).map(l => l.trim()).join("\n") || "";
-        return { name, lastLine };
+        const activityAge = now - activity;
+        const triage = classifySession(lastLine, activityAge);
+        detectTriageTransition(name, triage);
+        return { name, lastLine, triage };
       }),
     );
-    json(res, { sessions: results });
+    pruneTimelines(activeNames);
+    const recentEvents = getRecentEvents(5);
+    const enriched = results.map(r => ({
+      ...r,
+      events: recentEvents.get(r.name) || [],
+    }));
+    enriched.sort((a, b) => TRIAGE_ORDER[a.triage] - TRIAGE_ORDER[b.triage]);
+    json(res, { sessions: enriched });
   },
 
   "POST /api/send": async (req, res) => {
@@ -658,6 +794,7 @@ const routes: Record<
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
     await tmuxSend(session, text, !!noEnter);
+    recordEvent(session, "command", text.length > 80 ? text.slice(0, 80) + "..." : text);
     json(res, { ok: true });
   },
 
@@ -703,6 +840,7 @@ const routes: Record<
 
     const sessionName = await uniqueSessionName(folderName);
     await tmuxNewSession(sessionName, projectDir, cmd);
+    recordEvent(sessionName, "opened");
     json(res, { ok: true, session: sessionName });
   },
 
@@ -786,7 +924,19 @@ const routes: Record<
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
     await exec(TMUX, ["kill-session", "-t", session]);
+    clearTimeline(session);
     json(res, { ok: true });
+  },
+
+  "GET /api/timeline": async (req, res) => {
+    const url = new URL(req.url!, `http://${req.headers.host}`);
+    const session = url.searchParams.get("session");
+    if (!session) return json(res, { error: "missing session param" }, 400);
+    if (!(await isAllowedSession(session)))
+      return json(res, { error: "session not found" }, 404);
+    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+    const events = getTimeline(session, Math.min(Math.max(limit, 1), 100));
+    json(res, { session, events });
   },
 
   "POST /api/resize": async (req, res) => {
@@ -828,6 +978,30 @@ const routes: Record<
     json(res, { pane });
   },
 
+  "GET /api/git-status": async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const session = url.searchParams.get("session");
+    if (!session) return json(res, { error: "missing session param" }, 400);
+    if (!isValidProjectName(session))
+      return json(res, { error: "invalid session name" }, 400);
+    if (!(await isAllowedSession(session)))
+      return json(res, { error: "session not found" }, 404);
+    const projectDir = join(DEV_DIR, session);
+    if (!existsSync(projectDir))
+      return json(res, { error: "project directory not found" }, 404);
+    try {
+      const output = await new Promise<string>((resolve, reject) => {
+        execFile("git", ["status", "--short", "--branch"], { cwd: projectDir }, (err, stdout, stderr) => {
+          if (err) return reject(new Error(stderr || err.message));
+          resolve(stdout);
+        });
+      });
+      json(res, { status: output });
+    } catch (e: any) {
+      json(res, { error: e.message || "git status failed" }, 500);
+    }
+  },
+
   // ── Ralph loop API ──
 
   "GET /api/ralph": async (req, res) => {
@@ -847,7 +1021,14 @@ const routes: Record<
         try {
           const ctrl = new AbortController();
           const timer = setTimeout(() => ctrl.abort(), 3000);
-          const r = await fetch(peer.url + "/api/ralph", { signal: ctrl.signal });
+          const authHeader = Array.isArray(req.headers.authorization)
+            ? req.headers.authorization[0]
+            : req.headers.authorization;
+          const headers = authHeader ? { Authorization: authHeader } : undefined;
+          const r = await fetch(peer.url + "/api/ralph", {
+            signal: ctrl.signal,
+            headers,
+          });
           clearTimeout(timer);
           const data = await r.json() as { loops: any[] };
           return (data.loops || []).map((l: any) => ({ ...l, machineName: peer.name, machineUrl: peer.url }));
@@ -1176,29 +1357,29 @@ const routes: Record<
 
 const wss = new WebSocketServer({ noServer: true });
 
-async function capturePaneAnsi(session: string): Promise<string> {
-  try {
-    // -e: include ANSI escapes for color rendering
-    // -S -2000: capture scrollback history so desktop terminal can scroll back
-    const { stdout } = await exec(TMUX, ["capture-pane", "-t", session, "-p", "-e", "-S", "-2000"]);
-    return stdout;
-  } catch {
-    return "";
-  }
-}
-
 function handleTerminalWs(ws: WebSocket, session: string): void {
   let prev = "";
   let alive = true;
   let sized = false;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let updating = false;
+  let nextSessionCheckAt = 0;
 
   async function sendUpdate() {
     if (!alive || updating) return;
     updating = true;
     try {
-      const pane = await capturePaneAnsi(session);
+      const now = Date.now();
+      if (now >= nextSessionCheckAt) {
+        nextSessionCheckAt = now + 1000;
+        if (!(await isAllowedSession(session))) {
+          alive = false;
+          updating = false;
+          try { ws.close(4001, "session ended"); } catch {}
+          return;
+        }
+      }
+      const pane = await capturePane(session);
       if (pane !== prev) {
         prev = pane;
         ws.send(JSON.stringify({ type: "output", data: pane }));
@@ -1244,6 +1425,7 @@ function handleTerminalWs(ws: WebSocket, session: string): void {
       const msg = JSON.parse(str);
       if (msg.type === "input" && typeof msg.data === "string") {
         await tmuxSend(session, msg.data, true);
+        recordEvent(session, "command", msg.data.length > 80 ? msg.data.slice(0, 80) + "..." : msg.data);
         // immediate update after input for snappy feedback
         setTimeout(sendUpdate, 15);
       } else if (msg.type === "key" && typeof msg.key === "string") {
@@ -1294,7 +1476,7 @@ function handleTerminalWs(ws: WebSocket, session: string): void {
 // ── PTY WebSocket handler (xterm.js direct) ──
 
 // Track ownership with a generation counter to prevent cross-connection cleanup races
-const PTY_TEARDOWN_GRACE_MS = 10_000; // keep PTY alive 10s after last viewer disconnects
+const PTY_TEARDOWN_GRACE_MS = 15_000; // keep PTY alive 15s after last viewer disconnects
 
 const activePtySessions = new Map<string, {
   viewers: Set<WebSocket>;
@@ -1422,7 +1604,7 @@ function handlePtyWs(ws: WebSocket, session: string): void {
     await exec(TMUX, ["new-session", "-d", "-t", session, "-s", ptySession], { timeout: 3000 }).catch(() => {});
     await exec(TMUX, ["set-option", "-t", ptySession, "status", "off"], { timeout: 2000 }).catch(() => {});
     await exec(TMUX, ["set-option", "-t", ptySession, "mouse", "on"], { timeout: 2000 }).catch(() => {});
-    await exec(TMUX, ["set-option", "-t", ptySession, "window-size", "largest"], { timeout: 2000 }).catch(() => {});
+    await exec(TMUX, ["set-option", "-t", ptySession, "window-size", "latest"], { timeout: 2000 }).catch(() => {});
 
     if (!entry.alive) return;
 
@@ -1458,14 +1640,18 @@ function handlePtyWs(ws: WebSocket, session: string): void {
       },
     });
     activePtySessions.set(session, entry as any);
-    // Force tmux redraw via SIGWINCH — must change size to actually trigger signal
-    setTimeout(() => {
-      if (entry.alive && entry.proc) {
-        try {
-          entry.proc.terminal!.resize(Math.max(20, cols - 1), rows);
-          entry.proc.terminal!.resize(cols, rows);
-        } catch {}
-      }
+    // Resize the original session to match the desktop client — undoes any
+    // mobile resize that may have shrunk the pane before the PTY connected.
+    // Then force SIGWINCH on the PTY terminal to trigger a full redraw.
+    setTimeout(async () => {
+      if (!entry.alive || !entry.proc) return;
+      try {
+        await exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 });
+      } catch {}
+      try {
+        entry.proc.terminal!.resize(Math.max(20, cols - 1), rows);
+        entry.proc.terminal!.resize(cols, rows);
+      } catch {}
     }, 100);
   }
 
@@ -1553,7 +1739,7 @@ const server = createServer(async (req, res) => {
     if (isAllowedOrigin(origin)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
       res.setHeader("Vary", "Origin");
     } else {
       res.writeHead(403, { "Content-Type": "application/json" });
@@ -1570,6 +1756,14 @@ const server = createServer(async (req, res) => {
   }
 
   const url = new URL(req.url ?? "/", "http://localhost");
+  if (shouldAuthenticateApiPath(url.pathname)) {
+    const auth = validateRequestJwt(req.headers, url, false);
+    if (!auth.ok) {
+      writeUnauthorized(res);
+      return;
+    }
+  }
+
   const key = `${req.method ?? "GET"} ${url.pathname}`;
   const handler = routes[key];
   if (handler) {
@@ -1600,7 +1794,20 @@ server.on("upgrade", async (req, socket, head) => {
     return;
   }
   const url = new URL(req.url ?? "/", "http://localhost");
-  if (url.pathname === "/ws/terminal") {
+  const isWsRoute =
+    url.pathname === "/ws/terminal" ||
+    url.pathname === "/ws/mobile" ||
+    url.pathname === "/ws/pty";
+  if (isWsRoute) {
+    const auth = validateRequestJwt(req.headers, url, true);
+    if (!auth.ok) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+  }
+
+  if (url.pathname === "/ws/terminal" || url.pathname === "/ws/mobile") {
     const session = url.searchParams.get("session");
     if (!session || !(await isAllowedSession(session))) {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");

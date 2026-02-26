@@ -66,29 +66,6 @@
         text-shadow: 0 0 8px rgba(0,255,65,0.3);
         white-space: nowrap;
       }
-      .session-select.chip {
-        border: 1px solid #282828;
-        border-radius: 2px;
-        padding: 5px 24px 5px 10px;
-        -webkit-appearance: none;
-        appearance: none;
-        background:
-          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='4'%3E%3Cpath d='M0 0l3 4 3-4z' fill='%2300ff41' fill-opacity='0.4'/%3E%3C/svg%3E")
-          no-repeat right 9px center #0a0a0a;
-        cursor: pointer;
-        transition: border-color 0.15s ease, box-shadow 0.15s ease;
-        -webkit-tap-highlight-color: transparent;
-        min-height: 28px;
-      }
-      .session-select.chip:focus {
-        outline: none;
-        border-color: #00ff41;
-        box-shadow: 0 0 0 1px #00ff4130;
-      }
-      .session-select.chip:active {
-        border-color: #00ff41;
-        background-color: #111;
-      }
       .header-right {
         display: flex;
         align-items: center;
@@ -164,6 +141,8 @@
         .view.animating {
           transition: opacity 0.15s ease;
         }
+        #kb-accessory { display: none !important; }
+        #kb-toggle { display: none !important; }
       }
 
       .list {
@@ -191,8 +170,23 @@
         transform: scale(0.98);
       }
       .card.attention { border-left-color: #ffcc00; }
+      .card.error-session { border-left-color: #cc3333; }
       .card.active-session { border-left-color: #00ff41; }
       .card.idle-session { border-left-color: #333; }
+      .triage-badge {
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        padding: 1px 5px;
+        border-radius: 2px;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      .triage-badge.needs-input { color: #ffcc00; background: #ffcc0015; }
+      .triage-badge.error { color: #cc3333; background: #cc333315; }
+      .triage-badge.running { color: #00ff41; background: #00ff4115; }
+      .triage-badge.idle { color: #555; background: #55555515; }
       .dot {
         width: 9px;
         height: 9px;
@@ -227,6 +221,28 @@
         transition: none !important;
         animation: none !important;
       }
+      /* reduced effects — suppress all glows/shadows */
+      body.reduced-effects * {
+        text-shadow: none !important;
+      }
+      body.reduced-effects *:not(header):not(.nav-icon):not(.session-card):not(.session-card *):not(button) {
+        box-shadow: none !important;
+      }
+      body.reduced-effects .scanlines::after { display: none !important; }
+      /* terminal font size presets */
+      body.term-size-small #terminal { font-size: 12px !important; line-height: 1.35 !important; }
+      body.term-size-medium #terminal { font-size: 13px !important; line-height: 1.45 !important; }
+      body.term-size-large #terminal { font-size: 14px !important; line-height: 1.55 !important; }
+      /* terminal wrap toggle */
+      body.term-wrap #terminal { white-space: pre-wrap !important; word-break: break-all !important; }
+      /* alternate font stack */
+      body.term-font-alt #terminal { font-family: "JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace !important; }
+      /* terminal preset button active state */
+      .term-size-btn.active, .term-font-btn.active {
+        border-color: rgba(0,255,65,0.5) !important;
+        color: #00ff41 !important;
+        background: rgba(0,255,65,0.05) !important;
+      }
       .dot.blue {
         background: #00ff41;
       }
@@ -240,6 +256,9 @@
         text-transform: uppercase;
         letter-spacing: 1.2px;
         text-shadow: 0 0 6px rgba(0,255,65,0.25);
+        display: flex;
+        align-items: center;
+        gap: 6px;
       }
       .card-preview {
         font-size: 11px;
@@ -255,6 +274,49 @@
       .card-info {
         flex: 1;
         min-width: 0;
+      }
+      .timeline-strip {
+        display: flex;
+        gap: 3px;
+        align-items: center;
+        margin-top: 3px;
+        overflow: hidden;
+      }
+      .tl-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        opacity: 0.7;
+      }
+      .tl-dot.tl-opened { background: #00ff41; }
+      .tl-dot.tl-prompt { background: #ffcc00; }
+      .tl-dot.tl-error { background: #ff4444; }
+      .tl-dot.tl-command { background: #4488ff; }
+      .tl-dot.tl-idle { background: #555; }
+      .tl-dot.tl-running { background: #00ff41; opacity: 0.5; }
+      .drawer-timeline {
+        display: flex;
+        gap: 2px;
+        align-items: center;
+        margin-left: auto;
+        flex-shrink: 0;
+        padding-left: 8px;
+      }
+      .drawer-timeline .tl-dot {
+        width: 5px;
+        height: 5px;
+      }
+      #header-timeline {
+        margin-top: 2px;
+      }
+      #header-timeline .timeline-strip {
+        gap: 4px;
+        justify-content: center;
+      }
+      #header-timeline .tl-dot {
+        width: 5px;
+        height: 5px;
       }
       @media (min-width: 769px) {
         .card {
@@ -308,66 +370,163 @@
         -webkit-overflow-scrolling: touch;
       }
 
-      #action-bar {
+      #jump-to-live {
         display: none;
-        gap: 6px;
-        padding: 8px 10px;
-        padding-bottom: max(8px, env(safe-area-inset-bottom));
-        background: rgba(17, 17, 17, 0.85);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border-top: 1px solid rgba(255, 255, 255, 0.06);
-      }
-      #action-bar.visible {
-        display: flex;
-      }
-      .action-btn {
-        flex: 1;
-        background: #1a1a1a;
-        border: 1px solid #2a2a2a;
-        border-radius: 10px;
-        padding: 10px 14px;
-        min-height: 48px;
-        color: #999;
-        font-size: 13px;
+        position: absolute;
+        bottom: 120px;
+        right: 12px;
+        z-index: 10;
+        background: rgba(0, 255, 65, 0.15);
+        border: 1px solid rgba(0, 255, 65, 0.5);
+        color: #00ff41;
+        font-size: 10px;
         font-family: inherit;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 1px;
+        padding: 6px 12px;
+        border-radius: 16px;
+        cursor: pointer;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        transition: opacity 0.15s ease, transform 0.15s ease;
+      }
+      #jump-to-live:active {
+        transform: scale(0.95);
+        background: rgba(0, 255, 65, 0.3);
+      }
+      #jump-to-live.visible {
+        display: block;
+      }
+
+
+      #cmd-palette {
+        display: none;
+        gap: 5px;
+        padding: 5px 10px 3px;
+        background: #111;
+        border-top: 1px solid #1a1a1a;
+        flex-shrink: 0;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      #cmd-palette::-webkit-scrollbar { display: none; }
+      #cmd-palette.visible { display: flex; }
+      .cmd-chip {
+        flex-shrink: 0;
+        background: linear-gradient(145deg, #1a1a1a 0%, #151515 100%);
+        border: 1px solid rgba(0, 170, 255, 0.3);
+        border-radius: 8px;
+        padding: 6px 12px;
+        min-height: 32px;
+        color: #66ccff;
+        font-size: 11px;
+        font-family: inherit;
+        font-weight: 600;
+        letter-spacing: 0.3px;
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
         transition: transform 0.1s ease, box-shadow 0.1s ease;
         display: flex;
         align-items: center;
         justify-content: center;
+        white-space: nowrap;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       }
-      .action-btn:active {
-        transform: scale(0.95);
-        background: #b0b0b0;
+      .cmd-chip:active {
+        transform: scale(0.93);
+        background: #66ccff;
         color: #0a0a0a;
-      }
-      .action-btn.primary {
-        border-color: rgba(0, 255, 65, 0.4);
-        color: #00ff41;
-      }
-      .action-btn.primary:active {
-        background: #00ff41;
-        color: #0a0a0a;
-        box-shadow: 0 0 12px rgba(0, 255, 65, 0.3);
-      }
-      .action-btn.danger {
-        border-color: rgba(204, 51, 51, 0.4);
-        color: #cc3333;
-      }
-      .action-btn.danger:active {
-        background: #cc3333;
-        color: #0a0a0a;
-        box-shadow: 0 0 12px rgba(204, 51, 51, 0.3);
-      }
-      .action-btn .arrow {
-        font-size: 16px;
+        box-shadow: 0 0 12px rgba(0, 170, 255, 0.3);
       }
 
+      #kb-accessory {
+        display: none;
+        gap: 6px;
+        padding: 5px 8px 3px;
+        background: #111;
+        border-top: 1px solid #1a1a1a;
+        flex-shrink: 0;
+        justify-content: flex-start;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+      }
+      #kb-accessory::-webkit-scrollbar { display: none; }
+      #kb-accessory.visible {
+        display: flex;
+      }
+      .kb-key {
+        flex-shrink: 0;
+        background: linear-gradient(145deg, #222 0%, #1a1a1a 100%);
+        border: 1px solid #333;
+        border-radius: 6px;
+        padding: 6px 10px;
+        min-width: 36px;
+        min-height: 32px;
+        color: #ccc;
+        font-size: 12px;
+        font-family: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        transition: transform 0.08s ease, background 0.08s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .kb-key:active {
+        transform: scale(0.9);
+        background: #444;
+        color: #fff;
+      }
+      .kb-key.kb-special {
+        color: #00ff41;
+        border-color: rgba(0, 255, 65, 0.3);
+      }
+      .kb-key.kb-special:active {
+        background: #00ff41;
+        color: #0a0a0a;
+      }
+      .kb-key.kb-danger {
+        color: #cc3333;
+        border-color: rgba(204, 51, 51, 0.3);
+        min-width: 58px;
+        min-height: 38px;
+        font-size: 15px;
+        font-weight: 700;
+        padding: 8px 16px;
+      }
+      .kb-key.kb-danger:active {
+        background: #cc3333;
+        color: #0a0a0a;
+      }
+      .kb-key.kb-git {
+        color: #f0883e;
+        border-color: rgba(240, 136, 62, 0.3);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+      }
+      .kb-key.kb-git:active {
+        background: #f0883e;
+        color: #0a0a0a;
+      }
+      .kb-key.kb-insert {
+        color: #ff9900;
+        border-color: rgba(255, 153, 0, 0.3);
+        font-weight: 700;
+        font-size: 14px;
+      }
+      .kb-key.kb-insert:active {
+        background: #ff9900;
+        color: #0a0a0a;
+      }
       #input-bar {
         display: flex;
         gap: 6px;
@@ -396,6 +555,24 @@
       #input-bar textarea:focus {
         border-color: #00ff41;
         box-shadow: 0 0 4px #00ff4140;
+      }
+      #kb-toggle {
+        display: none;
+        background: transparent;
+        border: 1px solid #333;
+        border-radius: 8px;
+        color: #666;
+        font-size: 18px;
+        padding: 4px 8px;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        align-self: center;
+        flex-shrink: 0;
+        transition: color 0.15s ease, border-color 0.15s ease;
+      }
+      #kb-toggle.active {
+        color: #00ff41;
+        border-color: rgba(0, 255, 65, 0.3);
       }
       #msg-preview {
         display: none;
@@ -495,21 +672,6 @@
         text-transform: uppercase;
         letter-spacing: 1.5px;
       }
-      .session-select {
-        background: transparent;
-        border: none;
-        color: #00ff41;
-        font-size: 12px;
-        font-family: inherit;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-        padding: 0;
-        outline: none;
-        max-width: 200px;
-        -webkit-appearance: none;
-        appearance: none;
-      }
       .kill-btn {
         background: none;
         border: none;
@@ -548,6 +710,31 @@
       }
       .send-flash {
         animation: send-flash 0.3s ease-out;
+      }
+      /* Hold-to-send progress ring (UX-07) */
+      #send-btn {
+        position: relative;
+      }
+      #send-btn .hold-ring {
+        position: absolute;
+        inset: -2px;
+        border-radius: 12px;
+        border: 2px solid transparent;
+        pointer-events: none;
+        transition: none;
+      }
+      #send-btn.holding .hold-ring {
+        border-color: #00ff41;
+        animation: hold-fill var(--hold-duration, 400ms) linear forwards;
+      }
+      @keyframes hold-fill {
+        0% { clip-path: inset(0 100% 0 0); }
+        100% { clip-path: inset(0 0 0 0); }
+      }
+      #send-btn.hold-complete {
+        background: #00ff41;
+        color: #0a0a0a;
+        box-shadow: 0 0 16px rgba(0, 255, 65, 0.5);
       }
       .settings-gear {
         background: #1a1a1a;
@@ -1049,6 +1236,37 @@
       #drawer-backdrop.visible {
         display: block;
       }
+      #git-status-overlay {
+        display: none;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0, 0, 0, 0.85);
+        z-index: 200;
+        padding: 20px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      #git-status-overlay.visible { display: flex; align-items: center; justify-content: center; }
+      #git-status-overlay pre {
+        font-family: "SF Mono", "Menlo", "Consolas", monospace;
+        font-size: 13px;
+        color: #00ff41;
+        background: #0a0a0a;
+        border: 1px solid #222;
+        border-radius: 8px;
+        padding: 16px;
+        max-width: 100%;
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin: 0;
+        line-height: 1.5;
+      }
+      #git-status-overlay .overlay-hint {
+        color: #555;
+        font-size: 11px;
+        text-align: center;
+        margin-top: 12px;
+      }
       #session-drawer {
         position: fixed;
         left: 0; right: 0;
@@ -1166,6 +1384,10 @@
         border-left: 3px solid #ffcc00 !important;
         box-shadow: inset 4px 0 16px -8px rgba(255,204,0,0.12);
       }
+      .card.error-session {
+        border-left: 3px solid #cc3333 !important;
+        box-shadow: inset 4px 0 16px -8px rgba(204,51,51,0.12);
+      }
       .card.idle-session {
         border-left: 3px solid #1e1e1e !important;
       }
@@ -1214,14 +1436,19 @@
       .dot.purple {
         box-shadow: 0 0 6px #9b59b680, 0 0 14px #9b59b620 !important;
       }
+      .dot.red {
+        background: #cc3333 !important;
+        box-shadow: 0 0 6px #cc333360 !important;
+        animation: dot-alert 1s ease-in-out infinite !important;
+      }
 
       /* ── Button refinement — consistent radius, better tactile feel ── */
       .new-btn,
-      .action-btn,
       .back-btn,
       .settings-gear,
       .ralph-nav-btn,
       .machine-add-btn,
+      .kb-key,
       #input-bar button,
       #search-bar button,
       #session-chip,
@@ -1237,20 +1464,6 @@
       .new-btn:active {
         box-shadow: 0 0 16px rgba(0,255,65,0.3) !important;
       }
-      .action-btn {
-        font-weight: 600 !important;
-        letter-spacing: 1px !important;
-      }
-      .action-btn:active {
-        transform: scale(0.93) !important;
-      }
-      .action-btn.primary:active {
-        box-shadow: 0 0 20px rgba(0,255,65,0.35) !important;
-      }
-      .action-btn.danger:active {
-        box-shadow: 0 0 20px rgba(204,51,51,0.35) !important;
-      }
-
       /* ── Input fields — green caret, better focus ── */
       #input-bar textarea,
       .new-project-row input,
@@ -1365,10 +1578,7 @@
 
       /* ── Kill button ── */
       .kill-btn {
-        transition: color 0.15s ease, transform 0.1s ease !important;
-      }
-      .kill-btn:active {
-        transform: scale(1.15);
+        transition: color 0.15s ease !important;
       }
 
       /* ── Session chip ── */
@@ -1490,21 +1700,30 @@
           font-size: 22px !important;
         }
 
-        /* ── Action bar — larger buttons, better thumb reach ── */
-        #action-bar {
+        /* ── Command palette — larger on mobile ── */
+        #cmd-palette { gap: 6px !important; padding: 6px 10px 4px !important; }
+        .cmd-chip { min-height: 36px !important; font-size: 12px !important; padding: 6px 14px !important; border-radius: 10px !important; }
+
+        /* ── Keyboard accessory row — larger keys on mobile ── */
+        #kb-accessory {
           gap: 5px !important;
-          padding: 6px 8px !important;
-          padding-bottom: max(6px, env(safe-area-inset-bottom)) !important;
+          padding: 6px 10px 4px !important;
         }
-        .action-btn {
-          min-height: 52px !important;
-          font-size: 14px !important;
+        .kb-key {
+          min-height: 36px !important;
+          min-width: 40px !important;
+          font-size: 13px !important;
+          padding: 6px 12px !important;
           border-radius: 8px !important;
-          font-weight: 700 !important;
         }
-        .action-btn .arrow {
-          font-size: 18px !important;
+        .kb-key.kb-danger {
+          min-width: 72px !important;
+          min-height: 42px !important;
+          font-size: 16px !important;
+          padding: 10px 20px !important;
         }
+
+        #kb-toggle { display: flex !important; }
 
         /* ── Input bar — thumb-friendly ── */
         #input-bar {
@@ -1701,10 +1920,8 @@
           background: linear-gradient(to right, transparent, rgba(0,255,65,0.08)) !important;
         }
 
-        /* ── Terminal mobile — better readability ── */
+        /* ── Terminal mobile — padding only; font size controlled by term-size-* preset ── */
         #terminal {
-          font-size: 11px !important;
-          line-height: 1.4 !important;
           padding: 6px 10px !important;
         }
 
@@ -1755,7 +1972,7 @@
     <script src="/xterm-addon-fit.min.js"></script>
     <script src="/xterm-addon-search.min.js"></script>
     <script src="/xterm-addon-unicode11.min.js"></script>
-    <script src="/xterm-addon-webgl.min.js"></script>
+    <script src="/xterm-addon-canvas.min.js"></script>
   </head>
   <body>
     <header>
@@ -1768,6 +1985,7 @@
           <img id="wolf-icon" src="/wolf-face.png" width="42" height="42" alt="wolfpack" style="object-fit:contain;filter:invert(1) brightness(0.55);margin:-8px -2px -8px -4px" />
           <h1 id="header-title">wolfpack</h1>
         </div>
+        <div id="header-timeline" style="display:none"></div>
       </div>
       <div class="header-right">
         <div id="header-machine-label" style="display:none;font-size:9px;color:#555;text-transform:uppercase;letter-spacing:1px;line-height:1"></div>
@@ -1777,7 +1995,10 @@
       </div>
     </header>
     <div id="drawer-backdrop" onclick="closeDrawer()"></div>
-    <div id="session-drawer"><div id="drawer-list"></div></div>
+    <div id="git-status-overlay" onclick="dismissGitStatus()"></div>
+    <div id="session-drawer">
+      <div id="drawer-list"></div>
+    </div>
 
     <div id="view-container">
     <!-- Sessions view -->
@@ -1833,6 +2054,101 @@
           <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
             <input type="checkbox" id="setting-scanlines" onchange="toggleSetting('scanlines', this.checked)"> Scanlines
           </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
+            <input type="checkbox" id="setting-reducedEffects" onchange="toggleSetting('reducedEffects', this.checked)"> Reduced effects (no glows)
+          </label>
+        </div>
+        <div class="settings-section">
+          <div class="settings-label">Terminal</div>
+          <div style="padding:4px 0;font-size:12px;color:#888">
+            <div style="margin-bottom:6px">Font size</div>
+            <div style="display:flex;gap:6px">
+              <button class="term-size-btn" data-size="small" onclick="toggleSetting('termFontSize','small')" style="flex:1;padding:8px 0;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#888;font-size:11px;font-family:inherit;cursor:pointer;transition:border-color 0.15s,color 0.15s">Small<br><span style="font-size:10px;opacity:0.6">12px</span></button>
+              <button class="term-size-btn" data-size="medium" onclick="toggleSetting('termFontSize','medium')" style="flex:1;padding:8px 0;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#888;font-size:11px;font-family:inherit;cursor:pointer;transition:border-color 0.15s,color 0.15s">Medium<br><span style="font-size:10px;opacity:0.6">13px</span></button>
+              <button class="term-size-btn" data-size="large" onclick="toggleSetting('termFontSize','large')" style="flex:1;padding:8px 0;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#888;font-size:11px;font-family:inherit;cursor:pointer;transition:border-color 0.15s,color 0.15s">Large<br><span style="font-size:10px;opacity:0.6">14px</span></button>
+            </div>
+          </div>
+          <div style="padding:4px 0;font-size:12px;color:#888">
+            <div style="margin-bottom:6px">Font family</div>
+            <div style="display:flex;gap:6px">
+              <button class="term-font-btn" data-font="default" onclick="toggleSetting('termFont','default')" style="flex:1;padding:8px 0;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#888;font-size:11px;font-family:inherit;cursor:pointer;transition:border-color 0.15s,color 0.15s">System Mono</button>
+              <button class="term-font-btn" data-font="alt" onclick="toggleSetting('termFont','alt')" style="flex:1;padding:8px 0;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:6px;color:#888;font-size:11px;font-family:'JetBrains Mono','Fira Code','Source Code Pro',monospace;cursor:pointer;transition:border-color 0.15s,color 0.15s">Alt Mono</button>
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
+            <input type="checkbox" id="setting-termWrap" onchange="toggleSetting('termWrap', this.checked)"> Wrap long lines
+          </label>
+          <div style="padding:4px 0;font-size:12px;color:#888">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span>Recovery snapshot TTL</span><span id="snapshot-ttl-val" style="color:#00ff41;font-size:11px">5m</span>
+            </div>
+            <input type="range" id="setting-snapshotTtl" min="60" max="1800" step="60" value="300"
+              style="width:100%;accent-color:#00ff41;margin-top:4px"
+              oninput="toggleSetting('snapshotTtl', +this.value); document.getElementById('snapshot-ttl-val').textContent=formatSnapshotTtl(this.value)">
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-label">Notifications</div>
+          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
+            <input type="checkbox" id="setting-notifyPrompts" checked onchange="toggleSetting('notifyPrompts', this.checked)"> Prompt alerts (y/n, approve, etc.)
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
+            <input type="checkbox" id="setting-notifyErrors" checked onchange="toggleSetting('notifyErrors', this.checked)"> Error alerts (failed, error, etc.)
+          </label>
+          <div style="padding:4px 0;font-size:12px;color:#888">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span>Cooldown</span><span id="cooldown-val" style="color:#00ff41;font-size:11px">30s</span>
+            </div>
+            <input type="range" id="setting-notifyCooldown" min="10" max="120" step="10" value="30"
+              style="width:100%;accent-color:#00ff41;margin-top:4px"
+              oninput="toggleSetting('notifyCooldown', +this.value); document.getElementById('cooldown-val').textContent=this.value+'s'">
+          </div>
+          <div style="padding:4px 0;font-size:12px;color:#888">
+            <div>Quiet hours</div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+              <input type="time" id="setting-quietStart"
+                style="background:#111;border:1px solid #333;border-radius:4px;padding:4px 6px;color:#00ff41;font-family:inherit;font-size:11px"
+                onchange="toggleSetting('quietStart', this.value)">
+              <span style="color:#555">to</span>
+              <input type="time" id="setting-quietEnd"
+                style="background:#111;border:1px solid #333;border-radius:4px;padding:4px 6px;color:#00ff41;font-family:inherit;font-size:11px"
+                onchange="toggleSetting('quietEnd', this.value)">
+            </div>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-label">Input</div>
+          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
+            <input type="checkbox" id="setting-enterSends" onchange="toggleSetting('enterSends', this.checked)"> Enter sends (off = newline)
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
+            <input type="checkbox" id="setting-holdToSend" onchange="toggleSetting('holdToSend', this.checked)"> Hold-to-send (large msgs)
+          </label>
+        </div>
+        <div class="settings-section">
+          <div class="settings-label">Quick Commands</div>
+          <div id="quick-cmds-list" style="display:flex;flex-direction:column;gap:4px"></div>
+          <button id="add-quick-cmd-btn" onclick="addQuickCmd()" style="margin-top:8px;background:#1a1a1a;border:1px solid rgba(0,170,255,0.4);border-radius:10px;padding:8px 14px;color:#66ccff;font-size:11px;font-family:inherit;text-transform:uppercase;letter-spacing:1px;cursor:pointer;transition:transform 0.1s ease;width:100%;box-shadow:0 2px 4px rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,255,0.04)">+ Add Command</button>
+        </div>
+        <div class="settings-section">
+          <div class="settings-label">Debug</div>
+          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
+            <input type="checkbox" id="setting-debugPanel" onchange="toggleSetting('debugPanel', this.checked); toggleDebugPanel()"> Performance metrics
+          </label>
+          <div id="debug-panel" style="display:none;padding:8px;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;margin-top:6px;font-size:11px;font-family:inherit;color:#666">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">
+              <span>Render p50</span><span id="dbg-p50" style="color:#00ff41;text-align:right">—</span>
+              <span>Render p95</span><span id="dbg-p95" style="color:#00ff41;text-align:right">—</span>
+              <span>Render avg</span><span id="dbg-avg" style="color:#00ff41;text-align:right">—</span>
+              <span>Samples</span><span id="dbg-samples" style="color:#00ff41;text-align:right">0</span>
+              <span>WS messages</span><span id="dbg-ws-msgs" style="color:#00ff41;text-align:right">0</span>
+              <span>Reconnects</span><span id="dbg-reconnects" style="color:#00ff41;text-align:right">0</span>
+              <span>Sends</span><span id="dbg-sends" style="color:#00ff41;text-align:right">0</span>
+              <span>Send failures</span><span id="dbg-send-fails" style="color:#ff4444;text-align:right">0</span>
+              <span>Session uptime</span><span id="dbg-uptime" style="color:#00ff41;text-align:right">—</span>
+            </div>
+            <button onclick="wpMetrics.reset(); renderDebugPanel()" style="margin-top:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;padding:4px 10px;color:#666;font-size:10px;font-family:inherit;cursor:pointer;width:100%">Reset</button>
+          </div>
         </div>
         <div class="settings-section">
           <div class="settings-label">About</div>
@@ -1868,25 +2184,29 @@
         Reconnecting...
       </div>
       <div id="terminal"></div>
+      <button id="jump-to-live" onclick="jumpToLive()">&#9660; Live</button>
       <div id="desktop-terminal-container"></div>
-      <div id="action-bar" class="visible">
-        <button class="action-btn primary" onclick="sendKey('Enter')">Enter</button>
-        <button class="action-btn" onclick="sendKey('Escape')">Esc</button>
-        <button class="action-btn" onclick="sendKey('Up')"><span class="arrow">&#9650;</span></button>
-        <button class="action-btn" onclick="sendKey('Down')"><span class="arrow">&#9660;</span></button>
-        <button class="action-btn danger" onclick="sendKey('C-c')">Ctrl+C</button>
+      <div id="cmd-palette"></div>
+      <div id="kb-accessory">
+        <button class="kb-key kb-special" data-key="Enter">Enter</button>
+        <button class="kb-key" data-key="Escape">Esc</button>
+        <button class="kb-key" data-key="Up">&#9650;</button>
+        <button class="kb-key" data-key="Down">&#9660;</button>
+        <button class="kb-key kb-danger" data-key="C-c">^C</button>
+        <button class="kb-key kb-git" onclick="showGitStatus()">git</button>
       </div>
       <div id="input-bar">
+        <button id="kb-toggle" onclick="toggleKbAccessory()" title="Toggle keys">&#9000;</button>
         <textarea
           id="msg-input"
           rows="1"
-          placeholder="$ "
+          placeholder="$ (⚡ to send)"
           autocomplete="off"
           autocorrect="off"
           autocapitalize="off"
           spellcheck="false"
         ></textarea>
-        <button id="send-btn" onclick="sendMsg()">&#9889;</button>
+        <button id="send-btn">&#9889;<span class="hold-ring"></span></button>
       </div>
       <div id="msg-preview"></div>
     </div>
@@ -1959,7 +2279,8 @@
 
     <script>
       // ── Settings (persisted to localStorage) ──
-      const wpSettings = JSON.parse(localStorage.getItem("wp-effects") || '{"animations":true,"haptics":true,"scanlines":false}');
+      const wpDefaults = {animations:true, haptics:true, scanlines:false, enterSends: window.innerWidth > 768, holdToSend:false, notifyPrompts:true, notifyErrors:true, notifyCooldown:30, quietStart:"", quietEnd:"", termFontSize:"medium", termWrap:false, termFont:"default", reducedEffects:false, snapshotTtl:300, debugPanel:false};
+      const wpSettings = Object.assign({}, wpDefaults, JSON.parse(localStorage.getItem("wp-effects") || "{}"));
       function toggleSetting(key, val) {
         wpSettings[key] = val;
         localStorage.setItem("wp-effects", JSON.stringify(wpSettings));
@@ -1968,26 +2289,314 @@
       function applySetting(key, val) {
         if (key === "animations") document.body.classList.toggle("no-animations", !val);
         if (key === "scanlines") document.body.classList.toggle("scanlines", val);
+        if (key === "reducedEffects") document.body.classList.toggle("reduced-effects", val);
+        if (key === "enterSends") {
+          const el = document.getElementById("msg-input");
+          if (el) el.placeholder = val ? "$ (Enter to send)" : "$ (⚡ to send)";
+        }
+        if (key === "termFontSize") {
+          document.body.classList.remove("term-size-small", "term-size-medium", "term-size-large");
+          document.body.classList.add("term-size-" + val);
+          document.querySelectorAll(".term-size-btn").forEach(b => b.classList.toggle("active", b.dataset.size === val));
+          applyTermToXterm();
+        }
+        if (key === "termWrap") {
+          document.body.classList.toggle("term-wrap", val);
+        }
+        if (key === "termFont") {
+          document.body.classList.toggle("term-font-alt", val === "alt");
+          document.querySelectorAll(".term-font-btn").forEach(b => b.classList.toggle("active", b.dataset.font === val));
+          applyTermToXterm();
+        }
+      }
+      const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
+      function applyTermToXterm() {
+        if (!desktopTerm) return;
+        const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+        desktopTerm.options.fontSize = p.fontSize;
+        desktopTerm.options.lineHeight = p.lineHeight;
+        if (wpSettings.termFont === "alt") {
+          desktopTerm.options.fontFamily = '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace';
+        } else {
+          desktopTerm.options.fontFamily = '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
+        }
+        if (desktopFitAddon) desktopFitAddon.fit();
       }
       function initSettings() {
         Object.entries(wpSettings).forEach(([k, v]) => {
           applySetting(k, v);
           const el = document.getElementById("setting-" + k);
-          if (el) el.checked = v;
+          if (!el) return;
+          if (el.type === "checkbox") el.checked = v;
+          else el.value = v;
         });
+        const cdLabel = document.getElementById("cooldown-val");
+        if (cdLabel) cdLabel.textContent = wpSettings.notifyCooldown + "s";
+        const ttlLabel = document.getElementById("snapshot-ttl-val");
+        if (ttlLabel) ttlLabel.textContent = formatSnapshotTtl(wpSettings.snapshotTtl);
       }
       function haptic(pattern) {
         if (wpSettings.haptics && navigator.vibrate) navigator.vibrate(pattern);
       }
 
+      // ── Performance Metrics (UX-16) ──
+
+      const wpMetrics = {
+        latencySamples: [],     // rolling window of render times (ms)
+        maxLatencySamples: 200,
+        reconnectCount: 0,
+        sendFailCount: 0,
+        sendCount: 0,
+        wsMessagesReceived: 0,
+        sessionOpenedAt: 0,
+        lastUpdateAt: 0,
+        recordLatency(ms) {
+          this.latencySamples.push(ms);
+          if (this.latencySamples.length > this.maxLatencySamples) this.latencySamples.shift();
+          this.lastUpdateAt = Date.now();
+        },
+        percentile(p) {
+          const s = this.latencySamples.slice().sort((a, b) => a - b);
+          if (!s.length) return 0;
+          const i = Math.ceil(s.length * p / 100) - 1;
+          return s[Math.max(0, i)];
+        },
+        avg() {
+          if (!this.latencySamples.length) return 0;
+          return this.latencySamples.reduce((a, b) => a + b, 0) / this.latencySamples.length;
+        },
+        reset() {
+          this.latencySamples = [];
+          this.reconnectCount = 0;
+          this.sendFailCount = 0;
+          this.sendCount = 0;
+          this.wsMessagesReceived = 0;
+          this.sessionOpenedAt = Date.now();
+          this.lastUpdateAt = 0;
+        }
+      };
+
+      let debugPanelTimer = null;
+
+      function toggleDebugPanel() {
+        const panel = document.getElementById("debug-panel");
+        if (!panel) return;
+        if (wpSettings.debugPanel) {
+          panel.style.display = "block";
+          renderDebugPanel();
+          if (!debugPanelTimer) debugPanelTimer = setInterval(renderDebugPanel, 1000);
+        } else {
+          panel.style.display = "none";
+          if (debugPanelTimer) { clearInterval(debugPanelTimer); debugPanelTimer = null; }
+        }
+      }
+
+      function renderDebugPanel() {
+        if (!wpSettings.debugPanel) return;
+        const fmt = (v) => v > 0 ? v.toFixed(2) + "ms" : "—";
+        const el = (id) => document.getElementById(id);
+        const p50 = el("dbg-p50"); if (p50) p50.textContent = fmt(wpMetrics.percentile(50));
+        const p95 = el("dbg-p95"); if (p95) p95.textContent = fmt(wpMetrics.percentile(95));
+        const avg = el("dbg-avg"); if (avg) avg.textContent = fmt(wpMetrics.avg());
+        const samples = el("dbg-samples"); if (samples) samples.textContent = wpMetrics.latencySamples.length;
+        const wsMsgs = el("dbg-ws-msgs"); if (wsMsgs) wsMsgs.textContent = wpMetrics.wsMessagesReceived;
+        const reconnects = el("dbg-reconnects"); if (reconnects) reconnects.textContent = wpMetrics.reconnectCount;
+        const sends = el("dbg-sends"); if (sends) sends.textContent = wpMetrics.sendCount;
+        const fails = el("dbg-send-fails"); if (fails) {
+          fails.textContent = wpMetrics.sendFailCount;
+          fails.style.color = wpMetrics.sendFailCount > 0 ? "#ff4444" : "#00ff41";
+        }
+        const uptime = el("dbg-uptime");
+        if (uptime) {
+          if (wpMetrics.sessionOpenedAt > 0) {
+            const sec = Math.floor((Date.now() - wpMetrics.sessionOpenedAt) / 1000);
+            const m = Math.floor(sec / 60), s = sec % 60;
+            uptime.textContent = m > 0 ? m + "m " + s + "s" : s + "s";
+          } else {
+            uptime.textContent = "—";
+          }
+        }
+      }
+
+      // ── Quick Commands (UX-08) ──
+
+      const QC_STORAGE_KEY = "wp-quick-cmds";
+
+      function loadQuickCmds() {
+        try {
+          const raw = localStorage.getItem(QC_STORAGE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed;
+          }
+        } catch {}
+        return [];
+      }
+
+      let quickCmds = loadQuickCmds();
+
+      function saveQuickCmds() {
+        localStorage.setItem(QC_STORAGE_KEY, JSON.stringify(quickCmds));
+      }
+
+      function renderCmdPalette() {
+        const el = document.getElementById("cmd-palette");
+        if (!el) return;
+        if (quickCmds.length === 0) {
+          el.classList.remove("visible");
+          el.innerHTML = "";
+          return;
+        }
+        el.innerHTML = quickCmds.map((c, i) =>
+          `<button class="cmd-chip" onclick="sendQuickCmd(${i})">${esc(c.label)}</button>`
+        ).join("");
+        el.classList.add("visible");
+      }
+
+      async function sendQuickCmd(index) {
+        const cmd = quickCmds[index];
+        if (!cmd || !currentSession) return;
+        haptic([30]);
+        try {
+          await api("/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session: currentSession, text: cmd.cmd }),
+          }, currentMachine);
+          enterFastPoll();
+        } catch {}
+      }
+
+      function renderQuickCmdSettings() {
+        const list = document.getElementById("quick-cmds-list");
+        if (!list) return;
+        list.innerHTML = quickCmds.map((c, i) => `
+          <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#0a0a0a;border:1px solid #1e1e1e;border-radius:8px">
+            <span style="color:#66ccff;font-size:12px;font-weight:600;min-width:60px">${esc(c.label)}</span>
+            <span style="flex:1;color:#555;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.cmd)}</span>
+            ${i > 0 ? `<button onclick="moveQuickCmd(${i},-1)" style="background:none;border:none;color:#555;font-size:14px;cursor:pointer;padding:2px 4px" title="Move up">&#9650;</button>` : '<span style="width:24px"></span>'}
+            ${i < quickCmds.length - 1 ? `<button onclick="moveQuickCmd(${i},1)" style="background:none;border:none;color:#555;font-size:14px;cursor:pointer;padding:2px 4px" title="Move down">&#9660;</button>` : '<span style="width:24px"></span>'}
+            <button onclick="editQuickCmd(${i})" style="background:none;border:none;color:#888;font-size:12px;cursor:pointer;padding:2px 4px" title="Edit">&#9998;</button>
+            <button onclick="deleteQuickCmd(${i})" style="background:none;border:none;color:#cc3333;font-size:14px;cursor:pointer;padding:2px 4px" title="Delete">&#10005;</button>
+          </div>
+        `).join("");
+      }
+
+      function addQuickCmd() {
+        const label = prompt("Label (shown on chip):");
+        if (!label || !label.trim()) return;
+        const cmd = prompt("Command (sent to terminal):");
+        if (!cmd || !cmd.trim()) return;
+        quickCmds.push({ label: label.trim(), cmd: cmd.trim() });
+        saveQuickCmds();
+        renderQuickCmdSettings();
+        renderCmdPalette();
+      }
+
+      function editQuickCmd(index) {
+        const c = quickCmds[index];
+        if (!c) return;
+        const label = prompt("Label:", c.label);
+        if (!label || !label.trim()) return;
+        const cmd = prompt("Command:", c.cmd);
+        if (!cmd || !cmd.trim()) return;
+        quickCmds[index] = { label: label.trim(), cmd: cmd.trim() };
+        saveQuickCmds();
+        renderQuickCmdSettings();
+        renderCmdPalette();
+      }
+
+      function deleteQuickCmd(index) {
+        quickCmds.splice(index, 1);
+        saveQuickCmds();
+        renderQuickCmdSettings();
+        renderCmdPalette();
+      }
+
+      function moveQuickCmd(index, direction) {
+        const target = index + direction;
+        if (target < 0 || target >= quickCmds.length) return;
+        const tmp = quickCmds[index];
+        quickCmds[index] = quickCmds[target];
+        quickCmds[target] = tmp;
+        saveQuickCmds();
+        renderQuickCmdSettings();
+        renderCmdPalette();
+      }
+
+      async function showGitStatus() {
+        if (!currentSession) return;
+        haptic([30]);
+        const overlay = document.getElementById("git-status-overlay");
+        overlay.innerHTML = '<pre>loading...</pre>';
+        overlay.classList.add("visible");
+        try {
+          const data = await api("/git-status?session=" + encodeURIComponent(currentSession), {}, currentMachine);
+          if (data.error) {
+            overlay.innerHTML = `<div><pre style="color:#cc3333">${esc(data.error)}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
+          } else {
+            overlay.innerHTML = `<div><pre>${esc(data.status || "(clean)")}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
+          }
+        } catch (e) {
+          overlay.innerHTML = `<div><pre style="color:#cc3333">${esc(String(e))}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
+        }
+      }
+
+      function dismissGitStatus() {
+        document.getElementById("git-status-overlay").classList.remove("visible");
+      }
+
+      // ── Session Recents ──
+
+      const RECENTS_STORAGE_KEY = "wp-recents";
+      const MAX_RECENTS = 20;
+
+      function sessionKey(machine, name) {
+        return (machine || "") + "|" + name;
+      }
+
+      function loadRecents() {
+        try {
+          const raw = localStorage.getItem(RECENTS_STORAGE_KEY);
+          if (raw) { const r = JSON.parse(raw); if (Array.isArray(r)) return r; }
+        } catch {}
+        return [];
+      }
+
+      let sessionRecents = loadRecents();
+
+      function saveRecents() {
+        localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(sessionRecents));
+      }
+
+      function recordRecent(machine, name) {
+        const key = sessionKey(machine, name);
+        sessionRecents = sessionRecents.filter(r => r.key !== key);
+        sessionRecents.unshift({ key, name, machine: machine || "", ts: Date.now() });
+        if (sessionRecents.length > MAX_RECENTS) sessionRecents.length = MAX_RECENTS;
+        saveRecents();
+      }
+
       let currentSession = null;
       let currentMachine = ""; // "" = self, URL string = remote
       let currentView = "sessions";
-      let pollTimer = null;
-      let fastPoll = false;
+      const RECONNECT_BUDGET_MS = 2 * 60 * 1000;
+      const RECONNECT_BASE_DELAY_MS = 500;
+      const RECONNECT_MAX_DELAY_MS = 5000;
+      const SNAPSHOT_KEY_PREFIX = "wp-snap|";
+      const SNAPSHOT_MAX_BYTES = 8192;
+      const SNAPSHOT_SAVE_INTERVAL = 2000;
+      let mobileWs = null;
+      let mobileReconnectTimer = null;
+      let mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
+      let mobileReconnectStartedAt = 0;
+      let mobileRetryBlocked = false;
+      let mobileStreamingActive = false;
+      let termFollowMode = true;
       let allSessions = [];
       let sessionRefreshTimer = null;
       let ralphRefreshTimer = null;
+      let timelineRefreshTimer = null;
       let currentRalphProject = null;
       let currentRalphMachine = ""; // "" = self, URL string = remote
       let ralphLogPollTimer = null;
@@ -2001,6 +2610,104 @@
 
       function isDesktop() {
         return window.innerWidth > 768;
+      }
+
+      // ── Per-session draft persistence (UX-03) ──
+
+      function draftKey(machine, session) {
+        return "wp-draft|" + (machine || "") + "|" + session;
+      }
+      function saveDraft() {
+        if (!currentSession) return;
+        const val = document.getElementById("msg-input").value;
+        const key = draftKey(currentMachine, currentSession);
+        if (val) localStorage.setItem(key, val);
+        else localStorage.removeItem(key);
+      }
+      function restoreDraft() {
+        if (!currentSession) return;
+        const val = localStorage.getItem(draftKey(currentMachine, currentSession)) || "";
+        const input = document.getElementById("msg-input");
+        input.value = val;
+        autoResizeInput();
+      }
+      function clearDraft() {
+        if (!currentSession) return;
+        localStorage.removeItem(draftKey(currentMachine, currentSession));
+      }
+
+      // ── Recovery snapshots (UX-14) ──
+
+      let snapshotTimer = null;
+      let snapshotPending = null;
+
+      function snapshotKey(machine, session) {
+        return SNAPSHOT_KEY_PREFIX + (machine || "") + "|" + session;
+      }
+      function saveSnapshot(machine, session, text) {
+        if (!session || !text) return;
+        const trimmed = text.length > SNAPSHOT_MAX_BYTES ? text.slice(-SNAPSHOT_MAX_BYTES) : text;
+        try { localStorage.setItem(snapshotKey(machine, session), JSON.stringify({ d: trimmed, ts: Date.now() })); } catch {}
+      }
+      function loadSnapshot(machine, session) {
+        if (!session) return null;
+        try {
+          const raw = localStorage.getItem(snapshotKey(machine, session));
+          if (!raw) return null;
+          const snap = JSON.parse(raw);
+          const age = (Date.now() - snap.ts) / 1000;
+          if (age > (wpSettings.snapshotTtl || 300)) {
+            localStorage.removeItem(snapshotKey(machine, session));
+            return null;
+          }
+          return snap.d;
+        } catch { return null; }
+      }
+      function cleanStaleSnapshots() {
+        const ttl = (wpSettings.snapshotTtl || 300) * 1000;
+        const now = Date.now();
+        const toRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key || !key.startsWith(SNAPSHOT_KEY_PREFIX)) continue;
+          try {
+            const snap = JSON.parse(localStorage.getItem(key));
+            if (now - snap.ts > ttl) toRemove.push(key);
+          } catch { toRemove.push(key); }
+        }
+        toRemove.forEach(k => localStorage.removeItem(k));
+      }
+      function scheduleSnapshotSave(text) {
+        snapshotPending = text;
+        if (snapshotTimer) return;
+        snapshotTimer = setTimeout(flushSnapshot, SNAPSHOT_SAVE_INTERVAL);
+      }
+      function flushSnapshot() {
+        snapshotTimer = null;
+        if (!currentSession) { snapshotPending = null; return; }
+        let text;
+        if (useDesktopTerminal && desktopTerm) {
+          text = serializeXtermTail(desktopTerm, 100);
+        } else {
+          text = snapshotPending;
+        }
+        snapshotPending = null;
+        if (text) saveSnapshot(currentMachine, currentSession, text);
+      }
+      function serializeXtermTail(term, maxLines) {
+        const buf = term.buffer.active;
+        const start = Math.max(0, buf.length - maxLines);
+        const lines = [];
+        for (let i = start; i < buf.length; i++) {
+          const line = buf.getLine(i);
+          if (line) lines.push(line.translateToString(true));
+        }
+        return lines.join('\n');
+      }
+      function formatSnapshotTtl(seconds) {
+        seconds = +seconds;
+        if (seconds < 60) return seconds + 's';
+        return Math.floor(seconds / 60) + 'm';
       }
 
       // ── Machine registry ──
@@ -2088,6 +2795,11 @@
         const animateHeader = isMobile && prevView !== name && !skipAnimation || wasSwipe;
         const goingForward = (VIEW_DEPTH[name] || 0) > (VIEW_DEPTH[prevView] || 0);
 
+        // Stop debug panel refresh when leaving settings
+        if (prevView === "settings" && name !== "settings" && debugPanelTimer) {
+          clearInterval(debugPanelTimer); debugPanelTimer = null;
+        }
+
         currentView = name;
 
         if (animate) {
@@ -2154,8 +2866,14 @@
         if (sessionRefreshTimer) { clearInterval(sessionRefreshTimer); sessionRefreshTimer = null; }
         if (ralphRefreshTimer) { clearInterval(ralphRefreshTimer); ralphRefreshTimer = null; }
         if (ralphLogPollTimer) { clearInterval(ralphLogPollTimer); ralphLogPollTimer = null; }
+        if (timelineRefreshTimer) { clearInterval(timelineRefreshTimer); timelineRefreshTimer = null; }
+        document.getElementById("header-timeline").style.display = "none";
 
         const applyHeader = () => {
+          // Always start with kb-accessory closed on view change
+          document.getElementById("kb-accessory").classList.remove("visible");
+          document.getElementById("kb-toggle")?.classList.remove("active");
+          kbAccessoryOpen = false;
           chip.style.display = "none";
           closeDrawer(true);
           title.style.display = "";
@@ -2192,6 +2910,7 @@
             gear.style.display = "none";
             title.textContent = "settings";
             wolfIcon.style.display = "none";
+            renderQuickCmdSettings();
           } else if (name === "terminal") {
             back.style.display = "block";
             back.onclick = () => {
@@ -2218,6 +2937,8 @@
               hml.textContent = mName;
               hml.style.display = "";
             }
+            refreshHeaderTimeline();
+            timelineRefreshTimer = setInterval(refreshHeaderTimeline, 10000);
           } else if (name === "ralph") {
             back.style.display = "block";
             back.onclick = () => { showView("sessions"); loadSessions(); };
@@ -2273,6 +2994,7 @@
             const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
             const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
             const dotClass = loop.active ? "purple" : "gray";
+            const dotTitle = loop.active ? "active" : "idle";
             const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
             const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
             const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
@@ -2280,7 +3002,7 @@
             const machineLabel = multiMachine ? '<div class="ralph-machine-label">' + esc(loop.machineName || "local") + '</div>' : '';
             return '<div class="ralph-card ' + status + '" onclick="openRalphDetail(\'' + escAttr(loop.project) + '\', \'' + escAttr(loop.machineUrl || '') + '\')">' +
               '<div class="ralph-card-header">' +
-                '<span class="ralph-card-name"><span class="dot ' + dotClass + '"></span>' + esc(loop.project) + '</span>' +
+                '<span class="ralph-card-name"><span class="dot ' + dotClass + '" title="' + dotTitle + '"></span>' + esc(loop.project) + '</span>' +
                 '<span class="ralph-status ' + status + '">' + statusLabel + '</span>' +
                 '<button class="kill-btn" onclick="dismissRalph(\'' + escAttr(loop.project) + '\', event, \'' + escAttr(loop.machineUrl || '') + '\')">&times;</button>' +
               '</div>' +
@@ -2519,6 +3241,18 @@
         } catch {
           planSel.innerHTML = '<option value="">failed to load plans</option>';
         }
+        planSel.onchange = () => syncIterationsFromPlan(project, planSel.value);
+        syncIterationsFromPlan(project, planSel.value);
+      }
+
+      async function syncIterationsFromPlan(project, planFile) {
+        if (!project || !planFile) return;
+        try {
+          const tc = await api("/ralph/task-count?project=" + encodeURIComponent(project) + "&plan=" + encodeURIComponent(planFile), undefined, getStartMachine());
+          if (tc.total > 0) {
+            document.getElementById("ralph-iterations-input").value = tc.total - tc.done;
+          }
+        } catch {}
       }
 
       function toggleBranchFields() {
@@ -2624,6 +3358,47 @@
 
       // ── Sessions ──
 
+      const TRIAGE_MAP = {
+        "needs-input": { dot: "yellow", card: "attention", label: "input", title: "waiting for input" },
+        "error":       { dot: "red",    card: "error-session", label: "error", title: "error" },
+        "running":     { dot: "green",  card: "active-session", label: "running", title: "running" },
+        "idle":        { dot: "gray",   card: "idle-session", label: "idle", title: "idle" },
+      };
+
+      function triageUi(triage) {
+        return TRIAGE_MAP[triage] || TRIAGE_MAP["idle"];
+      }
+
+      function timelineStripHtml(events, cssClass) {
+        if (!events || !events.length) return "";
+        const cls = cssClass || "timeline-strip";
+        return '<div class="' + cls + '">' + events.map(function(e) {
+          return '<div class="tl-dot tl-' + esc(e.type) + '" title="' + escAttr(e.type + " " + timeAgo(e.ts)) + '"></div>';
+        }).join("") + '</div>';
+      }
+
+      function timeAgo(ts) {
+        const s = Math.floor((Date.now() - ts) / 1000);
+        if (s < 60) return s + "s ago";
+        if (s < 3600) return Math.floor(s / 60) + "m ago";
+        return Math.floor(s / 3600) + "h ago";
+      }
+
+      function refreshHeaderTimeline() {
+        const el = document.getElementById("header-timeline");
+        if (!currentSession || currentView !== "terminal") {
+          el.style.display = "none";
+          return;
+        }
+        api("/timeline?session=" + encodeURIComponent(currentSession) + "&limit=8", undefined, currentMachine || undefined)
+          .then(function(d) {
+            if (!d.events || !d.events.length) { el.style.display = "none"; return; }
+            el.innerHTML = timelineStripHtml(d.events);
+            el.style.display = "";
+          })
+          .catch(function() { el.style.display = "none"; });
+      }
+
       // Shared session groups cache for switcher reuse
       let lastSessionGroups = [];
 
@@ -2632,22 +3407,22 @@
         const mUrlAttr = escAttr(g.machine.url);
         const mName = esc(g.machine.name);
         const statusDot = g.online ? "green" : (g.pending ? "gray" : "red");
+        const statusTitle = g.online ? "online" : (g.pending ? "connecting" : "offline");
         const versionWarning = g.outdated ? `<span style="color:#ff6600;margin-left:6px;font-size:11px;padding:3px 8px;border:1px solid #00ff41;border-radius:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;letter-spacing:1px" onclick="event.stopPropagation();alert('Running v${escAttr(g.machine.version || "?")} — newer version available on another machine')">⚠ UPDATE</span>` : "";
         let html = `<div class="machine-group" data-machine="${mUrl}">`;
-        html += `<div class="machine-header"><div class="dot ${statusDot}"></div>${mName}${versionWarning}<button class="machine-add-btn" onclick="showProjectPicker('${mUrlAttr}')">+</button></div>`;
+        html += `<div class="machine-header"><div class="dot ${statusDot}" title="${statusTitle}"></div>${mName}${versionWarning}<button class="machine-add-btn" onclick="showProjectPicker('${mUrlAttr}')">+</button></div>`;
         if (g.pending) {
           html += `<div style="padding:4px 4px;color:#555;font-size:11px">Connecting...</div>`;
         } else if (g.online && g.sessions.length) {
           html += g.sessions.map((s, i) => {
             const lastLine = s.lastLine || "";
-            const needsAttention = ATTENTION_PATTERNS.some(p => p.test(lastLine));
-            const dotClass = needsAttention ? "yellow" : "green";
-            const cardClass = needsAttention ? "attention" : "active-session";
-            return `<div class="card card-stagger ${cardClass}" style="animation-delay:${i * 30}ms" onclick="openSession('${escAttr(s.name)}', '${mUrlAttr}')">
-              <div class="dot ${dotClass}"></div>
+            const ui = triageUi(s.triage);
+            return `<div class="card card-stagger ${ui.card}" style="animation-delay:${i * 30}ms" onclick="openSession('${escAttr(s.name)}', '${mUrlAttr}')">
+              <div class="dot ${ui.dot}" title="${ui.title}"></div>
               <div class="card-info">
-                <div class="card-name">${esc(s.name)}</div>
+                <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
                 <div class="card-preview">${esc(lastLine)}</div>
+                ${timelineStripHtml(s.events)}
               </div>
               <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event, '${mUrlAttr}')">&times;</button>
             </div>`;
@@ -2664,14 +3439,13 @@
         if (g.online && g.sessions.length) {
           html += g.sessions.map((s, i) => {
             const lastLine = s.lastLine || "";
-            const needsAttention = ATTENTION_PATTERNS.some(p => p.test(lastLine));
-            const dotClass = needsAttention ? "yellow" : "green";
-            const cardClass = needsAttention ? "attention" : "active-session";
-            return `<div class="card card-stagger ${cardClass}" style="animation-delay:${i * 30}ms" onclick="openSession('${escAttr(s.name)}')">
-              <div class="dot ${dotClass}"></div>
+            const ui = triageUi(s.triage);
+            return `<div class="card card-stagger ${ui.card}" style="animation-delay:${i * 30}ms" onclick="openSession('${escAttr(s.name)}')">
+              <div class="dot ${ui.dot}" title="${ui.title}"></div>
               <div class="card-info">
-                <div class="card-name">${esc(s.name)}</div>
+                <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
                 <div class="card-preview">${esc(lastLine)}</div>
+                ${timelineStripHtml(s.events)}
               </div>
               <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event)">&times;</button>
             </div>`;
@@ -2729,6 +3503,8 @@
         const promises = allMachines.map((m, i) =>
           fetchMachine(m.url, m.meta).then(g => {
             groups[i] = g;
+            // Update lastSessionGroups incrementally so drawer is never stale
+            lastSessionGroups = groups.filter(Boolean);
             if (firstLoad) {
               const placeholder = el.querySelector(`[data-machine="${esc(m.url)}"]`);
               if (placeholder) {
@@ -2770,13 +3546,20 @@
       function openSession(name, machineUrl) {
         currentSession = name;
         currentMachine = machineUrl || "";
+        recordRecent(currentMachine, name);
         lastRawPane = null;
         useDesktopTerminal = isDesktop();
+        wpMetrics.reset();
+        setFollowMode(true);
+        restoreDraft();
+        const cached = loadSnapshot(currentMachine, name);
         showView("terminal");
         if (useDesktopTerminal) {
-          initDesktopTerminal();
+          initDesktopTerminal(cached);
         } else {
-          // don't clear terminal — let first poll replace content seamlessly
+          const term = document.getElementById("terminal");
+          term.textContent = cached || "";
+          if (cached) term.scrollTop = term.scrollHeight;
           resizePane();
           startPolling();
         }
@@ -2786,8 +3569,9 @@
         if (!currentSession) return;
         const term = document.getElementById("terminal");
         const probe = document.createElement("span");
+        const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
         probe.style.cssText =
-          'position:absolute;visibility:hidden;white-space:pre;font-size:12px;line-height:1.4;font-family:inherit';
+          'position:absolute;visibility:hidden;white-space:pre;font-size:' + tp.fontSize + 'px;line-height:' + tp.lineHeight + ';font-family:inherit';
         probe.textContent = "X";
         document.body.appendChild(probe);
         const charW = probe.offsetWidth;
@@ -2826,7 +3610,7 @@
             .map(
               (p) => `
       <div class="card" onclick="selectProject('${escAttr(p)}')">
-        <div class="dot blue"></div>
+        <div class="dot blue" title="project"></div>
         <div class="card-name">${esc(p)}</div>
       </div>
     `,
@@ -2871,13 +3655,13 @@
           const customCmds = data.settings?.customCmds || [];
           let html = presets.map(([label, cmd]) => `
             <div class="card" onclick="createSessionWithAgent('${escAttr(cmd)}')">
-              <div class="dot blue"></div>
+              <div class="dot blue" title="preset"></div>
               <div class="card-name">${esc(label)}</div>
             </div>
           `).join("");
           html += customCmds.map(cmd => `
             <div class="card" onclick="createSessionWithAgent('${escAttr(cmd)}')">
-              <div class="dot green"></div>
+              <div class="dot green" title="custom command"></div>
               <div class="card-name">${esc(cmd)}</div>
               <button class="kill-btn" onclick="deleteCustomCmd('${escAttr(cmd)}', event)" title="Remove command">&times;</button>
             </div>
@@ -2960,10 +3744,13 @@
       // ── Desktop Terminal (xterm.js + /ws/pty binary WS) ──
 
       let desktopReconnectTimer = null;
-      let desktopReconnectDelay = 1000;
+      let desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
+      let desktopReconnectStartedAt = 0;
+      let desktopRetryBlocked = false;
 
       function connectDesktopWs() {
         if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
+        if (desktopRetryBlocked) return;
         if (desktopWs && desktopWs.readyState <= WebSocket.OPEN) return;
         let wsUrl;
         if (currentMachine) {
@@ -2979,9 +3766,11 @@
         desktopWs = ws;
 
         ws.onopen = () => {
-          desktopReconnectDelay = 1000;
-          const statusEl = document.getElementById("conn-status");
-          if (statusEl) { statusEl.textContent = "reconnecting\u2026"; statusEl.style.display = "none"; }
+          if (desktopReconnectStartedAt > 0) wpMetrics.reconnectCount++;
+          desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
+          desktopReconnectStartedAt = 0;
+          desktopRetryBlocked = false;
+          setConnState("live");
           if (desktopFitAddon && desktopTerm) {
             try { desktopFitAddon.fit(); } catch {}
             ws.send(JSON.stringify({ type: "resize", cols: desktopTerm.cols, rows: desktopTerm.rows }));
@@ -2989,35 +3778,28 @@
         };
 
         ws.onmessage = (ev) => {
-          if (desktopTerm) desktopTerm.write(new Uint8Array(ev.data));
+          wpMetrics.wsMessagesReceived++;
+          if (desktopTerm) {
+            const t0 = performance.now();
+            desktopTerm.write(new Uint8Array(ev.data));
+            wpMetrics.recordLatency(performance.now() - t0);
+            scheduleSnapshotSave(null);
+          }
         };
 
         ws.onclose = (ev) => {
           const isCurrent = desktopWs === ws;
           if (isCurrent) desktopWs = null;
           if (isCurrent) {
-            // 4001 = session unavailable/dead — show error, don't reconnect
             if (ev.code === 4001) {
+              setConnState("session-ended");
               const statusEl = document.getElementById("conn-status");
-              if (statusEl) {
-                statusEl.textContent = "session unavailable — use ← to go back";
-                statusEl.style.display = "block";
-              }
+              if (statusEl) statusEl.textContent = "session unavailable \u2014 use \u2190 to go back";
               return;
             }
-            // 1000 with "pty exited" = session ended normally
             if (ev.code === 1000 && ev.reason === "pty exited") {
-              const statusEl = document.getElementById("conn-status");
-              if (statusEl) {
-                statusEl.textContent = "session ended — use ← to go back";
-                statusEl.style.display = "block";
-              }
+              setConnState("session-ended");
               return;
-            }
-            const statusEl = document.getElementById("conn-status");
-            if (statusEl && currentView === "terminal" && useDesktopTerminal) {
-              statusEl.textContent = "reconnecting\u2026";
-              statusEl.style.display = "block";
             }
             scheduleDesktopReconnect();
           }
@@ -3028,30 +3810,51 @@
 
       function scheduleDesktopReconnect() {
         if (desktopReconnectTimer) return;
-        if (!useDesktopTerminal) return;
+        if (!useDesktopTerminal || !desktopTerm) return;
+        if (desktopRetryBlocked) return;
+        const now = Date.now();
+        if (!desktopReconnectStartedAt) desktopReconnectStartedAt = now;
+        const elapsed = now - desktopReconnectStartedAt;
+        const remaining = RECONNECT_BUDGET_MS - elapsed;
+        if (remaining <= 0) {
+          desktopRetryBlocked = true;
+          setConnState("offline");
+          return;
+        }
+        setConnState("reconnecting");
+        const jitterMs = Math.floor(Math.random() * 200);
+        const delayMs = Math.min(desktopReconnectDelay + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
         desktopReconnectTimer = setTimeout(() => {
           desktopReconnectTimer = null;
           if (useDesktopTerminal && (!desktopWs || desktopWs.readyState === WebSocket.CLOSED)) {
             connectDesktopWs();
           }
-        }, desktopReconnectDelay);
-        desktopReconnectDelay = Math.min(desktopReconnectDelay * 2, 5000);
+        }, delayMs);
+        desktopReconnectDelay = Math.min(Math.floor(desktopReconnectDelay * 1.8), RECONNECT_MAX_DELAY_MS);
       }
 
-      function initDesktopTerminal() {
+      function initDesktopTerminal(cached) {
         if (desktopTerm) return;
         const container = document.getElementById("desktop-terminal-container");
         container.style.display = "block";
         container.innerHTML = "";
         document.getElementById("terminal").style.display = "none";
-        document.getElementById("action-bar").style.display = "none";
+        document.getElementById("kb-accessory").classList.remove("visible");
+        document.getElementById("kb-toggle")?.classList.remove("active");
+        kbAccessoryOpen = false;
         document.getElementById("input-bar").style.display = "none";
+        document.getElementById("cmd-palette").style.display = "none";
         document.getElementById("msg-preview").style.display = "none";
 
+        const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+        const termFontFamily = wpSettings.termFont === "alt"
+          ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
+          : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
         const term = new Terminal({
           cursorBlink: true,
-          fontSize: 13,
-          fontFamily: '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace',
+          fontSize: tp.fontSize,
+          lineHeight: tp.lineHeight,
+          fontFamily: termFontFamily,
           theme: {
             background: "#0a0a0a",
             foreground: "#e0e0e0",
@@ -3076,12 +3879,9 @@
         term.unicode.activeVersion = '11';
 
         term.open(container);
-        try {
-          const webgl = new WebglAddon.WebglAddon();
-          webgl.onContextLoss(() => { webgl.dispose(); });
-          term.loadAddon(webgl);
-        } catch (e) { console.warn('WebGL addon failed, using canvas fallback', e); }
+        try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch(e) { console.warn("canvas addon failed:", e); }
         fitAddon.fit();
+        if (cached) term.write(cached);
         term.focus();
 
         term.onData((data) => {
@@ -3128,11 +3928,14 @@
       }
 
       function destroyDesktopTerminal() {
+        if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
         if (desktopReconnectTimer) {
           clearTimeout(desktopReconnectTimer);
           desktopReconnectTimer = null;
         }
-        desktopReconnectDelay = 1000;
+        desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
+        desktopReconnectStartedAt = 0;
+        desktopRetryBlocked = false;
         if (desktopWs) {
           desktopWs.close();
           desktopWs = null;
@@ -3147,92 +3950,285 @@
           container._onKeyDown = null;
         }
         if (desktopSearchAddon) {
-          desktopSearchAddon.dispose();
+          try { desktopSearchAddon.dispose(); } catch {}
           desktopSearchAddon = null;
         }
         if (desktopTerm) {
-          desktopTerm.dispose();
+          try { desktopTerm.dispose(); } catch {}
           desktopTerm = null;
         }
         desktopFitAddon = null;
         container.style.display = "none";
         container.innerHTML = "";
         document.getElementById("terminal").style.display = "";
-        document.getElementById("action-bar").style.display = "";
         document.getElementById("input-bar").style.display = "";
+        document.getElementById("cmd-palette").style.display = "";
       }
 
       // ── Terminal ──
 
-      function startPolling() {
-        poll();
-        schedulePoll();
+      function terminalSessionKey() {
+        return (currentMachine || "") + "|" + (currentSession || "");
       }
 
-      function schedulePoll() {
-        if (pollTimer) clearTimeout(pollTimer);
-        const interval = fastPoll ? 100 : 500;
-        pollTimer = setTimeout(() => { poll().then(schedulePoll); }, interval);
+      function setConnState(state) {
+        const statusEl = document.getElementById("conn-status");
+        if (!statusEl) return;
+        const active = useDesktopTerminal ? !!desktopTerm : mobileStreamingActive;
+        if (currentView !== "terminal" || !active || state === "live") {
+          statusEl.style.display = "none";
+          statusEl.style.background = "#cc3333";
+          return;
+        }
+        if (state === "reconnecting") {
+          statusEl.style.display = "block";
+          statusEl.style.background = "#8a5a00";
+          statusEl.textContent = "reconnecting\u2026";
+          return;
+        }
+        if (state === "offline") {
+          statusEl.style.display = "block";
+          statusEl.style.background = "#cc3333";
+          statusEl.innerHTML = 'connection lost \u2014 <button type="button" id="conn-retry-btn" style="margin-left:6px;padding:2px 6px;border:1px solid #fff;border-radius:3px;background:transparent;color:#fff;font:inherit;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer">Reconnect</button>';
+          const retryBtn = document.getElementById("conn-retry-btn");
+          if (retryBtn) retryBtn.onclick = retryConnection;
+          return;
+        }
+        statusEl.style.display = "block";
+        statusEl.style.background = "#cc3333";
+        statusEl.textContent = "session ended \u2014 use \u2190 to go back";
+      }
+
+      function applyTerminalPane(pane) {
+        const renderStart = performance.now();
+        const term = document.getElementById("terminal");
+        const changed = pane !== lastRawPane;
+        lastRawPane = pane;
+        if (changed) {
+          // Clear Enter retry once output has advanced.
+          if (enterRetryTimer) {
+            clearTimeout(enterRetryTimer);
+            enterRetryTimer = null;
+          }
+          if (searchActive && searchTerm) {
+            applySearchHighlights();
+          } else {
+            term.textContent = pane;
+          }
+          wpMetrics.recordLatency(performance.now() - renderStart);
+          if (termFollowMode) term.scrollTop = term.scrollHeight;
+        }
+        if (pane.trim()) checkForAttention(pane);
+        if (changed && !useDesktopTerminal) {
+          scheduleSnapshotSave(pane);
+        }
+      }
+
+      function setFollowMode(on) {
+        termFollowMode = on;
+        const btn = document.getElementById("jump-to-live");
+        if (btn) {
+          if (on) {
+            btn.classList.remove("visible");
+          } else {
+            btn.classList.add("visible");
+          }
+        }
+      }
+
+      function jumpToLive() {
+        const term = document.getElementById("terminal");
+        term.scrollTop = term.scrollHeight;
+        setFollowMode(true);
+        haptic([10]);
+      }
+
+      // Detect user scroll-up to pause follow mode
+      (function() {
+        const term = document.getElementById("terminal");
+        let programmaticScroll = false;
+
+        // Patch scrollTop setter to distinguish programmatic scrolls
+        const origDesc = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+        Object.defineProperty(term, "scrollTop", {
+          get() { return origDesc.get.call(this); },
+          set(v) {
+            programmaticScroll = true;
+            origDesc.set.call(this, v);
+            // Reset after microtask so the scroll event handler can read it
+            Promise.resolve().then(() => { programmaticScroll = false; });
+          }
+        });
+
+        term.addEventListener("scroll", () => {
+          if (programmaticScroll) return;
+          const atBottom = term.scrollHeight - origDesc.get.call(term) - term.clientHeight < 40;
+          if (atBottom) {
+            setFollowMode(true);
+          } else if (termFollowMode) {
+            setFollowMode(false);
+          }
+        }, { passive: true });
+      })();
+
+      function mobileTerminalWsUrl() {
+        if (currentMachine) {
+          const remote = new URL(currentMachine);
+          const proto = remote.protocol === "https:" ? "wss:" : "ws:";
+          return proto + "//" + remote.host + "/ws/terminal?session=" + encodeURIComponent(currentSession);
+        }
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        return proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(currentSession);
+      }
+
+      function connectMobileTerminalWs() {
+        if (!mobileStreamingActive || useDesktopTerminal || !currentSession || currentView !== "terminal") return;
+        if (mobileRetryBlocked) return;
+        if (mobileWs && mobileWs.readyState <= WebSocket.OPEN) return;
+        const connectKey = terminalSessionKey();
+        const ws = new WebSocket(mobileTerminalWsUrl());
+        mobileWs = ws;
+
+        ws.onopen = () => {
+          if (mobileWs !== ws) return;
+          if (!mobileStreamingActive || useDesktopTerminal || connectKey !== terminalSessionKey()) {
+            ws.close();
+            return;
+          }
+          if (mobileReconnectStartedAt > 0) wpMetrics.reconnectCount++;
+          mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
+          mobileReconnectStartedAt = 0;
+          mobileRetryBlocked = false;
+          setConnState("live");
+          resizePane();
+        };
+
+        ws.onmessage = (ev) => {
+          if (mobileWs !== ws) return;
+          wpMetrics.wsMessagesReceived++;
+          let msg = null;
+          try { msg = JSON.parse(ev.data); } catch { return; }
+          if (msg?.type === "output" && typeof msg.data === "string") {
+            setConnState("live");
+            applyTerminalPane(msg.data);
+          }
+        };
+
+        ws.onclose = (ev) => {
+          if (mobileWs === ws) mobileWs = null;
+          if (!mobileStreamingActive || useDesktopTerminal || connectKey !== terminalSessionKey()) return;
+          if (ev.code === 4001 || (ev.code === 1000 && ev.reason === "session ended")) {
+            setConnState("session-ended");
+            return;
+          }
+          scheduleMobileReconnect();
+        };
+
+        ws.onerror = () => {};
+      }
+
+      function scheduleMobileReconnect() {
+        if (!mobileStreamingActive || useDesktopTerminal || !currentSession || currentView !== "terminal") return;
+        if (mobileReconnectTimer) return;
+        const now = Date.now();
+        if (!mobileReconnectStartedAt) mobileReconnectStartedAt = now;
+        const elapsed = now - mobileReconnectStartedAt;
+        const remaining = RECONNECT_BUDGET_MS - elapsed;
+        if (remaining <= 0) {
+          mobileRetryBlocked = true;
+          setConnState("offline");
+          return;
+        }
+        setConnState("reconnecting");
+        const jitterMs = Math.floor(Math.random() * 200);
+        const delayMs = Math.min(mobileReconnectDelayMs + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
+        mobileReconnectTimer = setTimeout(() => {
+          mobileReconnectTimer = null;
+          connectMobileTerminalWs();
+        }, delayMs);
+        mobileReconnectDelayMs = Math.min(Math.floor(mobileReconnectDelayMs * 1.8), RECONNECT_MAX_DELAY_MS);
+      }
+
+      function startPolling(resetBudget = true) {
+        mobileStreamingActive = true;
+        if (resetBudget) {
+          mobileReconnectStartedAt = 0;
+          mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
+          mobileRetryBlocked = false;
+        }
+        if (mobileRetryBlocked && !resetBudget) {
+          setConnState("offline");
+          return;
+        }
+        if (mobileReconnectTimer) {
+          clearTimeout(mobileReconnectTimer);
+          mobileReconnectTimer = null;
+        }
+        if (!mobileWs || mobileWs.readyState === WebSocket.CLOSED) {
+          setConnState("reconnecting");
+        }
+        connectMobileTerminalWs();
       }
 
       function enterFastPoll() {
-        fastPoll = true;
+        connectMobileTerminalWs();
       }
 
       function stopPolling() {
-        if (pollTimer) {
-          clearTimeout(pollTimer);
-          pollTimer = null;
+        if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
+        mobileStreamingActive = false;
+        mobileReconnectStartedAt = 0;
+        mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
+        mobileRetryBlocked = false;
+        if (mobileReconnectTimer) {
+          clearTimeout(mobileReconnectTimer);
+          mobileReconnectTimer = null;
+        }
+        if (enterRetryTimer) {
+          clearTimeout(enterRetryTimer);
+          enterRetryTimer = null;
+        }
+        if (mobileWs) {
+          const ws = mobileWs;
+          mobileWs = null;
+          try { ws.close(1000, "viewer changed"); } catch {}
+        }
+        const statusEl = document.getElementById("conn-status");
+        if (statusEl) {
+          statusEl.style.display = "none";
+          statusEl.style.background = "#cc3333";
         }
       }
 
-      let pollFails = 0;
+      function retryTerminalConnection() {
+        if (useDesktopTerminal || !currentSession) return;
+        mobileRetryBlocked = false;
+        if (mobileWs) {
+          const ws = mobileWs;
+          mobileWs = null;
+          try { ws.close(1000, "manual retry"); } catch {}
+        }
+        startPolling(true);
+      }
+
+      function retryDesktopConnection() {
+        if (!useDesktopTerminal || !desktopTerm) return;
+        desktopRetryBlocked = false;
+        desktopReconnectStartedAt = 0;
+        desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
+        if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
+        if (desktopWs) { desktopWs.close(); desktopWs = null; }
+        setConnState("reconnecting");
+        connectDesktopWs();
+      }
+
+      function retryConnection() {
+        if (useDesktopTerminal) retryDesktopConnection();
+        else retryTerminalConnection();
+      }
 
       async function poll() {
-        if (!currentSession) return;
-        try {
-          const data = await api(
-            "/poll?session=" + encodeURIComponent(currentSession),
-            undefined, currentMachine,
-          );
-          if (data.error === "session not found") {
-            stopPolling();
-            const statusEl = document.getElementById("conn-status");
-            if (statusEl) { statusEl.textContent = "session ended — use ← to go back"; statusEl.style.display = "block"; }
-            return;
-          }
-          pollFails = 0;
-          const term = document.getElementById("terminal");
-          const statusEl = document.getElementById("conn-status");
-          if (statusEl) { statusEl.textContent = "reconnecting\u2026"; statusEl.style.display = "none"; }
-          if (data.pane != null) {
-            const changed = data.pane !== lastRawPane;
-            lastRawPane = data.pane;
-            if (changed) {
-              fastPoll = false;
-              // Clear Enter retry if pane changed
-              if (enterRetryTimer) {
-                clearTimeout(enterRetryTimer);
-                enterRetryTimer = null;
-              }
-              const wasAtBottom =
-                term.scrollHeight - term.scrollTop - term.clientHeight < 40;
-              if (searchActive && searchTerm) {
-                applySearchHighlights();
-              } else {
-                term.textContent = data.pane;
-              }
-              if (wasAtBottom) term.scrollTop = term.scrollHeight;
-            }
-            if (data.pane.trim()) checkForAttention(data.pane);
-          }
-        } catch {
-          pollFails++;
-          if (pollFails >= 3) {
-            const statusEl = document.getElementById("conn-status");
-            if (statusEl) statusEl.style.display = "block";
-          }
-        }
+        startPolling(false);
       }
 
       let enterRetryTimer = null;
@@ -3243,6 +4239,7 @@
         if (!text || !currentSession) return;
         const saved = text;
         input.value = "";
+        clearDraft();
         autoResizeInput();
         document.getElementById("msg-preview").style.display = "none";
 
@@ -3253,6 +4250,7 @@
         btn.classList.add("send-flash");
 
         try {
+          wpMetrics.sendCount++;
           await api("/send", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -3260,8 +4258,8 @@
           }, currentMachine);
           enterFastPoll();
 
-          // Enter retry: if pane hasn't changed within 800ms, Enter may have been dropped.
-          // Timer is cleared on any pane change (in poll()), so this only fires if truly stuck.
+          // Enter retry: if output hasn't changed within 800ms, Enter may have been dropped.
+          // Timer is cleared on any pane change, so this only fires if truly stuck.
           // Scope to the session that was active at send time to prevent phantom Enter on other sessions.
           if (enterRetryTimer) clearTimeout(enterRetryTimer);
           const retrySession = currentSession;
@@ -3273,6 +4271,7 @@
             enterRetryTimer = null;
           }, 800);
         } catch {
+          wpMetrics.sendFailCount++;
           input.value = saved;
           autoResizeInput();
         }
@@ -3291,12 +4290,17 @@
 
       async function sendKey(key) {
         if (!currentSession) return;
-        await api("/key", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session: currentSession, key }),
-        }, currentMachine);
-        enterFastPoll();
+        try {
+          wpMetrics.sendCount++;
+          await api("/key", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session: currentSession, key }),
+          }, currentMachine);
+          enterFastPoll();
+        } catch {
+          wpMetrics.sendFailCount++;
+        }
       }
 
       async function killSession(name, e, machineUrl) {
@@ -3307,6 +4311,15 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session: name }),
         }, machineUrl || "");
+        const wasCurrentSession = name === currentSession && (machineUrl || "") === currentMachine;
+        if (wasCurrentSession && currentView === "terminal") {
+          if (useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
+          closeSearch();
+          useDesktopTerminal = false;
+          currentSession = null;
+          currentMachine = "";
+          showView("sessions");
+        }
         loadSessions();
       }
 
@@ -3316,31 +4329,49 @@
       let drawerDragStartY = 0;
       let drawerDragging = false;
 
-      function loadSessionSwitcher() {
+      function renderDrawerList() {
         const groups = lastSessionGroups;
         const list = document.getElementById("drawer-list");
         const multiMachine = getMachines().length > 0;
-        let html = "";
+
+        // Build flat session list
+        const all = [];
         for (const g of groups) {
           for (const s of g.sessions) {
-            const val = g.machine.url ? g.machine.url + "|" + s.name : s.name;
-            const isCurrent = s.name === currentSession && g.machine.url === currentMachine;
-            const machineLbl = multiMachine ? `<span class="drawer-item-machine">${esc(g.machine.name)}</span>` : "";
-            html += `<div class="drawer-item${isCurrent ? " current" : ""}" data-val="${escAttr(val)}">
-              <div class="dot ${isCurrent ? "active" : "inactive"}"></div>
-              <span class="drawer-item-name">${esc(s.name)}</span>
-              ${machineLbl}
-            </div>`;
+            all.push({ ...s, machineUrl: g.machine.url, machineName: g.machine.name });
           }
         }
+
+        let html = "";
+        html += all.map(s => drawerItemHtml(s, multiMachine)).join("");
+        if (!all.length) {
+          html += `<div style="padding:16px 14px;color:#333;font-size:11px;text-align:center">No active sessions</div>`;
+        }
+
         list.innerHTML = html;
-        // bind clicks
         list.querySelectorAll(".drawer-item").forEach(el => {
-          el.onclick = () => { switchSession(el.dataset.val); closeDrawer(); };
+          el.onclick = () => {
+            switchSession(el.dataset.val); closeDrawer();
+          };
         });
-        // update chip label
         const chipLabel = document.getElementById("chip-label");
         if (chipLabel) chipLabel.textContent = currentSession || "";
+      }
+
+      function drawerItemHtml(s, multiMachine) {
+        const val = s.machineUrl ? s.machineUrl + "|" + s.name : s.name;
+        const isCurrent = s.name === currentSession && s.machineUrl === currentMachine;
+        const machineLbl = multiMachine ? `<span class="drawer-item-machine">${esc(s.machineName)}</span>` : "";
+        const tlHtml = timelineStripHtml(s.events, "drawer-timeline");
+        return `<div class="drawer-item${isCurrent ? " current" : ""}" data-val="${escAttr(val)}">
+          <div class="dot ${isCurrent ? "active" : "inactive"}" title="${isCurrent ? "current session" : "other session"}"></div>
+          <span class="drawer-item-name">${esc(s.name)}</span>
+          ${machineLbl}${tlHtml}
+        </div>`;
+      }
+
+      function loadSessionSwitcher() {
+        renderDrawerList();
       }
 
       function toggleDrawer() {
@@ -3405,13 +4436,16 @@
         const hdr = document.querySelector("header");
         const drawer = document.getElementById("session-drawer");
         const backdrop = document.getElementById("drawer-backdrop");
-        let startY = 0, startTime = 0, dragging = false, maxDrag = 0;
+        let startY = 0, startX = 0, startTime = 0, dragging = false, maxDrag = 0;
+        let touchTarget = null;
 
         function onStart(e) {
           if (currentView !== "terminal") return;
+          startX = e.touches[0].clientX;
           startY = e.touches[0].clientY;
           startTime = Date.now();
           dragging = false;
+          touchTarget = e.target;
           maxDrag = Math.min(drawer.scrollHeight, window.innerHeight * 0.5);
         }
 
@@ -3445,7 +4479,19 @@
         }
 
         function onEnd(e) {
-          if (!dragging) return;
+          if (!dragging) {
+            // Tap detection: if touch was short + small movement, fire tap on chip/drawer items
+            const dt = Date.now() - startTime;
+            const ex = e.changedTouches[0].clientX, ey = e.changedTouches[0].clientY;
+            const dist = Math.abs(ex - startX) + Math.abs(ey - startY);
+            if (dt < 300 && dist < 15 && touchTarget) {
+              const chip = document.getElementById("session-chip");
+              if (chip && chip.contains(touchTarget)) { toggleDrawer(); return; }
+              const item = touchTarget.closest(".drawer-item");
+              if (item && drawerOpen) { item.click(); return; }
+            }
+            return;
+          }
           dragging = false;
           const dy = e.changedTouches[0].clientY - startY;
           const elapsed = Date.now() - startTime;
@@ -3527,7 +4573,9 @@
         }
         currentSession = name;
         currentMachine = machineUrl;
+        recordRecent(machineUrl, name);
         lastRawPane = null;
+        restoreDraft();
         loadSessionSwitcher();
         // Update machine label in header (showView sets it, but drawer bypasses showView)
         const hml = document.getElementById("header-machine-label");
@@ -3548,6 +4596,7 @@
         }
       }
 
+
       // ── Notifications ──
 
       let notificationsEnabled = false;
@@ -3566,7 +4615,7 @@
         }
       }
 
-      const ATTENTION_PATTERNS = [
+      const NOTIF_PROMPT_PATTERNS = [
         /\? \(y\/n\)/i,
         /\[Y\/n\]/i,
         /\[yes\/no\]/i,
@@ -3575,6 +4624,8 @@
         /permission/i,
         /approve/i,
         /waiting for/i,
+      ];
+      const ERROR_PATTERNS = [
         /Error:/i,
         /error\[/i,
         /failed/i,
@@ -3583,6 +4634,21 @@
 
       // Per-session notification tracking: { "machineUrl|sessionName": "lastNotifiedText" }
       const notifiedSessions = {};
+      // Cooldown timestamps: { "machineUrl|sessionName|type": timestamp }
+      const notifyCooldowns = {};
+
+      function isQuietHours() {
+        const { quietStart, quietEnd } = wpSettings;
+        if (!quietStart || !quietEnd) return false;
+        const now = new Date();
+        const mins = now.getHours() * 60 + now.getMinutes();
+        const [sh, sm] = quietStart.split(":").map(Number);
+        const [eh, em] = quietEnd.split(":").map(Number);
+        const start = sh * 60 + sm;
+        const end = eh * 60 + em;
+        if (start <= end) return mins >= start && mins < end;
+        return mins >= start || mins < end; // wraps midnight
+      }
 
       function checkForAttention(paneText) {
         if (!notificationsEnabled || !currentSession) return;
@@ -3593,30 +4659,51 @@
       function checkSessionAttention(sessionName, machineUrl, paneText) {
         if (!notificationsEnabled) return;
         if (document.visibilityState === "visible") return;
+        if (!wpSettings.notifyPrompts && !wpSettings.notifyErrors) return;
+        if (isQuietHours()) return;
 
         const lastLines = paneText.trimEnd().split("\n").slice(-5).join("\n");
         const key = (machineUrl || "") + "|" + sessionName;
         if (notifiedSessions[key] === lastLines) return;
 
-        for (const pat of ATTENTION_PATTERNS) {
-          if (pat.test(lastLines)) {
-            notifiedSessions[key] = lastLines;
-            const machineName = machineUrl
-              ? (getMachines().find(m => m.url === machineUrl)?.name || "remote")
-              : (selfName || "local");
-            const title = getMachines().length > 0
-              ? `${machineName}: ${sessionName}`
-              : `Wolfpack: ${sessionName}`;
-            new Notification(title, {
-              body: lastLines.slice(-120),
-              tag: "wolfpack-" + key,
-            });
-            navigator.vibrate?.([200, 100, 200]);
-            return;
+        // Match against enabled pattern categories
+        let matchedType = null;
+        if (wpSettings.notifyPrompts) {
+          for (const pat of NOTIF_PROMPT_PATTERNS) {
+            if (pat.test(lastLines)) { matchedType = "prompt"; break; }
           }
         }
-        // No pattern matched — clear so we can re-notify if it matches again later
-        delete notifiedSessions[key];
+        if (!matchedType && wpSettings.notifyErrors) {
+          for (const pat of ERROR_PATTERNS) {
+            if (pat.test(lastLines)) { matchedType = "error"; break; }
+          }
+        }
+
+        if (!matchedType) {
+          delete notifiedSessions[key];
+          return;
+        }
+
+        // Cooldown: dedupe window per session + signal type
+        const cooldownKey = key + "|" + matchedType;
+        const now = Date.now();
+        const cooldownMs = (wpSettings.notifyCooldown || 30) * 1000;
+        if (notifyCooldowns[cooldownKey] && (now - notifyCooldowns[cooldownKey]) < cooldownMs) return;
+
+        notifiedSessions[key] = lastLines;
+        notifyCooldowns[cooldownKey] = now;
+
+        const machineName = machineUrl
+          ? (getMachines().find(m => m.url === machineUrl)?.name || "remote")
+          : (selfName || "local");
+        const title = getMachines().length > 0
+          ? `${machineName}: ${sessionName}`
+          : `Wolfpack: ${sessionName}`;
+        new Notification(title, {
+          body: lastLines.slice(-120),
+          tag: "wolfpack-" + key,
+        });
+        haptic([200, 100, 200]);
       }
 
       // Background attention check for ALL sessions (runs regardless of current view)
@@ -3637,7 +4724,7 @@
           for (const r of results) {
             if (!r) continue;
             for (const s of r.sessions) {
-              // Skip current session — poll() already handles it
+              // Skip current session — active terminal stream handles it
               if (s.name === currentSession && r.machineUrl === currentMachine) continue;
               if (s.lastLine) checkSessionAttention(s.name, r.machineUrl, s.lastLine);
             }
@@ -3657,7 +4744,7 @@
       requestNotifications();
       startBgAttention();
 
-      // Pause bg attention when visible, resume when hidden; re-poll terminal on foreground
+      // Pause bg attention when visible, resume when hidden; recover terminal stream on foreground
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
           stopBgAttention();
@@ -3668,16 +4755,16 @@
           }
           if (currentSession && currentView === "terminal") {
             if (useDesktopTerminal) {
-              // Desktop: reconnect if WS is dead (connectDesktopWs guards against duplicates)
+              // Desktop: reset budget and reconnect if WS is dead
               if (desktopTerm) {
-                desktopReconnectDelay = 1000;
+                desktopRetryBlocked = false;
+                desktopReconnectStartedAt = 0;
+                desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
                 connectDesktopWs();
               }
             } else {
-              // Mobile: resume polling
-              poll();
-              enterFastPoll();
-              schedulePoll();
+              // Mobile: resume WS stream
+              startPolling(false);
             }
           }
         } else {
@@ -3706,25 +4793,25 @@
       msgInput.addEventListener("input", () => {
         autoResizeInput();
         updatePreview();
+        saveDraft();
       });
-      // Mobile: Enter adds newline, Shift+Enter submits
-      // Desktop: Enter submits, Shift+Enter adds newline
-      const isMobile = !isDesktop();
+      // Enter behavior driven by wpSettings.enterSends (UX-07)
+      // enterSends=true: Enter submits, Shift+Enter newline
+      // enterSends=false: Enter newline, Shift+Enter submits
 
       msgInput.addEventListener("keydown", (e) => {
         if (currentView !== "terminal") return;
         const empty = !msgInput.value.trim();
         if (e.key === "Enter") {
-          if (isMobile) {
-            // Mobile: Enter adds newline, Shift+Enter submits
-            if (e.shiftKey) {
+          if (wpSettings.enterSends) {
+            // Enter sends, Shift+Enter adds newline
+            if (!e.shiftKey) {
               e.preventDefault();
               if (empty) sendKey("Enter"); else sendMsg();
             }
-            // else: let Enter add newline naturally
           } else {
-            // Desktop: Enter submits, Shift+Enter adds newline
-            if (!e.shiftKey) {
+            // Enter adds newline, Shift+Enter sends
+            if (e.shiftKey) {
               e.preventDefault();
               if (empty) sendKey("Enter"); else sendMsg();
             }
@@ -3737,6 +4824,123 @@
           sendKey("Down");
         }
       });
+
+      // ── Hold-to-send on send button (UX-07) ──
+      // When holdToSend enabled and message is large (>50 chars), require 400ms hold.
+      // Short messages or holdToSend disabled → instant send on tap.
+      (function setupSendButton() {
+        const btn = document.getElementById("send-btn");
+        const HOLD_MS = 400;
+        const LARGE_THRESHOLD = 50;
+        let holdTimer = null;
+        let holdStarted = false;
+
+        function needsHold() {
+          if (!wpSettings.holdToSend) return false;
+          const text = document.getElementById("msg-input").value.trim();
+          return text.length > LARGE_THRESHOLD;
+        }
+
+        function startHold(e) {
+          if (!needsHold()) { sendMsg(); return; }
+          e.preventDefault();
+          holdStarted = true;
+          btn.classList.add("holding");
+          btn.style.setProperty("--hold-duration", HOLD_MS + "ms");
+          holdTimer = setTimeout(() => {
+            btn.classList.remove("holding");
+            btn.classList.add("hold-complete");
+            haptic([10, 30, 10]);
+            sendMsg();
+            setTimeout(() => btn.classList.remove("hold-complete"), 300);
+            holdStarted = false;
+          }, HOLD_MS);
+        }
+
+        function cancelHold() {
+          if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+          btn.classList.remove("holding", "hold-complete");
+          holdStarted = false;
+        }
+
+        // Touch events for mobile
+        btn.addEventListener("touchstart", (e) => { startHold(e); }, {passive: false});
+        btn.addEventListener("touchend", cancelHold);
+        btn.addEventListener("touchcancel", cancelHold);
+
+        // Mouse events for desktop
+        btn.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          startHold(e);
+        });
+        btn.addEventListener("mouseup", cancelHold);
+        btn.addEventListener("mouseleave", cancelHold);
+      })();
+
+      // ── Keyboard accessory row (UX-15) ──
+      // Toggle-based: user taps ⌨ button in input bar to show/hide.
+      // Always starts closed on session entry.
+      let kbAccessoryOpen = false;
+
+      function toggleKbAccessory() {
+        const acc = document.getElementById("kb-accessory");
+        const tog = document.getElementById("kb-toggle");
+        if (!acc) return;
+        kbAccessoryOpen = !kbAccessoryOpen;
+        acc.classList.toggle("visible", kbAccessoryOpen);
+        if (tog) tog.classList.toggle("active", kbAccessoryOpen);
+        haptic([10]);
+      }
+
+      (function setupKbAccessory() {
+        const acc = document.getElementById("kb-accessory");
+        const ta = document.getElementById("msg-input");
+        const tog = document.getElementById("kb-toggle");
+        if (!acc || !ta) return;
+
+        // Insert text at cursor position in textarea
+        function insertAtCursor(char) {
+          const start = ta.selectionStart;
+          const end = ta.selectionEnd;
+          ta.value = ta.value.substring(0, start) + char + ta.value.substring(end);
+          ta.selectionStart = ta.selectionEnd = start + char.length;
+          ta.dispatchEvent(new Event("input"));
+          ta.focus();
+        }
+
+        // Wire up all keys — prevent blur with mousedown/touchstart preventDefault
+        acc.querySelectorAll(".kb-key").forEach((btn) => {
+          const key = btn.dataset.key;
+          const insert = btn.dataset.insert;
+          // Skip buttons with their own onclick (e.g. git button)
+          if (!key && !insert) return;
+          let touchFired = false;
+
+          function fire() {
+            if (key) {
+              haptic([15]);
+              sendKey(key);
+            } else if (insert) {
+              haptic([10]);
+              insertAtCursor(insert);
+            }
+          }
+
+          // Prevent focus steal (keeps keyboard open)
+          btn.addEventListener("mousedown", (e) => e.preventDefault());
+          btn.addEventListener("touchstart", (e) => {
+            e.preventDefault();
+            touchFired = true;
+            fire();
+          }, { passive: false });
+
+          // Click handler for non-touch devices only
+          btn.addEventListener("click", () => {
+            if (touchFired) { touchFired = false; return; }
+            fire();
+          });
+        });
+      })();
 
       // Global arrow keys → tmux when in terminal and textarea not focused
       document.addEventListener("keydown", (e) => {
@@ -3760,6 +4964,7 @@
       async function showSettings() {
         showView("settings");
         renderMachinesList();
+        toggleDebugPanel();
       }
 
       async function renderMachinesList() {
@@ -3776,8 +4981,9 @@
         ));
         el.innerHTML = machines.map((m, i) => {
           const dot = checks[i] ? "green" : "red";
+          const dotTitle = checks[i] ? "online" : "offline";
           return `<div class="machine-item">
-            <div class="dot ${dot}"></div>
+            <div class="dot ${dot}" title="${dotTitle}"></div>
             <span class="machine-item-name">${esc(m.name)}<span class="machine-item-url">${esc(m.url)}</span></span>
             <button class="machine-remove-btn" onclick="removeMachineUI('${escAttr(m.url)}')">&times;</button>
           </div>`;
@@ -3931,35 +5137,6 @@
         if (searchMatches.length === 0) return;
         searchIndex = (searchIndex - 1 + searchMatches.length) % searchMatches.length;
         applySearchHighlights();
-      }
-
-      async function closeSession() {
-        const session = currentSession;
-        const machine = currentMachine;
-        if (useDesktopTerminal) {
-          destroyDesktopTerminal();
-        } else {
-          stopPolling();
-        }
-        useDesktopTerminal = false;
-        closeSearch();
-        currentSession = null;
-        currentMachine = "";
-        showView("sessions");
-        if (session) {
-          await api("/kill", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session }),
-          }, machine);
-        }
-        loadSessions();
-      }
-
-      function confirmKillSession() {
-        if (confirm(`Kill session "${currentSession}"?`)) {
-          closeSession();
-        }
       }
 
       document.getElementById("search-input").addEventListener("input", doSearch);
@@ -4176,6 +5353,8 @@
       }
 
       initSettings();
+      cleanStaleSnapshots();
+      renderCmdPalette();
       showView("sessions", true);
       loadSessions();
 
