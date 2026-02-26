@@ -13,6 +13,9 @@ export const INPUT_PATTERNS = [
   /waiting for (?:input|response|confirmation|approval)/i,
   /\(yes\/no(?:\/\w+)?\)/i,
   /\?\s*\[.*\]\s*$/,
+  /(?:Enter|type) (?:a |your )?(?:password|passphrase|token|username)/i,
+  /are you sure/i,
+  /\[y\]/i,
 ];
 
 export const ERROR_PATTERNS = [
@@ -26,7 +29,7 @@ export const ERROR_PATTERNS = [
   /segfault|segmentation fault/i,
 ];
 
-export const RUNNING_THRESHOLD_S = 20;
+export const RUNNING_THRESHOLD_S = 45;
 
 export function classifySession(lastLine: string, activityAge: number): TriageStatus {
   if (INPUT_PATTERNS.some((p) => p.test(lastLine))) return "needs-input";

@@ -3422,7 +3422,6 @@
               <div class="card-info">
                 <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
                 <div class="card-preview">${esc(lastLine)}</div>
-                ${timelineStripHtml(s.events)}
               </div>
               <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event, '${mUrlAttr}')">&times;</button>
             </div>`;
@@ -3445,7 +3444,6 @@
               <div class="card-info">
                 <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
                 <div class="card-preview">${esc(lastLine)}</div>
-                ${timelineStripHtml(s.events)}
               </div>
               <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event)">&times;</button>
             </div>`;
@@ -3491,7 +3489,7 @@
           ...machines.map(m => ({ url: m.url, meta: m })),
         ];
 
-        // Only show placeholders on first load
+        // Show placeholders on first load
         if (firstLoad) {
           el.innerHTML = allMachines.map(m =>
             renderGroupHtml({ machine: { ...m.meta, url: m.url }, sessions: [], online: false, pending: true })
@@ -3500,25 +3498,23 @@
 
         const groups = new Array(allMachines.length);
 
+        // Render each machine group as it resolves — don't wait for slow/offline machines
         const promises = allMachines.map((m, i) =>
           fetchMachine(m.url, m.meta).then(g => {
             groups[i] = g;
-            // Update lastSessionGroups incrementally so drawer is never stale
             lastSessionGroups = groups.filter(Boolean);
-            if (firstLoad) {
-              const placeholder = el.querySelector(`[data-machine="${esc(m.url)}"]`);
-              if (placeholder) {
-                const tmp = document.createElement("div");
-                tmp.innerHTML = renderGroupHtml(g);
-                placeholder.replaceWith(tmp.firstElementChild);
-              }
+            const existing = el.querySelector(`[data-machine="${esc(m.url)}"]`);
+            if (existing) {
+              const tmp = document.createElement("div");
+              tmp.innerHTML = renderGroupHtml(g);
+              existing.replaceWith(tmp.firstElementChild);
             }
           })
         );
 
         await Promise.all(promises);
 
-        // Version outdated check
+        // Version outdated check (needs all machines resolved)
         const versions = groups.filter(g => g.online && g.machine.version).map(g => g.machine.version);
         const newestVersion = versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0] || "";
         if (newestVersion) {
@@ -3527,10 +3523,8 @@
           });
         }
 
-        // Sort by number of open terminals (most first)
+        // Sort by number of open terminals (most first) and do final render
         groups.sort((a, b) => b.sessions.length - a.sessions.length);
-
-        // Build final HTML, only touch DOM if changed
         const html = groups.map(g => renderGroupHtml(g)).join("");
         if (html !== lastSessionsHtml) {
           el.innerHTML = html;
@@ -3555,6 +3549,7 @@
         const cached = loadSnapshot(currentMachine, name);
         showView("terminal");
         if (useDesktopTerminal) {
+          destroyDesktopTerminal();
           initDesktopTerminal(cached);
         } else {
           const term = document.getElementById("terminal");
@@ -3719,10 +3714,10 @@
             currentSession = data.session;
             currentMachine = machine;
             useDesktopTerminal = isDesktop();
-            // Refresh session list so switcher has the new session
-            await loadSessions();
-            loadSessionSwitcher();
+            // Refresh session list in background so it doesn't block terminal init
+            loadSessions().then(loadSessionSwitcher);
             if (useDesktopTerminal) {
+              destroyDesktopTerminal();
               initDesktopTerminal();
             } else {
               resizePane();
@@ -4362,11 +4357,10 @@
         const val = s.machineUrl ? s.machineUrl + "|" + s.name : s.name;
         const isCurrent = s.name === currentSession && s.machineUrl === currentMachine;
         const machineLbl = multiMachine ? `<span class="drawer-item-machine">${esc(s.machineName)}</span>` : "";
-        const tlHtml = timelineStripHtml(s.events, "drawer-timeline");
         return `<div class="drawer-item${isCurrent ? " current" : ""}" data-val="${escAttr(val)}">
           <div class="dot ${isCurrent ? "active" : "inactive"}" title="${isCurrent ? "current session" : "other session"}"></div>
           <span class="drawer-item-name">${esc(s.name)}</span>
-          ${machineLbl}${tlHtml}
+          ${machineLbl}
         </div>`;
       }
 

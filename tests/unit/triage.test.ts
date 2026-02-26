@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifySession } from "../../src/triage.ts";
+import { classifySession, TRIAGE_ORDER, type TriageStatus } from "../../src/triage.ts";
 
 describe("classifySession", () => {
   // ── needs-input ──
@@ -45,6 +45,22 @@ describe("classifySession", () => {
     expect(classifySession("Continue? [y/N]", 999)).toBe("needs-input");
   });
 
+  test("detects auth prompts", () => {
+    expect(classifySession("Enter your password:", 999)).toBe("needs-input");
+    expect(classifySession("Enter a passphrase for key:", 999)).toBe("needs-input");
+    expect(classifySession("type your token:", 999)).toBe("needs-input");
+    expect(classifySession("Enter username:", 999)).toBe("needs-input");
+  });
+
+  test("detects 'are you sure' prompts", () => {
+    expect(classifySession("Are you sure you want to delete?", 999)).toBe("needs-input");
+    expect(classifySession("are you sure (y/n)?", 999)).toBe("needs-input");
+  });
+
+  test("detects bracketed [y] default", () => {
+    expect(classifySession("Proceed? [y]", 999)).toBe("needs-input");
+  });
+
   // ── error ──
 
   test("detects Error: prefix", () => {
@@ -84,18 +100,18 @@ describe("classifySession", () => {
 
   // ── running ──
 
-  test("running when activity age <= 20s", () => {
+  test("running when activity age <= 45s", () => {
     expect(classifySession("$ compiling...", 10)).toBe("running");
   });
 
-  test("running at exactly 20s", () => {
-    expect(classifySession("normal output", 20)).toBe("running");
+  test("running at exactly 45s", () => {
+    expect(classifySession("normal output", 45)).toBe("running");
   });
 
   // ── idle ──
 
-  test("idle when activity age > 20s", () => {
-    expect(classifySession("$ ", 21)).toBe("idle");
+  test("idle when activity age > 45s", () => {
+    expect(classifySession("$ ", 46)).toBe("idle");
   });
 
   test("idle with old activity", () => {
@@ -121,5 +137,36 @@ describe("classifySession", () => {
 
   test("empty string with recent activity = running", () => {
     expect(classifySession("", 5)).toBe("running");
+  });
+});
+
+describe("multi-line triage (per-line classification)", () => {
+  // Simulates the routes.ts logic: classify each line independently, pick highest priority
+  function classifyMultiLine(last2: string[], activityAge: number): TriageStatus {
+    return last2.reduce<TriageStatus>((best, line) => {
+      const t = classifySession(line, activityAge);
+      return TRIAGE_ORDER[t] < TRIAGE_ORDER[best] ? t : best;
+    }, classifySession("", activityAge));
+  }
+
+  test("prompt split across two lines still detects needs-input", () => {
+    // "Do you want to continue?" split by newline
+    expect(classifyMultiLine(["Do you want", "to continue? (y/n)"], 999)).toBe("needs-input");
+  });
+
+  test("second line has input pattern", () => {
+    expect(classifyMultiLine(["some output", "Press Enter to continue"], 999)).toBe("needs-input");
+  });
+
+  test("first line has error, second is normal", () => {
+    expect(classifyMultiLine(["Error: build failed", "$ "], 999)).toBe("error");
+  });
+
+  test("both lines normal, old activity = idle", () => {
+    expect(classifyMultiLine(["normal output", "$ "], 999)).toBe("idle");
+  });
+
+  test("both lines normal, recent activity = running", () => {
+    expect(classifyMultiLine(["normal output", "$ "], 5)).toBe("running");
   });
 });

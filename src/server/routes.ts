@@ -146,9 +146,13 @@ export const routes: Record<
         activeNames.add(name);
         const pane = await capturePaneForTriage(name);
         const lines = pane.trimEnd().split("\n");
-        const lastLine = lines.filter(l => l.trim()).slice(-2).map(l => l.trim()).join("\n") || "";
+        const last2 = lines.filter(l => l.trim()).slice(-2).map(l => l.trim());
+        const lastLine = last2.join("\n") || "";
         const activityAge = now - activity;
-        const triage = classifySession(lastLine, activityAge);
+        const triage = last2.reduce((best, line) => {
+          const t = classifySession(line, activityAge);
+          return TRIAGE_ORDER[t] < TRIAGE_ORDER[best] ? t : best;
+        }, classifySession("", activityAge));
         detectTriageTransition(name, triage);
         return { name, lastLine, triage };
       }),
