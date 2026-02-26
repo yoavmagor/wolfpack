@@ -170,7 +170,6 @@
         transform: scale(0.98);
       }
       .card.attention { border-left-color: #ffcc00; }
-      .card.error-session { border-left-color: #cc3333; }
       .card.active-session { border-left-color: #00ff41; }
       .card.idle-session { border-left-color: #333; }
       .triage-badge {
@@ -1384,10 +1383,6 @@
         border-left: 3px solid #ffcc00 !important;
         box-shadow: inset 4px 0 16px -8px rgba(255,204,0,0.12);
       }
-      .card.error-session {
-        border-left: 3px solid #cc3333 !important;
-        box-shadow: inset 4px 0 16px -8px rgba(204,51,51,0.12);
-      }
       .card.idle-session {
         border-left: 3px solid #1e1e1e !important;
       }
@@ -1400,7 +1395,7 @@
         from { opacity: 0; transform: translateY(6px); }
         to { opacity: 1; transform: translateY(0); }
       }
-      .card-stagger { animation: fadeSlideIn 0.2s ease backwards !important; }
+      .card-stagger.animate-in { animation: fadeSlideIn 0.2s ease backwards !important; }
 
       .card-name {
         font-weight: 700 !important;
@@ -3360,7 +3355,6 @@
 
       const TRIAGE_MAP = {
         "needs-input": { dot: "yellow", card: "attention", label: "input", title: "waiting for input" },
-        "error":       { dot: "red",    card: "error-session", label: "error", title: "error" },
         "running":     { dot: "green",  card: "active-session", label: "running", title: "running" },
         "idle":        { dot: "gray",   card: "idle-session", label: "idle", title: "idle" },
       };
@@ -3417,7 +3411,8 @@
           html += g.sessions.map((s, i) => {
             const lastLine = s.lastLine || "";
             const ui = triageUi(s.triage);
-            return `<div class="card card-stagger ${ui.card}" style="animation-delay:${i * 30}ms" onclick="openSession('${escAttr(s.name)}', '${mUrlAttr}')">
+            const anim = firstLoad ? "animate-in" : "";
+            return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}', '${mUrlAttr}')">
               <div class="dot ${ui.dot}" title="${ui.title}"></div>
               <div class="card-info">
                 <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
@@ -3439,7 +3434,8 @@
           html += g.sessions.map((s, i) => {
             const lastLine = s.lastLine || "";
             const ui = triageUi(s.triage);
-            return `<div class="card card-stagger ${ui.card}" style="animation-delay:${i * 30}ms" onclick="openSession('${escAttr(s.name)}')">
+            const anim = firstLoad ? "animate-in" : "";
+            return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}')">
               <div class="dot ${ui.dot}" title="${ui.title}"></div>
               <div class="card-info">
                 <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
@@ -3498,16 +3494,19 @@
 
         const groups = new Array(allMachines.length);
 
-        // Render each machine group as it resolves — don't wait for slow/offline machines
+        // On first load, render each machine group as it resolves for perceived speed.
+        // On subsequent polls, just collect results silently — final render handles it.
         const promises = allMachines.map((m, i) =>
           fetchMachine(m.url, m.meta).then(g => {
             groups[i] = g;
             lastSessionGroups = groups.filter(Boolean);
-            const existing = el.querySelector(`[data-machine="${esc(m.url)}"]`);
-            if (existing) {
-              const tmp = document.createElement("div");
-              tmp.innerHTML = renderGroupHtml(g);
-              existing.replaceWith(tmp.firstElementChild);
+            if (firstLoad) {
+              const existing = el.querySelector(`[data-machine="${esc(m.url)}"]`);
+              if (existing) {
+                const tmp = document.createElement("div");
+                tmp.innerHTML = renderGroupHtml(g);
+                existing.replaceWith(tmp.firstElementChild);
+              }
             }
           })
         );
@@ -4368,7 +4367,11 @@
         renderDrawerList();
       }
 
+      var lastToggleT = 0;
       function toggleDrawer() {
+        var now = Date.now();
+        if (now - lastToggleT < 300) return;
+        lastToggleT = now;
         if (drawerOpen) closeDrawer();
         else openDrawer();
       }
