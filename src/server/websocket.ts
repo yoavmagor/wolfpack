@@ -7,7 +7,6 @@ import {
   clampCols,
   clampRows,
 } from "../validation.js";
-import { recordEvent } from "../timeline.js";
 import {
   TMUX,
   exec,
@@ -102,7 +101,6 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
       const msg = JSON.parse(str);
       if (msg.type === "input" && typeof msg.data === "string") {
         await tmuxSend(session, msg.data, true);
-        recordEvent(session, "command", msg.data.length > 80 ? msg.data.slice(0, 80) + "..." : msg.data);
         setTimeout(sendUpdate, 15);
       } else if (msg.type === "key" && typeof msg.key === "string") {
         if (WS_ALLOWED_KEYS.has(msg.key)) {

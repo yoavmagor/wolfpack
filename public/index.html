@@ -274,49 +274,6 @@
         flex: 1;
         min-width: 0;
       }
-      .timeline-strip {
-        display: flex;
-        gap: 3px;
-        align-items: center;
-        margin-top: 3px;
-        overflow: hidden;
-      }
-      .tl-dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        flex-shrink: 0;
-        opacity: 0.7;
-      }
-      .tl-dot.tl-opened { background: #00ff41; }
-      .tl-dot.tl-prompt { background: #ffcc00; }
-      .tl-dot.tl-error { background: #ff4444; }
-      .tl-dot.tl-command { background: #4488ff; }
-      .tl-dot.tl-idle { background: #555; }
-      .tl-dot.tl-running { background: #00ff41; opacity: 0.5; }
-      .drawer-timeline {
-        display: flex;
-        gap: 2px;
-        align-items: center;
-        margin-left: auto;
-        flex-shrink: 0;
-        padding-left: 8px;
-      }
-      .drawer-timeline .tl-dot {
-        width: 5px;
-        height: 5px;
-      }
-      #header-timeline {
-        margin-top: 2px;
-      }
-      #header-timeline .timeline-strip {
-        gap: 4px;
-        justify-content: center;
-      }
-      #header-timeline .tl-dot {
-        width: 5px;
-        height: 5px;
-      }
       @media (min-width: 769px) {
         .card {
           padding: 6px 8px;
@@ -1980,7 +1937,6 @@
           <img id="wolf-icon" src="/wolf-face.png" width="42" height="42" alt="wolfpack" style="object-fit:contain;filter:invert(1) brightness(0.55);margin:-8px -2px -8px -4px" />
           <h1 id="header-title">wolfpack</h1>
         </div>
-        <div id="header-timeline" style="display:none"></div>
       </div>
       <div class="header-right">
         <div id="header-machine-label" style="display:none;font-size:9px;color:#555;text-transform:uppercase;letter-spacing:1px;line-height:1"></div>
@@ -2591,7 +2547,6 @@
       let allSessions = [];
       let sessionRefreshTimer = null;
       let ralphRefreshTimer = null;
-      let timelineRefreshTimer = null;
       let currentRalphProject = null;
       let currentRalphMachine = ""; // "" = self, URL string = remote
       let ralphLogPollTimer = null;
@@ -2861,8 +2816,6 @@
         if (sessionRefreshTimer) { clearInterval(sessionRefreshTimer); sessionRefreshTimer = null; }
         if (ralphRefreshTimer) { clearInterval(ralphRefreshTimer); ralphRefreshTimer = null; }
         if (ralphLogPollTimer) { clearInterval(ralphLogPollTimer); ralphLogPollTimer = null; }
-        if (timelineRefreshTimer) { clearInterval(timelineRefreshTimer); timelineRefreshTimer = null; }
-        document.getElementById("header-timeline").style.display = "none";
 
         const applyHeader = () => {
           // Always start with kb-accessory closed on view change
@@ -2932,8 +2885,6 @@
               hml.textContent = mName;
               hml.style.display = "";
             }
-            refreshHeaderTimeline();
-            timelineRefreshTimer = setInterval(refreshHeaderTimeline, 10000);
           } else if (name === "ralph") {
             back.style.display = "block";
             back.onclick = () => { showView("sessions"); loadSessions(); };
@@ -3361,36 +3312,6 @@
 
       function triageUi(triage) {
         return TRIAGE_MAP[triage] || TRIAGE_MAP["idle"];
-      }
-
-      function timelineStripHtml(events, cssClass) {
-        if (!events || !events.length) return "";
-        const cls = cssClass || "timeline-strip";
-        return '<div class="' + cls + '">' + events.map(function(e) {
-          return '<div class="tl-dot tl-' + esc(e.type) + '" title="' + escAttr(e.type + " " + timeAgo(e.ts)) + '"></div>';
-        }).join("") + '</div>';
-      }
-
-      function timeAgo(ts) {
-        const s = Math.floor((Date.now() - ts) / 1000);
-        if (s < 60) return s + "s ago";
-        if (s < 3600) return Math.floor(s / 60) + "m ago";
-        return Math.floor(s / 3600) + "h ago";
-      }
-
-      function refreshHeaderTimeline() {
-        const el = document.getElementById("header-timeline");
-        if (!currentSession || currentView !== "terminal") {
-          el.style.display = "none";
-          return;
-        }
-        api("/timeline?session=" + encodeURIComponent(currentSession) + "&limit=8", undefined, currentMachine || undefined)
-          .then(function(d) {
-            if (!d.events || !d.events.length) { el.style.display = "none"; return; }
-            el.innerHTML = timelineStripHtml(d.events);
-            el.style.display = "";
-          })
-          .catch(function() { el.style.display = "none"; });
       }
 
       // Shared session groups cache for switcher reuse

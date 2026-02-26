@@ -27,7 +27,6 @@ import {
 } from "../validation.js";
 import { assets } from "../public-assets.js";
 import { isInputPrompt, isJunkLine, type TriageStatus } from "../triage.js";
-import { recordEvent, getTimeline, getRecentEvents, clearTimeline, detectTriageTransition, pruneTimelines } from "../timeline.js";
 import pkg from "../../package.json";
 import {
   DEV_DIR,
@@ -179,18 +178,11 @@ export const routes: Record<
           triage = tail.some(isInputPrompt) ? "needs-input" : "idle";
         }
 
-        detectTriageTransition(name, triage);
         return { name, lastLine, triage };
       }),
     );
-    pruneTimelines(activeNames);
-    const recentEvents = getRecentEvents(5);
-    const enriched = results.map(r => ({
-      ...r,
-      events: recentEvents.get(r.name) || [],
-    }));
-    enriched.sort((a, b) => TRIAGE_PRIORITY[a.triage] - TRIAGE_PRIORITY[b.triage]);
-    json(res, { sessions: enriched });
+    results.sort((a, b) => TRIAGE_PRIORITY[a.triage] - TRIAGE_PRIORITY[b.triage]);
+    json(res, { sessions: results });
   },
 
   "POST /api/send": async (req, res) => {
@@ -202,7 +194,6 @@ export const routes: Record<
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
     await tmuxSend(session, text, !!noEnter);
-    recordEvent(session, "command", text.length > 80 ? text.slice(0, 80) + "..." : text);
     json(res, { ok: true });
   },
 
@@ -256,7 +247,6 @@ export const routes: Record<
     }
     const sessionName = await uniqueSessionName(folderName);
     await tmuxNewSession(sessionName, projectDir, cmd, loadSettings);
-    recordEvent(sessionName, "opened");
     json(res, { ok: true, session: sessionName });
   },
 
@@ -309,19 +299,7 @@ export const routes: Record<
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
     await exec(TMUX, ["kill-session", "-t", session]);
-    clearTimeline(session);
     json(res, { ok: true });
-  },
-
-  "GET /api/timeline": async (req, res) => {
-    const url = new URL(req.url!, `http://${req.headers.host}`);
-    const session = url.searchParams.get("session");
-    if (!session) return json(res, { error: "missing session param" }, 400);
-    if (!(await isAllowedSession(session)))
-      return json(res, { error: "session not found" }, 404);
-    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
-    const events = getTimeline(session, Math.min(Math.max(limit, 1), 100));
-    json(res, { session, events });
   },
 
   "POST /api/resize": async (req, res) => {
