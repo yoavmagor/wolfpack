@@ -4,9 +4,9 @@ import type { AddressInfo } from "node:net";
 // Set WOLFPACK_TEST before importing serve.ts to prevent auto-listen
 process.env.WOLFPACK_TEST = "1";
 
-import { server, __setTmuxList, __setTmuxSend, __setTmuxSendKey, __getActivePtySessions } from "../../serve.ts";
-import { recordEvent, getTimeline, clearTimeline, detectTriageTransition } from "../../timeline.ts";
-import { classifySession, INPUT_PATTERNS, ERROR_PATTERNS, type TriageStatus } from "../../triage.ts";
+import { server, __setTmuxList, __setTmuxSend, __setTmuxSendKey, __getActivePtySessions } from "../../src/server/index.ts";
+import { recordEvent, getTimeline, clearTimeline, detectTriageTransition } from "../../src/timeline.ts";
+import { classifySession, INPUT_PATTERNS, ERROR_PATTERNS, type TriageStatus } from "../../src/triage.ts";
 
 // ── Test setup ──
 

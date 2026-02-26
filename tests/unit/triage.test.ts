@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifySession } from "../../triage.ts";
+import { classifySession } from "../../src/triage.ts";
 
 describe("classifySession", () => {
   // ── needs-input ──

@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { TASK_HEADER, validatePlanFormat } from "../../wolfpack-context.js";
+import { TASK_HEADER, validatePlanFormat } from "../../src/wolfpack-context.js";
 
 // ─── Temp directory for fake DEV_DIR ─────────────────────────────────────────
 

@@ -10,7 +10,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, extname } from "node:path";
 
 const PUBLIC_DIR = join(import.meta.dirname, "..", "public");
-const OUT_FILE = join(import.meta.dirname, "..", "public-assets.ts");
+const OUT_FILE = join(import.meta.dirname, "..", "src", "public-assets.ts");
 
 const MIME_MAP: Record<string, string> = {
   ".html": "text/html; charset=utf-8",

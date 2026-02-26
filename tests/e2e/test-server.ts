@@ -18,7 +18,7 @@ import {
   __setTmuxSendKey,
   __setTmuxResize,
   __setCapturePane,
-} from "../../serve.ts";
+} from "../../src/server/index.ts";
 
 // ── Mock tmux ──
 

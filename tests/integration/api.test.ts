@@ -47,7 +47,7 @@ async function uniqueSessionName(base: string): Promise<string> {
 }
 
 // ─── Triage classification (imported from shared module) ─────────────────────
-import { classifySession, TRIAGE_ORDER, type TriageStatus } from "../../triage.ts";
+import { classifySession, TRIAGE_ORDER, type TriageStatus } from "../../src/triage.ts";
 
 // ─── Validation / config replicated from serve.ts ────────────────────────────
 
