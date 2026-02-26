@@ -29,7 +29,6 @@ import { handleTerminalWs, handlePtyWs } from "./websocket.js";
 // Re-export everything tests need from a single entry point
 export {
   __setTmuxList,
-  __setTmuxListWithActivity,
   __setTmuxSend,
   __setTmuxSendKey,
   __setTmuxResize,

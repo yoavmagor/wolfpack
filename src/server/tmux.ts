@@ -58,34 +58,7 @@ async function _realTmuxList(): Promise<string[]> {
   }
 }
 
-async function _realTmuxListWithActivity(): Promise<{ name: string; activity: number }[]> {
-  try {
-    const { stdout } = await exec(TMUX, [
-      "list-sessions",
-      "-F",
-      "#{session_name}|||#{pane_current_path}|||#{window_activity}",
-    ]);
-    const SEP = "|||";
-    return stdout
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .filter((line) => {
-        const parts = line.split(SEP);
-        return parts.length >= 3 && parts[1].startsWith(DEV_DIR);
-      })
-      .filter((line) => !line.split(SEP)[0].startsWith("wp_"))
-      .map((line) => {
-        const parts = line.split(SEP);
-        return { name: parts[0], activity: parseInt(parts[2], 10) || 0 };
-      });
-  } catch {
-    return [];
-  }
-}
-
 let _tmuxListFn: () => Promise<string[]> = _realTmuxList;
-let _tmuxListWithActivityFn: () => Promise<{ name: string; activity: number }[]> = _realTmuxListWithActivity;
 
 /** Test hook: override tmuxList to avoid requiring real tmux */
 export function __setTmuxList(fn: () => Promise<string[]>): void {
@@ -93,18 +66,8 @@ export function __setTmuxList(fn: () => Promise<string[]>): void {
   _tmuxListFn = fn;
 }
 
-/** Test hook: override tmuxListWithActivity */
-export function __setTmuxListWithActivity(fn: () => Promise<{ name: string; activity: number }[]>): void {
-  assertTestMode("__setTmuxListWithActivity");
-  _tmuxListWithActivityFn = fn;
-}
-
 export async function tmuxList(): Promise<string[]> {
   return _tmuxListFn();
-}
-
-export async function tmuxListWithActivity(): Promise<{ name: string; activity: number }[]> {
-  return _tmuxListWithActivityFn();
 }
 
 // ── tmuxSend / tmuxSendKey ──
