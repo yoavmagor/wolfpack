@@ -6,7 +6,7 @@ process.env.WOLFPACK_TEST = "1";
 
 import { server, __setTmuxList, __setTmuxSend, __setTmuxSendKey, __getActivePtySessions } from "../../src/server/index.ts";
 import { recordEvent, getTimeline, clearTimeline, detectTriageTransition } from "../../src/timeline.ts";
-import { classifySession, INPUT_PATTERNS, ERROR_PATTERNS, type TriageStatus } from "../../src/triage.ts";
+import { isInputPrompt, type TriageStatus } from "../../src/triage.ts";
 
 // ── Test setup ──
 
@@ -420,61 +420,6 @@ describe("Reconnect — PTY grace period state transitions", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // 4. Triage State Machine Transitions (timeline integration)
 // ═══════════════════════════════════════════════════════════════════════════
-
-describe("Triage state machine — classifySession", () => {
-  test("input patterns trigger needs-input", () => {
-    const prompts = [
-      "Do you want to continue? (y/n)",
-      "Proceed? [Y/n]",
-      "Continue? [yes/no]",
-      "Do you want to proceed?",
-      "Press Enter to continue",
-      "Need permission to access /etc/hosts",
-      "Waiting for input",
-      "Approve this deployment?",
-      "Type (yes/no) to confirm",
-      "Continue? [y/N]",
-    ];
-    for (const prompt of prompts) {
-      expect(classifySession(prompt, 0)).toBe("needs-input");
-    }
-  });
-
-  test("error patterns trigger error", () => {
-    const errors = [
-      "Error: something failed",
-      "error[E0001]: type mismatch",
-      "build failed with 3 errors",
-      "❌ Tests failed",
-      "panic: runtime error",
-      "FATAL: out of memory",
-      "unhandled rejection at Promise",
-      "segfault at 0x0000",
-    ];
-    for (const err of errors) {
-      expect(classifySession(err, 999)).toBe("error");
-    }
-  });
-
-  test("recent activity classifies as running", () => {
-    expect(classifySession("$ compiling...", 5)).toBe("running");
-    expect(classifySession("$ compiling...", 20)).toBe("running");
-  });
-
-  test("stale activity classifies as idle", () => {
-    expect(classifySession("$ ", 21)).toBe("idle");
-    expect(classifySession("$ ", 999)).toBe("idle");
-  });
-
-  test("needs-input takes priority over error patterns", () => {
-    // Line matches both input and error patterns
-    expect(classifySession("Error: Do you want to continue? (y/n)", 0)).toBe("needs-input");
-  });
-
-  test("error takes priority over running", () => {
-    expect(classifySession("Error: build failed", 5)).toBe("error");
-  });
-});
 
 describe("Triage state machine — detectTriageTransition", () => {
   beforeEach(() => {

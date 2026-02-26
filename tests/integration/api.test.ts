@@ -10,12 +10,8 @@ import type { AddressInfo } from "node:net";
 // These replace the real tmux/exec calls so no tmux server is needed.
 
 let fakeSessions: string[] = ["wolf-1", "wolf-2"];
-let fakeSessionActivity: Record<string, number> = {};
 
 const tmuxList = mock(async (): Promise<string[]> => fakeSessions);
-const tmuxListWithActivity = mock(async (): Promise<{ name: string; activity: number }[]> =>
-  fakeSessions.map((name) => ({ name, activity: fakeSessionActivity[name] || 0 }))
-);
 const capturePane = mock(
   async (session: string): Promise<string> =>
     `captured output for ${session}\n`,
@@ -47,7 +43,10 @@ async function uniqueSessionName(base: string): Promise<string> {
 }
 
 // ─── Triage classification (imported from shared module) ─────────────────────
-import { classifySession, TRIAGE_ORDER, type TriageStatus } from "../../src/triage.ts";
+import { isInputPrompt, isJunkLine, type TriageStatus } from "../../src/triage.ts";
+
+/** Content-diff state for test sessions route */
+const testPrevPaneContent = new Map<string, string>();
 
 // ─── Validation / config replicated from serve.ts ────────────────────────────
 
@@ -119,19 +118,40 @@ const routes: Record<
   },
 
   "GET /api/sessions": async (_req, res) => {
-    const sessionsWithActivity = await tmuxListWithActivity();
-    const now = Math.floor(Date.now() / 1000);
+    const sessions = await tmuxList();
     const results = await Promise.all(
-      sessionsWithActivity.map(async ({ name, activity }) => {
+      sessions.map(async (name) => {
         const pane = await capturePane(name);
-        const lines = pane.trimEnd().split("\n");
-        const lastLine = lines.filter(l => l.trim()).slice(-2).map(l => l.trim()).join("\n") || "";
-        const activityAge = now - activity;
-        const triage = classifySession(lastLine, activityAge);
+        const content = pane.trimEnd();
+        const lines = content.split("\n");
+
+        // Walk lines from bottom, skip junk, take first real line
+        let lastLine = "";
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (!isJunkLine(lines[i])) {
+            lastLine = lines[i].trim();
+            break;
+          }
+        }
+
+        // Content-diff triage
+        const prev = testPrevPaneContent.get(name);
+        let triage: TriageStatus;
+        if (prev !== content) {
+          triage = "running";
+          testPrevPaneContent.set(name, content);
+        } else {
+          const tail: string[] = [];
+          for (let i = lines.length - 1; i >= 0 && tail.length < 3; i--) {
+            if (!isJunkLine(lines[i])) tail.push(lines[i].trim());
+          }
+          triage = tail.some(isInputPrompt) ? "needs-input" : "idle";
+        }
         return { name, lastLine, triage };
       }),
     );
-    results.sort((a, b) => TRIAGE_ORDER[a.triage] - TRIAGE_ORDER[b.triage]);
+    const TRIAGE_PRIORITY: Record<TriageStatus, number> = { "needs-input": 0, "running": 1, "idle": 2 };
+    results.sort((a, b) => TRIAGE_PRIORITY[a.triage] - TRIAGE_PRIORITY[b.triage]);
     json(res, { sessions: results });
   },
 
@@ -308,29 +328,29 @@ describe("GET /api/info", () => {
 
 describe("GET /api/sessions", () => {
   test("returns session list with lastLine and triage", async () => {
+    testPrevPaneContent.clear();
     const res = await get("/api/sessions");
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.sessions).toHaveLength(2);
     expect(typeof data.sessions[0].lastLine).toBe("string");
     expect(typeof data.sessions[0].triage).toBe("string");
-    expect(["needs-input", "error", "running", "idle"]).toContain(data.sessions[0].triage);
+    expect(["needs-input", "running", "idle"]).toContain(data.sessions[0].triage);
   });
 
   test("returns empty list when no sessions", async () => {
     const orig = fakeSessions;
     fakeSessions = [];
-    tmuxListWithActivity.mockImplementation(async () => []);
+    tmuxList.mockImplementation(async () => []);
     const res = await get("/api/sessions");
     const data = await res.json();
     expect(data.sessions).toHaveLength(0);
     fakeSessions = orig;
-    tmuxListWithActivity.mockImplementation(async () =>
-      fakeSessions.map((name) => ({ name, activity: fakeSessionActivity[name] || 0 }))
-    );
+    tmuxList.mockImplementation(async () => fakeSessions);
   });
 
   test("capturePane called for each session", async () => {
+    testPrevPaneContent.clear();
     capturePane.mockClear();
     await get("/api/sessions");
     expect(capturePane).toHaveBeenCalledTimes(2);
@@ -338,77 +358,77 @@ describe("GET /api/sessions", () => {
     expect(capturePane).toHaveBeenCalledWith("wolf-2");
   });
 
-  test("classifies needs-input from prompt patterns", async () => {
+  test("classifies running when content changes", async () => {
+    testPrevPaneContent.clear();
+    capturePane.mockImplementation(async () => "compiling...\n");
+    const res = await get("/api/sessions");
+    const data = await res.json();
+    // First call — no previous content, so content differs → running
+    expect(data.sessions[0].triage).toBe("running");
+    capturePane.mockImplementation(async (s: string) => `captured output for ${s}\n`);
+  });
+
+  test("classifies needs-input when content stable with prompt", async () => {
+    testPrevPaneContent.clear();
     capturePane.mockImplementation(async () => "Do you want to continue? (y/n)\n");
-    fakeSessionActivity = { "wolf-1": 0, "wolf-2": 0 };
+    // First call seeds the content
+    await get("/api/sessions");
+    // Second call — same content, prompt detected → needs-input
     const res = await get("/api/sessions");
     const data = await res.json();
     expect(data.sessions[0].triage).toBe("needs-input");
     capturePane.mockImplementation(async (s: string) => `captured output for ${s}\n`);
-    fakeSessionActivity = {};
   });
 
-  test("classifies error from error patterns", async () => {
-    capturePane.mockImplementation(async () => "Error: something went wrong\n");
-    fakeSessionActivity = { "wolf-1": 0, "wolf-2": 0 };
-    const res = await get("/api/sessions");
-    const data = await res.json();
-    expect(data.sessions[0].triage).toBe("error");
-    capturePane.mockImplementation(async (s: string) => `captured output for ${s}\n`);
-    fakeSessionActivity = {};
-  });
-
-  test("classifies running when activity is recent", async () => {
-    const now = Math.floor(Date.now() / 1000);
-    capturePane.mockImplementation(async () => "$ compiling...\n");
-    fakeSessionActivity = { "wolf-1": now - 5, "wolf-2": now - 5 };
-    const res = await get("/api/sessions");
-    const data = await res.json();
-    expect(data.sessions[0].triage).toBe("running");
-    capturePane.mockImplementation(async (s: string) => `captured output for ${s}\n`);
-    fakeSessionActivity = {};
-  });
-
-  test("classifies idle when activity is old", async () => {
+  test("classifies idle when content stable without prompt", async () => {
+    testPrevPaneContent.clear();
     capturePane.mockImplementation(async () => "$ \n");
-    fakeSessionActivity = { "wolf-1": 0, "wolf-2": 0 };
+    // First call seeds the content
+    await get("/api/sessions");
+    // Second call — same content, bare prompt is junk, no input prompt → idle
     const res = await get("/api/sessions");
     const data = await res.json();
     expect(data.sessions[0].triage).toBe("idle");
     capturePane.mockImplementation(async (s: string) => `captured output for ${s}\n`);
-    fakeSessionActivity = {};
+  });
+
+  test("lastLine skips junk lines", async () => {
+    testPrevPaneContent.clear();
+    capturePane.mockImplementation(async () => "real output here\n─────────────\n$ \n\n");
+    await get("/api/sessions");
+    const res = await get("/api/sessions");
+    const data = await res.json();
+    expect(data.sessions[0].lastLine).toBe("real output here");
   });
 
   test("sorts sessions by triage priority", async () => {
-    fakeSessions = ["idle-sess", "error-sess", "input-sess"];
-    const now = Math.floor(Date.now() / 1000);
-    fakeSessionActivity = {
-      "idle-sess": 0,
-      "error-sess": 0,
-      "input-sess": 0,
-    };
-    tmuxListWithActivity.mockImplementation(async () =>
-      fakeSessions.map((name) => ({ name, activity: fakeSessionActivity[name] || 0 }))
-    );
+    testPrevPaneContent.clear();
+    fakeSessions = ["idle-sess", "running-sess", "input-sess"];
+    tmuxList.mockImplementation(async () => fakeSessions);
+    // Seed content on first call
     capturePane.mockImplementation(async (s: string) => {
       if (s === "input-sess") return "Continue? (y/n)\n";
-      if (s === "error-sess") return "Error: build failed\n";
-      return "$ \n";
+      if (s === "running-sess") return "compiling step 1...\n";
+      return "done\n";
+    });
+    await get("/api/sessions");
+    // Second call — input-sess and idle-sess unchanged, running-sess changes
+    capturePane.mockImplementation(async (s: string) => {
+      if (s === "input-sess") return "Continue? (y/n)\n";
+      if (s === "running-sess") return "compiling step 2...\n";
+      return "done\n";
     });
     const res = await get("/api/sessions");
     const data = await res.json();
     expect(data.sessions[0].name).toBe("input-sess");
     expect(data.sessions[0].triage).toBe("needs-input");
-    expect(data.sessions[1].name).toBe("error-sess");
-    expect(data.sessions[1].triage).toBe("error");
+    expect(data.sessions[1].name).toBe("running-sess");
+    expect(data.sessions[1].triage).toBe("running");
     expect(data.sessions[2].name).toBe("idle-sess");
     expect(data.sessions[2].triage).toBe("idle");
     // restore
     fakeSessions = ["wolf-1", "wolf-2"];
-    fakeSessionActivity = {};
-    tmuxListWithActivity.mockImplementation(async () =>
-      fakeSessions.map((name) => ({ name, activity: fakeSessionActivity[name] || 0 }))
-    );
+    tmuxList.mockImplementation(async () => fakeSessions);
     capturePane.mockImplementation(async (s: string) => `captured output for ${s}\n`);
   });
 });

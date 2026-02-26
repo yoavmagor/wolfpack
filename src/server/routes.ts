@@ -26,7 +26,7 @@ import {
   clampRows,
 } from "../validation.js";
 import { assets } from "../public-assets.js";
-import { classifySession, TRIAGE_ORDER } from "../triage.js";
+import { isInputPrompt, isJunkLine, type TriageStatus } from "../triage.js";
 import { recordEvent, getTimeline, getRecentEvents, clearTimeline, detectTriageTransition, pruneTimelines } from "../timeline.js";
 import pkg from "../../package.json";
 import {
@@ -34,7 +34,6 @@ import {
   TMUX,
   RALPH_AGENTS,
   tmuxList,
-  tmuxListWithActivity,
   tmuxSend,
   tmuxSendKey,
   tmuxResize,
@@ -62,6 +61,15 @@ import { activePtySessions } from "./websocket.js";
 
 const VERSION: string = pkg.version;
 const SETTINGS_PATH = join(homedir(), ".wolfpack", "bridge-settings.json");
+
+/** Previous pane content per session — used for content-diff triage. */
+const prevPaneContent = new Map<string, string>();
+
+const TRIAGE_PRIORITY: Record<TriageStatus, number> = {
+  "needs-input": 0,
+  "running": 1,
+  "idle": 2,
+};
 
 const AGENT_PRESETS: Record<string, string> = {
   shell: "shell",
@@ -138,21 +146,39 @@ export const routes: Record<
   },
 
   "GET /api/sessions": async (_req, res) => {
-    const sessionsWithActivity = await tmuxListWithActivity();
-    const now = Math.floor(Date.now() / 1000);
+    const sessions = await tmuxList();
     const activeNames = new Set<string>();
     const results = await Promise.all(
-      sessionsWithActivity.map(async ({ name, activity }) => {
+      sessions.map(async (name) => {
         activeNames.add(name);
         const pane = await capturePaneForTriage(name);
-        const lines = pane.trimEnd().split("\n");
-        const last2 = lines.filter(l => l.trim()).slice(-2).map(l => l.trim());
-        const lastLine = last2.join("\n") || "";
-        const activityAge = now - activity;
-        const triage = last2.reduce((best, line) => {
-          const t = classifySession(line, activityAge);
-          return TRIAGE_ORDER[t] < TRIAGE_ORDER[best] ? t : best;
-        }, classifySession("", activityAge));
+        const content = pane.trimEnd();
+
+        // Walk lines from bottom, skip junk, take first real line for preview
+        const lines = content.split("\n");
+        let lastLine = "";
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (!isJunkLine(lines[i])) {
+            lastLine = lines[i].trim();
+            break;
+          }
+        }
+
+        // Content-diff triage
+        const prev = prevPaneContent.get(name);
+        let triage: TriageStatus;
+        if (prev !== content) {
+          triage = "running";
+          prevPaneContent.set(name, content);
+        } else {
+          // Stable — check last non-junk lines for input prompts
+          const tail: string[] = [];
+          for (let i = lines.length - 1; i >= 0 && tail.length < 3; i--) {
+            if (!isJunkLine(lines[i])) tail.push(lines[i].trim());
+          }
+          triage = tail.some(isInputPrompt) ? "needs-input" : "idle";
+        }
+
         detectTriageTransition(name, triage);
         return { name, lastLine, triage };
       }),
@@ -163,7 +189,7 @@ export const routes: Record<
       ...r,
       events: recentEvents.get(r.name) || [],
     }));
-    enriched.sort((a, b) => TRIAGE_ORDER[a.triage] - TRIAGE_ORDER[b.triage]);
+    enriched.sort((a, b) => TRIAGE_PRIORITY[a.triage] - TRIAGE_PRIORITY[b.triage]);
     json(res, { sessions: enriched });
   },
 
