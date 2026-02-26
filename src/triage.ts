@@ -1,6 +1,6 @@
-// Session triage classification — shared between serve.ts and tests
+// Session triage classification — shared between server and tests
 
-export type TriageStatus = "needs-input" | "error" | "running" | "idle";
+export type TriageStatus = "running" | "needs-input" | "idle";
 
 export const INPUT_PATTERNS = [
   /\? ?\(y\/n\)/i,
@@ -18,29 +18,21 @@ export const INPUT_PATTERNS = [
   /\[y\]/i,
 ];
 
-export const ERROR_PATTERNS = [
-  /(?:^|:\s*)Error:/,
-  /error\[E?\d+\]/i,
-  /(?:build|test|compile|deploy|install|command) failed/i,
-  /❌/,
-  /panic:/i,
-  /FATAL/,
-  /unhandled (?:exception|rejection|error)/i,
-  /segfault|segmentation fault/i,
+/** Patterns matching decorative/UI lines to filter from card preview. */
+export const JUNK_LINE_PATTERNS = [
+  /^[─━═│┃┌┐└┘├┤┬┴┼╔╗╚╝╠╣╦╩╬╭╮╯╰║╒╓╘╙╕╖╛╜\s]+$/, // all box-drawing chars
+  /⏵⏵\s*accept edits/,                               // Claude Code hint bar
+  /esc to interrupt/,                                  // Claude Code hint bar
+  /^\s*[$%#>❯›»]\s*$/,                                // bare shell/agent prompt
+  /^\s*$/,                                             // whitespace-only
 ];
 
-export const RUNNING_THRESHOLD_S = 45;
-
-export function classifySession(lastLine: string, activityAge: number): TriageStatus {
-  if (INPUT_PATTERNS.some((p) => p.test(lastLine))) return "needs-input";
-  if (ERROR_PATTERNS.some((p) => p.test(lastLine))) return "error";
-  if (activityAge <= RUNNING_THRESHOLD_S) return "running";
-  return "idle";
+/** True if the line is decorative/UI junk that should be filtered from card preview. */
+export function isJunkLine(line: string): boolean {
+  return JUNK_LINE_PATTERNS.some((p) => p.test(line));
 }
 
-export const TRIAGE_ORDER: Record<TriageStatus, number> = {
-  "needs-input": 0,
-  "error": 1,
-  "running": 2,
-  "idle": 3,
-};
+/** True if the line matches an input/confirmation prompt pattern. */
+export function isInputPrompt(line: string): boolean {
+  return INPUT_PATTERNS.some((p) => p.test(line));
+}
