@@ -340,7 +340,9 @@ export const routes: Record<
       return json(res, { error: "invalid session name" }, 400);
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
-    const projectDir = join(DEV_DIR, session);
+    // Strip deduplication suffix (-2, -3, ...) to get base project name
+    const projectName = session.replace(/-\d+$/, "");
+    const projectDir = join(DEV_DIR, projectName);
     if (!existsSync(projectDir))
       return json(res, { error: "project directory not found" }, 404);
     try {
