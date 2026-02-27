@@ -862,9 +862,9 @@
       .machine-header-btns { margin-left: auto; display: flex; gap: 6px; align-items: center; }
       .machine-ralph-btn {
         background: #1a1a1a;
-        border: 1px solid rgba(155, 89, 182, 0.4);
+        border: 1px solid rgba(155, 89, 182, 0.6);
         border-radius: 10px;
-        color: #b0b0b0;
+        color: #9b59b6;
         font-size: 16px;
         width: 34px;
         height: 34px;
@@ -873,10 +873,10 @@
         align-items: center;
         justify-content: center;
         -webkit-tap-highlight-color: transparent;
-        transition: transform 0.1s ease, box-shadow 0.1s ease;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        transition: transform 0.1s ease, box-shadow 0.1s ease, background 0.1s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), 0 0 6px rgba(155, 89, 182, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       }
-      .machine-ralph-btn:active { transform: scale(0.95); background: rgba(155, 89, 182, 0.2); box-shadow: 0 0 12px rgba(155, 89, 182, 0.3); }
+      .machine-ralph-btn:active { transform: scale(0.95); background: rgba(155, 89, 182, 0.25); box-shadow: 0 0 14px rgba(155, 89, 182, 0.4); }
       .sidebar-ralph-card {
         display: flex;
         align-items: center;
@@ -884,12 +884,12 @@
         padding: 6px 8px;
         font-size: 11px;
         cursor: pointer;
-        border-left: 2px solid rgba(155, 89, 182, 0.3);
+        border-left: 3px solid rgba(155, 89, 182, 0.5);
         margin-left: 4px;
       }
-      .sidebar-ralph-card:hover { background: rgba(155, 89, 182, 0.08); }
+      .sidebar-ralph-card:hover { background: rgba(155, 89, 182, 0.1); }
       .sidebar-ralph-card .kill-btn { margin-left: auto; font-size: 12px; }
-      .sidebar-ralph-name { color: #999; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sidebar-ralph-name { color: #b0b0b0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .machine-item {
         display: flex;
         align-items: center;
@@ -1624,10 +1624,15 @@
           box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 8px rgba(0,255,65,0.1), inset 0 1px 0 rgba(255,255,255,0.04) !important;
         }
         .settings-gear:hover,
-        .machine-ralph-btn:hover,
         .back-btn:hover {
           border-color: #3a3a3a !important;
           color: #aaa !important;
+        }
+        .machine-ralph-btn:hover {
+          border-color: rgba(155, 89, 182, 0.8) !important;
+          color: #b07cc8 !important;
+          background: rgba(155, 89, 182, 0.1) !important;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 10px rgba(155, 89, 182, 0.2) !important;
         }
       }
 
@@ -1785,7 +1790,20 @@
         .sidebar-sessions .new-btn {
           font-size: 11px !important;
           padding: 8px 10px !important;
-          margin-bottom: 4px !important;
+          margin-bottom: 0 !important;
+          flex: 1;
+        }
+        .sidebar-top-btns {
+          display: flex;
+          gap: 6px;
+          align-items: center;
+          margin-bottom: 4px;
+        }
+        .sidebar-top-btns .machine-ralph-btn {
+          width: 32px;
+          height: 32px;
+          font-size: 14px;
+          flex-shrink: 0;
         }
 
 
@@ -3592,8 +3610,7 @@
           if (data.error) { alert(data.error); return; }
           currentRalphProject = project;
           restartingRalph = false;
-          showView("sessions");
-          loadSessions();
+          backToSessions();
         } catch (e) {
           alert("failed to start: " + e.message);
         }
@@ -3616,14 +3633,35 @@
       async function dismissRalph(project, event, machineUrl) {
         event.stopPropagation();
         if (!confirm("dismiss ralph loop for " + project + "?")) return;
-        const deletePlan = confirm("also delete the plan file?");
         try {
-          await api("/ralph/dismiss", {
+          // Auto-cancel if still active
+          const data = await api("/ralph", undefined, machineUrl);
+          const loop = (data.loops || []).find(l => l.project === project);
+          if (loop && loop.active) {
+            await api("/ralph/cancel", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ project }),
+            }, machineUrl);
+            // Wait for process to die before dismissing
+            await new Promise(r => setTimeout(r, 1000));
+          }
+          const deletePlan = confirm("also delete the plan file?");
+          const result = await api("/ralph/dismiss", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ project, deletePlan }),
           }, machineUrl);
-          loadSessions().then(renderSidebar);
+          if (result && result.error) {
+            alert(result.error);
+            return;
+          }
+          // Stop poll timer to prevent stale in-flight fetches from overwriting fresh data
+          if (sidebarRefreshTimer) { clearInterval(sidebarRefreshTimer); sidebarRefreshTimer = null; }
+          lastSessionsHtml = "";
+          await loadSessions();
+          renderSidebar();
+          startSidebarRefresh();
         } catch (e) {
           alert("failed to dismiss: " + e.message);
         }
@@ -3721,8 +3759,10 @@
 
       let firstLoad = true;
       let lastSessionsHtml = "";
+      let loadSessionsEpoch = 0;
 
       async function loadSessions() {
+        const myEpoch = ++loadSessionsEpoch;
         const el = document.getElementById("session-list");
         const machines = getMachines();
         const multiMachine = machines.length > 0;
@@ -3730,6 +3770,7 @@
         // Single-machine: just fetch and render
         if (!multiMachine) {
           const g = await fetchMachine("", { name: selfName || "this machine" });
+          if (myEpoch !== loadSessionsEpoch) return; // stale call, discard
           lastSessionGroups = [g];
           allSessions = g.sessions.map(s => ({ ...s, machineUrl: "", machineName: g.machine.name }));
           const html = renderSingleMachineHtml(g);
@@ -3771,6 +3812,7 @@
         );
 
         await Promise.all(promises);
+        if (myEpoch !== loadSessionsEpoch) return; // stale call, discard
 
         // Version outdated check (needs all machines resolved)
         const versions = groups.filter(g => g.online && g.machine.version).map(g => g.machine.version);
@@ -4857,7 +4899,16 @@
           machineUrl = "";
           name = val;
         }
-        if (name === currentSession && machineUrl === currentMachine) return;
+        if (name === currentSession && machineUrl === currentMachine) {
+          // Same session — but reconnect if WS is dead/blocked
+          if (useDesktopTerminal && (!desktopWs || desktopWs.readyState !== WebSocket.OPEN)) {
+            desktopRetryBlocked = false;
+            desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
+            desktopReconnectStartedAt = 0;
+            connectDesktopWs();
+          }
+          return;
+        }
         closeDrawer(true);
         // Suspend current mode (cache terminal state)
         if (useDesktopTerminal) {
@@ -5701,13 +5752,14 @@
 
         let html = "";
         if (!multiMachine) {
-          // Single machine — simple list with + New
+          // Single machine — simple list with + New + Ralph
           const g = groups[0];
+          const sidebarBtns = '<div class="sidebar-top-btns"><div class="new-btn" onclick="showProjectPicker()">+ New Session</div><button class="machine-ralph-btn" onclick="showRalphStart()">&#129355;</button></div>';
           if (g && g.online && g.sessions.length) {
-            html += '<div class="new-btn" onclick="showProjectPicker()">+ New Session</div>';
+            html += sidebarBtns;
             html += g.sessions.map(s => sidebarCardHtml(s, "")).join("");
           } else {
-            html += '<div class="new-btn" onclick="showProjectPicker()">+ New Session</div>';
+            html += sidebarBtns;
             html += '<div style="padding:8px 4px;color:#444;font-size:10px;text-transform:uppercase;letter-spacing:1px">No active sessions</div>';
           }
           if (g && g.online && g.loops && g.loops.length) {
@@ -5720,7 +5772,7 @@
             const mName = esc(g.machine.name);
             const statusDot = g.online ? "green" : (g.pending ? "gray" : "red");
             html += `<div class="machine-group" data-machine="${mUrl}">`;
-            html += `<div class="machine-header"><div class="dot ${statusDot}"></div>${mName}<button class="machine-add-btn" onclick="showProjectPicker('${escAttr(g.machine.url)}')">+</button></div>`;
+            html += `<div class="machine-header"><div class="dot ${statusDot}"></div>${mName}<div class="machine-header-btns"><button class="machine-ralph-btn" onclick="showRalphStart('${escAttr(g.machine.url)}')">&#129355;</button><button class="machine-add-btn" onclick="showProjectPicker('${escAttr(g.machine.url)}')">+</button></div></div>`;
             if (g.online && g.sessions.length) {
               html += g.sessions.map(s => sidebarCardHtml(s, g.machine.url)).join("");
             } else if (g.pending) {
