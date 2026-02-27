@@ -27,7 +27,7 @@ const { values: args } = parseArgs({
   },
 });
 
-const ITERATIONS = Math.max(1, Math.min(50, Number(args.iterations) || 5));
+const ITERATIONS = Number(args.iterations) || 5;
 const PLAN_FILE = args.plan!;
 const PROGRESS_FILE = args.progress!;
 const AGENT = args.agent!;
