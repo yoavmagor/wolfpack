@@ -1688,22 +1688,23 @@
         }
         .sidebar-controls {
           display: flex;
-          gap: 4px;
+          gap: 3px;
         }
         .sidebar-controls button {
-          background: none;
-          border: 1px solid #2a2a2a;
-          color: #555;
-          font-size: 10px;
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.1);
+          color: #888;
+          font-size: 12px;
           cursor: pointer;
-          padding: 4px 8px;
+          padding: 5px 9px;
           border-radius: 4px;
           font-family: inherit;
-          transition: color 0.25s, border-color 0.25s, background 0.25s, box-shadow 0.25s, transform 0.2s;
+          transition: color 0.2s, border-color 0.2s, background 0.2s, box-shadow 0.2s;
         }
         .sidebar-controls button:hover {
-          color: #999;
-          border-color: #3a3a3a;
+          color: #00ff41;
+          border-color: rgba(0,255,65,0.35);
+          background: rgba(0,255,65,0.06);
         }
 
         /* Pin button states */
@@ -1716,28 +1717,24 @@
         }
         #sidebar-collapse-btn.pinned {
           color: #00ff41;
-          border-color: rgba(0,255,65,0.4);
-          background: rgba(0,255,65,0.06);
-          box-shadow: 0 0 8px rgba(0,255,65,0.1);
+          border-color: rgba(0,255,65,0.5);
+          background: rgba(0,255,65,0.08);
+          box-shadow: 0 0 10px rgba(0,255,65,0.12);
         }
         #sidebar-collapse-btn.pinned .pin-icon {
           transform: rotate(-45deg);
         }
         #sidebar-collapse-btn.pinned:hover {
           color: #00ff41;
-          border-color: rgba(0,255,65,0.6);
-          background: rgba(0,255,65,0.1);
+          border-color: rgba(0,255,65,0.7);
+          background: rgba(0,255,65,0.12);
         }
 
-        /* Expand button */
-        #sidebar-expand-btn:hover {
-          color: #00ff41;
-          border-color: rgba(0,255,65,0.4);
-        }
+        /* Expand button active */
         #sidebar-expand-btn.active {
           color: #00ff41;
-          border-color: rgba(0,255,65,0.4);
-          background: rgba(0,255,65,0.06);
+          border-color: rgba(0,255,65,0.5);
+          background: rgba(0,255,65,0.08);
         }
 
         /* Sidebar session list */
@@ -1791,59 +1788,59 @@
           margin-bottom: 4px !important;
         }
 
-        /* Sidebar footer */
-        .sidebar-footer {
-          flex-shrink: 0;
-          padding: 8px;
-          border-top: 1px solid rgba(0,255,65,0.12);
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-        .sidebar-footer button {
-          background: #1a1a1a;
-          border: 1px solid #2a2a2a;
-          color: #888;
-          font-family: inherit;
-          font-size: 11px;
-          text-transform: uppercase;
-          letter-spacing: 1.5px;
-          cursor: pointer;
-          padding: 8px 12px;
-          border-radius: 4px;
-          transition: color 0.15s, border-color 0.15s, background 0.15s;
-        }
-        .sidebar-footer button:hover {
-          color: #00ff41;
-          border-color: rgba(0,255,65,0.4);
-          background: #111;
-        }
-        .sidebar-footer-row {
-          display: flex;
-          gap: 6px;
-        }
-        .sidebar-footer-row button {
-          flex: 1;
-          text-align: center;
-        }
-        #sidebar-new-btn {
-          color: #00ff41;
-          border-color: rgba(0,255,65,0.3);
-        }
 
         /* Hide sessions-view on desktop (sidebar replaces it) */
         #sessions-view { display: none !important; }
 
+        /* Expanded toolbar — hidden by default, shown in expanded mode */
+        #expanded-toolbar { display: none; }
+        body.sessions-expanded #expanded-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 8px 16px;
+          flex-shrink: 0;
+        }
+        .expanded-title {
+          font-size: 13px;
+          font-weight: 800;
+          letter-spacing: 4px;
+          color: #00ff41;
+          text-shadow: 0 0 14px rgba(0,255,65,0.45), 0 0 40px rgba(0,255,65,0.1);
+          margin: 0;
+        }
+        .expanded-controls {
+          display: flex;
+          gap: 3px;
+        }
+        .expanded-controls button {
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.1);
+          color: #888;
+          font-size: 12px;
+          cursor: pointer;
+          padding: 5px 9px;
+          border-radius: 4px;
+          font-family: inherit;
+          transition: color 0.2s, border-color 0.2s, background 0.2s;
+        }
+        .expanded-controls button:hover {
+          color: #00ff41;
+          border-color: rgba(0,255,65,0.35);
+          background: rgba(0,255,65,0.06);
+        }
+
         /* Expanded sessions view — full-page grid on desktop */
         body.sessions-expanded #sessions-view {
-          display: block !important;
+          display: flex !important;
+          flex-direction: column;
         }
         /* Column per machine — fills screen width */
         body.sessions-expanded #sessions-view #session-list {
           display: flex;
           gap: 12px;
-          padding: 16px;
-          height: calc(100dvh - 32px);
+          padding: 0 16px 16px;
+          flex: 1;
           overflow-x: auto;
         }
         body.sessions-expanded #sessions-view .machine-group {
@@ -1899,6 +1896,7 @@
       @media (max-width: 768px) {
         #desktop-sidebar { display: none !important; }
         #sidebar-hover-edge { display: none !important; }
+        #expanded-toolbar { display: none !important; }
       }
 
       /* ══════════════════════════════════════════════════════════
@@ -2253,17 +2251,12 @@
       <div class="sidebar-header">
         <h1>WOLFPACK</h1>
         <div class="sidebar-controls">
+          <button id="sidebar-settings-btn" title="Settings">&#9881;</button>
           <button id="sidebar-expand-btn" title="Expand sessions">&#x26F6;</button>
           <button id="sidebar-collapse-btn" title="Pin sidebar"><span class="pin-icon">&#x1F4CC;</span></button>
         </div>
       </div>
       <div id="sidebar-session-list" class="sidebar-sessions"></div>
-      <div class="sidebar-footer">
-        <button id="sidebar-new-btn">+ New</button>
-        <div class="sidebar-footer-row">
-          <button id="sidebar-settings-btn">&#9881;</button>
-        </div>
-      </div>
     </div>
     <div id="sidebar-hover-edge"></div>
     <div id="drawer-backdrop" onclick="closeDrawer()"></div>
@@ -2275,6 +2268,13 @@
     <div id="view-container">
     <!-- Sessions view -->
     <div id="sessions-view" class="view visible">
+      <div id="expanded-toolbar">
+        <h1 class="expanded-title">WOLFPACK</h1>
+        <div class="expanded-controls">
+          <button id="expanded-settings-btn" title="Settings" onclick="showSettings()">&#9881;</button>
+          <button id="expanded-collapse-btn" title="Collapse view" onclick="document.getElementById('sidebar-expand-btn').click()">&#x26F6;</button>
+        </div>
+      </div>
       <div id="session-list" class="list"></div>
     </div>
 
@@ -2487,7 +2487,7 @@
 
     <!-- Ralph detail view -->
     <div id="ralph-detail-view" class="view">
-      <button class="picker-cancel-btn" onclick="showView('sessions'); loadSessions();">&#8592; Back</button>
+      <button class="picker-cancel-btn" onclick="backToSessions()">&#8592; Back</button>
       <div id="ralph-detail-header" class="ralph-detail-header"></div>
       <div id="ralph-log-container" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch">
         <div id="ralph-iterations"></div>
@@ -2501,7 +2501,7 @@
 
     <!-- Ralph start form view -->
     <div id="ralph-start-view" class="view">
-      <button class="picker-cancel-btn" onclick="showView('sessions'); loadSessions();">&#8592; Cancel</button>
+      <button class="picker-cancel-btn" onclick="backToSessions()">&#8592; Cancel</button>
       <div class="ralph-start-form">
         <div id="ralph-machine-picker" style="display:none"></div>
 
@@ -3233,7 +3233,7 @@
             }
           } else if (name === "ralph-detail") {
             back.style.display = "block";
-            back.onclick = () => { showView("sessions"); loadSessions(); };
+            back.onclick = () => { backToSessions(); };
             gear.style.display = "none";
             const ralphMachineSuffix = currentRalphMachine
               ? " @ " + (getMachines().find(m => m.url === currentRalphMachine)?.name || "remote")
@@ -3244,7 +3244,7 @@
             ralphLogPollTimer = setInterval(refreshRalphDetail, 2000);
           } else if (name === "ralph-start") {
             back.style.display = "block";
-            back.onclick = () => { showView("sessions"); loadSessions(); };
+            back.onclick = () => { backToSessions(); };
             gear.style.display = "none";
             title.textContent = "start ralph";
 
@@ -5247,12 +5247,26 @@
         if (mapped) { e.preventDefault(); sendKey(mapped); }
       });
 
+      // Navigate back to fully expanded sessions view (desktop: expand mode, mobile: just sessions)
+      function backToSessions() {
+        if (isDesktop()) {
+          sessionsExpanded = true;
+          document.body.classList.add("sessions-expanded");
+          const expandBtn = document.getElementById("sidebar-expand-btn");
+          if (expandBtn) expandBtn.classList.add("active");
+          const sb = document.getElementById("desktop-sidebar");
+          if (sb) { sb.classList.add("collapsed"); sidebarCollapsed = true; sidebarAutoExpanded = false; }
+        }
+        showView("sessions");
+        loadSessions();
+      }
+
       // Escape to back out of project/agent picker and ralph views
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
         if (currentView === "agent") { e.preventDefault(); showView("projects"); }
         else if (currentView === "projects") { e.preventDefault(); showView(viewBeforePicker); loadSessions(); }
-        else if (currentView === "ralph-start" || currentView === "ralph-detail") { e.preventDefault(); showView("sessions"); loadSessions(); }
+        else if (currentView === "ralph-start" || currentView === "ralph-detail") { e.preventDefault(); backToSessions(); }
       });
 
       document
@@ -5836,7 +5850,6 @@
         });
 
         // Nav buttons
-        document.getElementById("sidebar-new-btn").onclick = () => showProjectPicker();
         document.getElementById("sidebar-settings-btn").onclick = () => showSettings();
 
         // Start session refresh for sidebar
