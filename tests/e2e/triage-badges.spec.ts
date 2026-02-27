@@ -6,9 +6,9 @@
  *
  * Test-server provides 4 sessions with different triage states:
  *   - prompt-project: pane has y/n prompt → "needs-input"
- *   - error-project:  pane has "Error:" → "error"
- *   - test-project:   activity = now, no pattern → "running"
- *   - another-project: activity = 30s ago, no pattern → "idle"
+ *   - error-project:  pane has "Error:" — no special state, classified by content-diff
+ *   - test-project:   content changes between polls → "running"
+ *   - another-project: stable content, no prompt → "idle"
  */
 import { test, expect } from "@playwright/test";
 import { startTestServer, type TestServer } from "./helpers.ts";
@@ -32,12 +32,6 @@ test("session cards show triage badges", async ({ page }) => {
   await expect(promptCard).toBeVisible();
   await expect(promptCard.locator(".triage-badge.needs-input")).toBeVisible();
   await expect(promptCard.locator(".triage-badge")).toContainText("input");
-
-  // Verify error-project has error badge
-  const errorCard = page.locator(".card", { hasText: "error-project" }).first();
-  await expect(errorCard).toBeVisible();
-  await expect(errorCard.locator(".triage-badge.error")).toBeVisible();
-  await expect(errorCard.locator(".triage-badge")).toContainText("error");
 });
 
 test("sessions sorted by triage priority (needs-input first)", async ({ page }) => {
@@ -47,18 +41,15 @@ test("sessions sorted by triage priority (needs-input first)", async ({ page }) 
   // Get all session card names in render order (includes badge text)
   const names = await page.locator(".card .card-name").allTextContents();
 
-  // Find index by session name substring (badge text is appended but doesn't affect includes)
+  // Find index by session name substring
   const promptIdx = names.findIndex((n) => n.includes("prompt-project"));
-  const errorIdx = names.findIndex((n) => n.includes("error-project"));
   const runningIdx = names.findIndex((n) => n.includes("test-project"));
   const idleIdx = names.findIndex((n) => n.includes("another-project"));
 
   expect(promptIdx).toBeGreaterThanOrEqual(0);
-  expect(errorIdx).toBeGreaterThanOrEqual(0);
 
-  // Priority order: needs-input < error < running < idle
-  expect(promptIdx).toBeLessThan(errorIdx);
-  expect(errorIdx).toBeLessThan(runningIdx);
+  // Priority order: needs-input < running < idle
+  expect(promptIdx).toBeLessThan(runningIdx);
   expect(runningIdx).toBeLessThan(idleIdx);
 });
 

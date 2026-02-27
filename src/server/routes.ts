@@ -300,6 +300,7 @@ export const routes: Record<
       return json(res, { error: "session not found" }, 404);
     // Clean up any associated desktop PTY session (wp_*) before killing
     teardownPty(session);
+    prevPaneContent.delete(session);
     await exec(TMUX, ["kill-session", "-t", session]);
     json(res, { ok: true });
   },
