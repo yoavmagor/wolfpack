@@ -14,7 +14,8 @@
       content="black-translucent"
     />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg viewBox='0 0 32 36' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M5 20 L10 3 L14.5 16.5' fill='%2300ff41' fill-opacity='0.4'/%3E%3Cpath d='M17.5 16.5 L22 3 L27 20' fill='%2300ff41' fill-opacity='0.4'/%3E%3Cpath d='M5 20 L14.5 16.5 L16 15 L17.5 16.5 L27 20 L24 30 L18 34 L16 35.5 L14 34 L8 30 Z' fill='%2300ff41' fill-opacity='0.15'/%3E%3Cpath d='M9.5 23 L14 21.5 L14.5 25 L10 26 Z' fill='%2300ff41'/%3E%3Cpath d='M17.5 25 L18 21.5 L22.5 23 L22 26 Z' fill='%2300ff41'/%3E%3C/svg%3E" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg viewBox='0 0 32 32' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='32' height='32' rx='7' fill='%230e0e0e'/%3E%3Cpath d='M7 24 L12 5 L16 16 L20 5 L25 24 L20 19 L16 26 L12 19 Z' fill='%2300ff41'/%3E%3Ccircle cx='13' cy='17.5' r='1.5' fill='%230e0e0e'/%3E%3Ccircle cx='19' cy='17.5' r='1.5' fill='%230e0e0e'/%3E%3C/svg%3E" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>Wolfpack</title>
     <style>
       * {
@@ -2495,6 +2496,7 @@
         <label for="ralph-agent-select">Agent</label>
         <select id="ralph-agent-select">
           <option value="claude">claude</option>
+          <option value="cursor">cursor</option>
           <option value="codex">codex</option>
           <option value="gemini">gemini</option>
         </select>
@@ -2983,15 +2985,21 @@
           const d = await api("/discover");
           const peers = d.peers || [];
           if (peers.length) {
-            const machines = getMachines();
+            const peerUrls = new Set(peers.map(p => p.url));
+            // Start from peers as source of truth, preserve any non-tailnet manual entries
+            let machines = getMachines();
             let changed = false;
+            // Prune stale tailnet machines no longer in peer list
+            const before = machines.length;
+            machines = machines.filter(m => peerUrls.has(m.url));
+            if (machines.length !== before) changed = true;
+            // Add/update from peer list
             for (const p of peers) {
               const existing = machines.find(m => m.url === p.url);
               if (!existing) {
                 machines.push({ url: p.url, name: p.name || p.hostname });
                 changed = true;
               } else if (existing.name !== (p.name || p.hostname)) {
-                // Update name if changed (e.g. Tailscale rename)
                 existing.name = p.name || p.hostname;
                 changed = true;
               }
@@ -3791,7 +3799,7 @@
         checkStateTransitions(groups);
       }
 
-      function openSession(name, machineUrl) {
+      async function openSession(name, machineUrl) {
         // Exit expanded sessions mode when opening a session
         if (sessionsExpanded) {
           sessionsExpanded = false;
@@ -3843,7 +3851,7 @@
           const term = document.getElementById("terminal");
           term.textContent = cached || "";
           if (cached) term.scrollTop = term.scrollHeight;
-          resizePane();
+          await resizePane();
           startPolling();
         }
         renderSidebar();
@@ -4010,7 +4018,7 @@
               destroyDesktopTerminal();
               initDesktopTerminal();
             } else {
-              resizePane();
+              await resizePane();
               startPolling();
             }
           } else {
@@ -4373,7 +4381,7 @@
         const ws = new WebSocket(mobileTerminalWsUrl());
         mobileWs = ws;
 
-        ws.onopen = () => {
+        ws.onopen = async () => {
           if (mobileWs !== ws) return;
           if (!mobileStreamingActive || useDesktopTerminal || connectKey !== terminalSessionKey()) {
             ws.close();
@@ -4384,7 +4392,7 @@
           mobileReconnectStartedAt = 0;
           mobileRetryBlocked = false;
           setConnState("live");
-          resizePane();
+          await resizePane();
         };
 
         ws.onmessage = (ev) => {
@@ -4841,7 +4849,7 @@
         drawer.addEventListener("touchend", onEnd, { passive: true });
       })();
 
-      function switchSession(val) {
+      async function switchSession(val) {
         let name, machineUrl;
         // Values with | are remote: "url|sessionName"
         const pipeIdx = val.indexOf("|");
@@ -4889,7 +4897,7 @@
           initDesktopTerminal();
         } else {
           document.getElementById("terminal").textContent = "";
-          resizePane();
+          await resizePane();
           startPolling();
         }
         renderSidebar();
@@ -5256,21 +5264,32 @@
             statusEl.style.color = "#555";
             return;
           }
-          const machines = getMachines();
+          const peerUrls = new Set(peers.map(p => p.url));
+          let machines = getMachines();
+          // Prune stale machines no longer in peer list
+          const before = machines.length;
+          machines = machines.filter(m => peerUrls.has(m.url));
+          const pruned = before - machines.length;
+          // Add new / update existing
           let added = 0;
           for (const p of peers) {
-            if (!machines.some(m => m.url === p.url)) {
+            const existing = machines.find(m => m.url === p.url);
+            if (!existing) {
               machines.push({ url: p.url, name: p.name || p.hostname });
               added++;
+            } else if (existing.name !== (p.name || p.hostname)) {
+              existing.name = p.name || p.hostname;
             }
           }
-          if (added > 0) {
+          if (added > 0 || pruned > 0) {
             saveMachines(machines);
             renderMachinesList();
           }
-          statusEl.textContent = added > 0
-            ? `Found ${peers.length}, added ${added} new`
-            : `Found ${peers.length}, all already added`;
+          const parts = [`Found ${peers.length}`];
+          if (added > 0) parts.push(`added ${added}`);
+          if (pruned > 0) parts.push(`pruned ${pruned} stale`);
+          if (!added && !pruned) parts.push("all up to date");
+          statusEl.textContent = parts.join(", ");
           statusEl.style.color = "#00ff41";
         } catch {
           statusEl.textContent = "Discovery failed";
