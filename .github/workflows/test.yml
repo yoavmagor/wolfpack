@@ -18,6 +18,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Generate embedded assets
+        run: bun run scripts/gen-assets.ts
+
       - name: Run tests
         run: bun test tests/unit/ tests/snapshot/ tests/integration/api.test.ts tests/integration/ralph-api.test.ts tests/integration/ralph-aggregation.test.ts tests/integration/ws-dispatch.test.ts tests/integration/ws-terminal.test.ts tests/integration/prompt-reconnect.test.ts
 
