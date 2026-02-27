@@ -843,7 +843,6 @@
       }
       .machine-header .dot { width: 6px; height: 6px; }
       .machine-add-btn {
-        margin-left: auto;
         background: #1a1a1a;
         border: 1px solid rgba(0, 255, 65, 0.4);
         border-radius: 10px;
@@ -861,6 +860,37 @@
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       }
       .machine-add-btn:active { transform: scale(0.95); background: #00ff41; color: #0a0a0a; box-shadow: 0 0 12px rgba(0, 255, 65, 0.3); }
+      .machine-header-btns { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+      .machine-ralph-btn {
+        background: #1a1a1a;
+        border: 1px solid rgba(155, 89, 182, 0.4);
+        border-radius: 10px;
+        color: #b0b0b0;
+        font-size: 16px;
+        width: 34px;
+        height: 34px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        -webkit-tap-highlight-color: transparent;
+        transition: transform 0.1s ease, box-shadow 0.1s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+      .machine-ralph-btn:active { transform: scale(0.95); background: rgba(155, 89, 182, 0.2); box-shadow: 0 0 12px rgba(155, 89, 182, 0.3); }
+      .sidebar-ralph-card {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        font-size: 11px;
+        cursor: pointer;
+        border-left: 2px solid rgba(155, 89, 182, 0.3);
+        margin-left: 4px;
+      }
+      .sidebar-ralph-card:hover { background: rgba(155, 89, 182, 0.08); }
+      .sidebar-ralph-card .kill-btn { margin-left: auto; font-size: 12px; }
+      .sidebar-ralph-name { color: #999; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .machine-item {
         display: flex;
         align-items: center;
@@ -948,14 +978,6 @@
         font-size: 10px;
         color: #555;
         white-space: nowrap;
-      }
-      .ralph-machine-label {
-        font-size: 9px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        color: #666;
-        margin-top: 4px;
-        text-align: right;
       }
       .ralph-status {
         font-size: 9px;
@@ -1119,30 +1141,6 @@
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.08);
       }
       .ralph-launch-btn:active { transform: scale(0.97); background: #8e44ad; box-shadow: 0 0 12px rgba(155, 89, 182, 0.3); }
-      .ralph-empty {
-        text-align: center;
-        color: #444;
-        padding: 30px 10px;
-        font-size: 12px;
-      }
-      .ralph-nav-btn {
-        background: #1a1a1a;
-        border: 1px solid rgba(155, 89, 182, 0.4);
-        border-radius: 10px;
-        color: #b0b0b0;
-        font-size: 16px;
-        cursor: pointer;
-        padding: 6px;
-        width: 36px;
-        height: 36px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        -webkit-tap-highlight-color: transparent;
-        transition: transform 0.1s ease, box-shadow 0.1s ease;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-      }
-      .ralph-nav-btn:active { transform: scale(0.95); background: #2a2a2a; box-shadow: 0 0 12px rgba(155, 89, 182, 0.3); }
       #desktop-terminal-container {
         display: none;
         flex: 1;
@@ -1443,7 +1441,7 @@
       .new-btn,
       .back-btn,
       .settings-gear,
-      .ralph-nav-btn,
+      .machine-ralph-btn,
       .machine-add-btn,
       .kb-key,
       #input-bar button,
@@ -1627,7 +1625,7 @@
           box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 8px rgba(0,255,65,0.1), inset 0 1px 0 rgba(255,255,255,0.04) !important;
         }
         .settings-gear:hover,
-        .ralph-nav-btn:hover,
+        .machine-ralph-btn:hover,
         .back-btn:hover {
           border-color: #3a3a3a !important;
           color: #aaa !important;
@@ -2012,7 +2010,7 @@
           font-size: 11px !important;
         }
         .settings-gear,
-        .ralph-nav-btn {
+        .machine-ralph-btn {
           min-width: 40px !important;
           min-height: 40px !important;
           font-size: 20px !important;
@@ -2247,7 +2245,6 @@
       </div>
       <div class="header-right">
         <div id="header-machine-label" style="display:none;font-size:9px;color:#555;text-transform:uppercase;letter-spacing:1px;line-height:1"></div>
-        <button class="ralph-nav-btn" id="ralph-btn" onclick="showView('ralph')" style="display:none">&#129355;</button>
         <button class="search-btn" id="search-btn" onclick="toggleSearch()">&#128269;</button>
         <button class="settings-gear" id="gear-btn" onclick="showSettings()">&#9881;</button>
       </div>
@@ -2264,7 +2261,6 @@
       <div class="sidebar-footer">
         <button id="sidebar-new-btn">+ New</button>
         <div class="sidebar-footer-row">
-          <button id="sidebar-ralph-btn">&#129355;</button>
           <button id="sidebar-settings-btn">&#9881;</button>
         </div>
       </div>
@@ -2489,14 +2485,9 @@
       <div id="msg-preview"></div>
     </div>
 
-    <!-- Ralph loops list view -->
-    <div id="ralph-view" class="view">
-      <div id="ralph-list" class="list"></div>
-      <button class="ralph-launch-btn" onclick="showView('ralph-start')">+ Start Ralph Loop</button>
-    </div>
-
     <!-- Ralph detail view -->
     <div id="ralph-detail-view" class="view">
+      <button class="picker-cancel-btn" onclick="showView('sessions'); loadSessions();">&#8592; Back</button>
       <div id="ralph-detail-header" class="ralph-detail-header"></div>
       <div id="ralph-log-container" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch">
         <div id="ralph-iterations"></div>
@@ -2510,11 +2501,9 @@
 
     <!-- Ralph start form view -->
     <div id="ralph-start-view" class="view">
+      <button class="picker-cancel-btn" onclick="showView('sessions'); loadSessions();">&#8592; Cancel</button>
       <div class="ralph-start-form">
-        <div id="ralph-machine-picker" style="display:none">
-          <label for="ralph-machine-select">Machine</label>
-          <select id="ralph-machine-select"></select>
-        </div>
+        <div id="ralph-machine-picker" style="display:none"></div>
 
         <label for="ralph-project-select">Project</label>
         <select id="ralph-project-select"></select>
@@ -2874,9 +2863,9 @@
       let termFollowMode = true;
       let allSessions = [];
       let sessionRefreshTimer = null;
-      let ralphRefreshTimer = null;
       let currentRalphProject = null;
       let currentRalphMachine = ""; // "" = self, URL string = remote
+      let ralphStartMachine = ""; // machine context for ralph-start form
       let ralphLogPollTimer = null;
       let currentRalphPlanFile = "";
       let desktopTerm = null;       // xterm.js Terminal instance
@@ -3062,9 +3051,8 @@
         agent: 2,
         settings: 1,
         terminal: 1,
-        ralph: 1,
-        "ralph-detail": 2,
-        "ralph-start": 2,
+        "ralph-detail": 1,
+        "ralph-start": 1,
       };
 
       function showView(name, skipAnimation) {
@@ -3143,14 +3131,12 @@
         const title = document.getElementById("header-title");
 
         const gear = document.getElementById("gear-btn");
-        const ralphBtn = document.getElementById("ralph-btn");
 
         const chip = document.getElementById("session-chip");
         const headerCenter = document.getElementById("header-center");
 
         // Stop timers immediately (don't defer these)
         if (sessionRefreshTimer) { clearInterval(sessionRefreshTimer); sessionRefreshTimer = null; }
-        if (ralphRefreshTimer) { clearInterval(ralphRefreshTimer); ralphRefreshTimer = null; }
         if (ralphLogPollTimer) { clearInterval(ralphLogPollTimer); ralphLogPollTimer = null; }
 
         // Desktop: skip all header manipulation, handle view-specific logic only
@@ -3169,9 +3155,6 @@
           }
           if (effectiveName === "settings") {
             renderQuickCmdSettings();
-          } else if (effectiveName === "ralph") {
-            loadRalphLoops();
-            ralphRefreshTimer = setInterval(loadRalphLoops, 3000);
           } else if (effectiveName === "ralph-detail") {
             refreshRalphDetail();
             ralphLogPollTimer = setInterval(refreshRalphDetail, 2000);
@@ -3197,13 +3180,11 @@
           document.getElementById("search-btn").style.display = "none";
           document.getElementById("header-machine-label").style.display = "none";
           headerCenter.style.transform = "";
-          ralphBtn.style.display = "none";
 
           if (name === "sessions") {
             back.style.display = "none";
             back.onclick = null;
             gear.style.display = "";
-            ralphBtn.style.display = "";
             title.textContent = "wolfpack";
             sessionRefreshTimer = setInterval(loadSessions, 5000);
           } else if (name === "projects") {
@@ -3250,17 +3231,9 @@
               hml.textContent = mName;
               hml.style.display = "";
             }
-          } else if (name === "ralph") {
-            back.style.display = "block";
-            back.onclick = () => { showView("sessions"); loadSessions(); };
-            gear.style.display = "none";
-            title.textContent = "ralph loops";
-
-            loadRalphLoops();
-            ralphRefreshTimer = setInterval(loadRalphLoops, 3000);
           } else if (name === "ralph-detail") {
             back.style.display = "block";
-            back.onclick = () => { showView("ralph"); };
+            back.onclick = () => { showView("sessions"); loadSessions(); };
             gear.style.display = "none";
             const ralphMachineSuffix = currentRalphMachine
               ? " @ " + (getMachines().find(m => m.url === currentRalphMachine)?.name || "remote")
@@ -3271,7 +3244,7 @@
             ralphLogPollTimer = setInterval(refreshRalphDetail, 2000);
           } else if (name === "ralph-start") {
             back.style.display = "block";
-            back.onclick = () => { showView("ralph"); };
+            back.onclick = () => { showView("sessions"); loadSessions(); };
             gear.style.display = "none";
             title.textContent = "start ralph";
 
@@ -3284,51 +3257,45 @@
 
       // ── Ralph Loop Functions ──
 
-      async function loadRalphLoops() {
-        const el = document.getElementById("ralph-list");
-        try {
-          // Server aggregates loops from all peers when ?aggregate=true
-          const data = await api("/ralph?aggregate=true");
-          const loops = data.loops || [];
-          const multiMachine = loops.some(l => l.machineUrl);
-          if (loops.length === 0) {
-            el.innerHTML = '<div class="ralph-empty">no ralph loops detected</div>';
-            return;
-          }
-          // sort: active first, then by started desc
-          loops.sort((a, b) => {
-            if (a.active !== b.active) return a.active ? -1 : 1;
-            return (b.started || "").localeCompare(a.started || "");
-          });
-          el.innerHTML = loops.map(loop => {
-            const hitLimit = !loop.active && !loop.completed && loop.finished;
-            const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
-            const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
-            const dotClass = loop.active ? "purple" : "gray";
-            const dotTitle = loop.active ? "active" : "idle";
-            const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
-            const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
-            const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
-            const lastOut = loop.lastOutput ? '<div class="ralph-last-output">' + esc(loop.lastOutput) + '</div>' : '';
-            const machineLabel = multiMachine ? '<div class="ralph-machine-label">' + esc(loop.machineName || "local") + '</div>' : '';
-            return '<div class="ralph-card ' + status + '" onclick="openRalphDetail(\'' + escAttr(loop.project) + '\', \'' + escAttr(loop.machineUrl || '') + '\')">' +
-              '<div class="ralph-card-header">' +
-                '<span class="ralph-card-name"><span class="dot ' + dotClass + '" title="' + dotTitle + '"></span>' + esc(loop.project) + (loop.planFile ? ' <span style="color:#555;font-weight:400">— ' + esc(loop.planFile.replace(/\.md$/i, '')) + '</span>' : '') + '</span>' +
-                '<span class="ralph-status ' + status + '">' + statusLabel + '</span>' +
-                '<button class="kill-btn" onclick="dismissRalph(\'' + escAttr(loop.project) + '\', event, \'' + escAttr(loop.machineUrl || '') + '\')">&times;</button>' +
-              '</div>' +
-              '<div class="ralph-progress">' +
-                '<div class="ralph-bar"><div class="ralph-bar-fill ' + status + '" style="width:' + taskPct + '%"></div></div>' +
-                '<span class="ralph-iter">' + taskLabel + '</span>' +
-              '</div>' +
-              (iterLabel ? '<div class="ralph-iter" style="text-align:right;margin-top:2px">' + iterLabel + '</div>' : '') +
-              machineLabel +
-              lastOut +
-            '</div>';
-          }).join("");
-        } catch (e) {
-          el.innerHTML = '<div class="ralph-empty">failed to load ralph loops</div>';
-        }
+      function renderRalphCardHtml(loop, machineUrl) {
+        const hitLimit = !loop.active && !loop.completed && loop.finished;
+        const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
+        const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
+        const dotClass = loop.active ? "purple" : "gray";
+        const dotTitle = loop.active ? "active" : "idle";
+        const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
+        const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
+        const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
+        const lastOut = loop.lastOutput ? '<div class="ralph-last-output">' + esc(loop.lastOutput) + '</div>' : '';
+        const mUrl = escAttr(machineUrl || '');
+        return '<div class="ralph-card ' + status + '" onclick="openRalphDetail(\'' + escAttr(loop.project) + '\', \'' + mUrl + '\')">' +
+          '<div class="ralph-card-header">' +
+            '<span class="ralph-card-name"><span class="dot ' + dotClass + '" title="' + dotTitle + '"></span>' + esc(loop.project) + (loop.planFile ? ' <span style="color:#555;font-weight:400">— ' + esc(loop.planFile.replace(/\.md$/i, '')) + '</span>' : '') + '</span>' +
+            '<span class="ralph-status ' + status + '">' + statusLabel + '</span>' +
+            '<button class="kill-btn" onclick="dismissRalph(\'' + escAttr(loop.project) + '\', event, \'' + mUrl + '\')">&times;</button>' +
+          '</div>' +
+          '<div class="ralph-progress">' +
+            '<div class="ralph-bar"><div class="ralph-bar-fill ' + status + '" style="width:' + taskPct + '%"></div></div>' +
+            '<span class="ralph-iter">' + taskLabel + '</span>' +
+          '</div>' +
+          (iterLabel ? '<div class="ralph-iter" style="text-align:right;margin-top:2px">' + iterLabel + '</div>' : '') +
+          lastOut +
+        '</div>';
+      }
+
+      function sidebarRalphCardHtml(loop, machineUrl) {
+        const hitLimit = !loop.active && !loop.completed && loop.finished;
+        const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
+        const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
+        const dotClass = loop.active ? "purple" : "gray";
+        const dotTitle = loop.active ? "active" : "idle";
+        const mUrl = escAttr(machineUrl || '');
+        return '<div class="ralph-card sidebar-ralph-card ' + status + '" onclick="openRalphDetail(\'' + escAttr(loop.project) + '\', \'' + mUrl + '\')">' +
+          '<span class="dot ' + dotClass + '" title="' + dotTitle + '"></span>' +
+          '<span class="sidebar-ralph-name">' + esc(loop.project) + '</span>' +
+          '<span class="ralph-status ' + status + '">' + statusLabel + '</span>' +
+          '<button class="kill-btn" onclick="dismissRalph(\'' + escAttr(loop.project) + '\', event, \'' + mUrl + '\')">&times;</button>' +
+        '</div>';
       }
 
       function openRalphDetail(project, machineUrl) {
@@ -3475,37 +3442,23 @@
       }
 
       function getStartMachine() {
-        const sel = document.getElementById("ralph-machine-select");
-        return sel && sel.value ? sel.value : undefined;
+        return ralphStartMachine || undefined;
       }
 
       async function loadRalphStartForm() {
-        // Populate machine picker
+        // Show machine label if multi-machine
         const machines = getMachines();
         const picker = document.getElementById("ralph-machine-picker");
-        const machineSel = document.getElementById("ralph-machine-select");
-        if (machines.length > 0) {
+        if (machines.length > 0 && ralphStartMachine) {
+          const mName = machines.find(m => m.url === ralphStartMachine)?.name || "remote";
           picker.style.display = "";
-          const opts = [
-            { url: "", name: selfName || "this machine" },
-            ...machines,
-          ];
-          machineSel.innerHTML = opts.map(m =>
-            '<option value="' + esc(m.url) + '">' + esc(m.name) + '</option>'
-          ).join("");
-          if (restartingRalph && currentRalphMachine !== undefined) {
-            machineSel.value = currentRalphMachine;
-            machineSel.disabled = true;
-          } else {
-            machineSel.disabled = false;
-            restartingRalph = false;
-          }
-          machineSel.onchange = () => loadStartFormData();
+          picker.innerHTML = '<span style="color:#666;font-size:11px">Machine: <strong style="color:#999">' + esc(mName) + '</strong></span>';
+        } else if (machines.length > 0) {
+          picker.style.display = "";
+          picker.innerHTML = '<span style="color:#666;font-size:11px">Machine: <strong style="color:#999">' + esc(selfName || "this machine") + '</strong></span>';
         } else {
           picker.style.display = "none";
-          machineSel.innerHTML = "";
         }
-
         await loadStartFormData();
       }
 
@@ -3638,7 +3591,8 @@
           if (data.error) { alert(data.error); return; }
           currentRalphProject = project;
           restartingRalph = false;
-          showView("ralph");
+          showView("sessions");
+          loadSessions();
         } catch (e) {
           alert("failed to start: " + e.message);
         }
@@ -3648,6 +3602,13 @@
       function restartRalph(planFile) {
         currentRalphPlanFile = planFile || "";
         restartingRalph = true;
+        ralphStartMachine = currentRalphMachine;
+        showView("ralph-start");
+      }
+
+      function showRalphStart(machineUrl) {
+        ralphStartMachine = machineUrl || "";
+        restartingRalph = false;
         showView("ralph-start");
       }
 
@@ -3661,7 +3622,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ project, deletePlan }),
           }, machineUrl);
-          loadRalphLoops();
+          loadSessions().then(renderSidebar);
         } catch (e) {
           alert("failed to dismiss: " + e.message);
         }
@@ -3690,24 +3651,29 @@
         const statusTitle = g.online ? "online" : (g.pending ? "connecting" : "offline");
         const versionWarning = g.outdated ? `<span style="color:#ff6600;margin-left:6px;font-size:11px;padding:3px 8px;border:1px solid #00ff41;border-radius:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;letter-spacing:1px" onclick="event.stopPropagation();alert('Running v${escAttr(g.machine.version || "?")} — newer version available on another machine')">⚠ UPDATE</span>` : "";
         let html = `<div class="machine-group" data-machine="${mUrl}">`;
-        html += `<div class="machine-header"><div class="dot ${statusDot}" title="${statusTitle}"></div>${mName}${versionWarning}<button class="machine-add-btn" onclick="showProjectPicker('${mUrlAttr}')">+</button></div>`;
+        html += `<div class="machine-header"><div class="dot ${statusDot}" title="${statusTitle}"></div>${mName}${versionWarning}<div class="machine-header-btns"><button class="machine-ralph-btn" onclick="showRalphStart('${mUrlAttr}')">&#129355;</button><button class="machine-add-btn" onclick="showProjectPicker('${mUrlAttr}')">+</button></div></div>`;
         if (g.pending) {
           html += `<div style="padding:4px 4px;color:#555;font-size:11px">Connecting...</div>`;
-        } else if (g.online && g.sessions.length) {
-          html += g.sessions.map((s, i) => {
-            const lastLine = s.lastLine || "";
-            const ui = triageUi(s.triage);
-            const anim = firstLoad ? "animate-in" : "";
-            return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}', '${mUrlAttr}')">
-              <div class="dot ${ui.dot}" title="${ui.title}"></div>
-              <div class="card-info">
-                <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
-                <div class="card-preview">${esc(lastLine)}</div>
-              </div>
-              <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event, '${mUrlAttr}')">&times;</button>
-            </div>`;
-          }).join("");
-        } else if (!g.online) {
+        } else if (g.online) {
+          if (g.sessions.length) {
+            html += g.sessions.map((s, i) => {
+              const lastLine = s.lastLine || "";
+              const ui = triageUi(s.triage);
+              const anim = firstLoad ? "animate-in" : "";
+              return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}', '${mUrlAttr}')">
+                <div class="dot ${ui.dot}" title="${ui.title}"></div>
+                <div class="card-info">
+                  <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
+                  <div class="card-preview">${esc(lastLine)}</div>
+                </div>
+                <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event, '${mUrlAttr}')">&times;</button>
+              </div>`;
+            }).join("");
+          }
+          if (g.loops && g.loops.length) {
+            html += g.loops.map(loop => renderRalphCardHtml(loop, g.machine.url)).join("");
+          }
+        } else {
           html += `<div style="padding:4px 4px;color:#555;font-size:11px">Offline</div>`;
         }
         html += `</div>`;
@@ -3716,7 +3682,7 @@
 
       function renderSingleMachineHtml(g) {
         let html = `<div class="machine-group">`;
-        html += `<div class="machine-header"><div class="dot green"></div>${esc(g.machine.name)}<button class="machine-add-btn" onclick="showProjectPicker()">+</button></div>`;
+        html += `<div class="machine-header"><div class="dot green"></div>${esc(g.machine.name)}<div class="machine-header-btns"><button class="machine-ralph-btn" onclick="showRalphStart()">&#129355;</button><button class="machine-add-btn" onclick="showProjectPicker()">+</button></div></div>`;
         if (g.online && g.sessions.length) {
           html += g.sessions.map((s, i) => {
             const lastLine = s.lastLine || "";
@@ -3732,19 +3698,23 @@
             </div>`;
           }).join("");
         }
+        if (g.online && g.loops && g.loops.length) {
+          html += g.loops.map(loop => renderRalphCardHtml(loop, "")).join("");
+        }
         html += '</div>';
         return html;
       }
 
       function fetchMachine(machineUrl, machineMeta) {
-        return Promise.all([api("/sessions", undefined, machineUrl || undefined), api("/info", undefined, machineUrl || undefined)])
-          .then(([d, info]) => ({
+        const ralphFetch = api("/ralph", undefined, machineUrl || undefined).catch(() => ({ loops: [] }));
+        return Promise.all([api("/sessions", undefined, machineUrl || undefined), api("/info", undefined, machineUrl || undefined), ralphFetch])
+          .then(([d, info, ralph]) => ({
             machine: { ...machineMeta, url: machineUrl, version: info.version || "", name: info.name || machineMeta.name },
-            sessions: d.sessions || [], online: true, pending: false,
+            sessions: d.sessions || [], loops: ralph.loops || [], online: true, pending: false,
           }))
           .catch(() => ({
             machine: { ...machineMeta, url: machineUrl, version: "" },
-            sessions: [], online: false, pending: false,
+            sessions: [], loops: [], online: false, pending: false,
           }));
       }
 
@@ -5277,11 +5247,12 @@
         if (mapped) { e.preventDefault(); sendKey(mapped); }
       });
 
-      // Escape to back out of project/agent picker
+      // Escape to back out of project/agent picker and ralph views
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
         if (currentView === "agent") { e.preventDefault(); showView("projects"); }
         else if (currentView === "projects") { e.preventDefault(); showView(viewBeforePicker); loadSessions(); }
+        else if (currentView === "ralph-start" || currentView === "ralph-detail") { e.preventDefault(); showView("sessions"); loadSessions(); }
       });
 
       document
@@ -5506,9 +5477,9 @@
         const W = () => window.innerWidth;
 
         const BACK_TARGET = {
-          terminal: "sessions", ralph: "sessions", "ralph-detail": "ralph",
+          terminal: "sessions", "ralph-detail": "sessions",
           projects: "sessions", agent: "projects", settings: "sessions",
-          "ralph-start": "ralph",
+          "ralph-start": "sessions",
         };
 
         function applySwipe() {
@@ -5556,7 +5527,8 @@
               swipeCard = card;
               isBack = false;
               fgEl = document.getElementById(currentView + "-view");
-              const targetView = currentView === "sessions" ? "terminal" : currentView === "ralph" ? "ralph-detail" : null;
+              const isRalphCard = card.classList.contains("ralph-card");
+              const targetView = currentView === "sessions" ? (isRalphCard ? "ralph-detail" : "terminal") : null;
               if (!targetView) { scrolling = true; return; }
               bgEl = document.getElementById(targetView + "-view");
             } else { scrolling = true; return; }
@@ -5723,6 +5695,9 @@
             html += '<div class="new-btn" onclick="showProjectPicker()">+ New Session</div>';
             html += '<div style="padding:8px 4px;color:#444;font-size:10px;text-transform:uppercase;letter-spacing:1px">No active sessions</div>';
           }
+          if (g && g.online && g.loops && g.loops.length) {
+            html += g.loops.map(loop => sidebarRalphCardHtml(loop, "")).join("");
+          }
         } else {
           // Multi-machine
           for (const g of groups) {
@@ -5737,6 +5712,9 @@
               html += '<div style="padding:4px;color:#555;font-size:10px">Connecting...</div>';
             } else if (!g.online) {
               html += '<div style="padding:4px;color:#555;font-size:10px">Offline</div>';
+            }
+            if (g.online && g.loops && g.loops.length) {
+              html += g.loops.map(loop => sidebarRalphCardHtml(loop, g.machine.url)).join("");
             }
             html += '</div>';
           }
@@ -5859,7 +5837,6 @@
 
         // Nav buttons
         document.getElementById("sidebar-new-btn").onclick = () => showProjectPicker();
-        document.getElementById("sidebar-ralph-btn").onclick = () => showView("ralph");
         document.getElementById("sidebar-settings-btn").onclick = () => showSettings();
 
         // Start session refresh for sidebar
