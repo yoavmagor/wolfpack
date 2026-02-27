@@ -39,17 +39,10 @@ Mobile & desktop command center for AI coding agents. Control tmux-based session
 Install on your phone's home screen for a native app experience — scan the QR code after setup and tap **"Add to Home Screen"**.
 
 <p align="center">
-  <img src="docs/main_menu.jpeg" width="300" alt="Session list — color-coded status dots show which agents need input" />
-  &nbsp;&nbsp;
-  <img src="docs/terminal.jpeg" width="300" alt="Mobile terminal — touch-friendly controls for agent interaction" />
+  <img src="docs/desktop-demo.gif" width="700" alt="Desktop — sessions, terminal, and settings views" />
 </p>
 <p align="center">
-  <img src="docs/ralph_menu.jpeg" width="300" alt="Ralph loop panel — configure agent, iterations, and plan file" />
-  &nbsp;&nbsp;
-  <img src="docs/ralph_log.jpeg" width="300" alt="Ralph log — live progress of autonomous task execution" />
-</p>
-<p align="center">
-  <img src="docs/desktop.png" width="700" alt="Desktop terminal — full ANSI rendering with search" />
+  <img src="docs/mobile-demo.gif" width="300" alt="Mobile — sessions, terminal, and settings views" />
 </p>
 
 ## Architecture

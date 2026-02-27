@@ -7,7 +7,7 @@
  *   --iterations N    number of iterations (default 5)
  *   --plan FILE       plan file name (default PLAN.md)
  *   --progress FILE   progress file name (default progress.txt)
- *   --agent NAME      agent to use: claude|codex|gemini (default claude)
+ *   --agent NAME      agent to use: claude|cursor|codex|gemini (default claude)
  *   --format          number plan tasks before starting
  */
 import { execFileSync, spawn as nodeSpawn } from "node:child_process";
@@ -96,6 +96,10 @@ const AGENTS: Record<string, AgentConfig> = {
   },
   gemini: {
     bin: resolveBin("gemini"),
+    args: (prompt) => ["-p", prompt, "--yolo"],
+  },
+  cursor: {
+    bin: resolveBin("agent"),
     args: (prompt) => ["-p", prompt, "--yolo"],
   },
 };

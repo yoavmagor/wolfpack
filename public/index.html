@@ -14,7 +14,8 @@
       content="black-translucent"
     />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg viewBox='0 0 32 36' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M5 20 L10 3 L14.5 16.5' fill='%2300ff41' fill-opacity='0.4'/%3E%3Cpath d='M17.5 16.5 L22 3 L27 20' fill='%2300ff41' fill-opacity='0.4'/%3E%3Cpath d='M5 20 L14.5 16.5 L16 15 L17.5 16.5 L27 20 L24 30 L18 34 L16 35.5 L14 34 L8 30 Z' fill='%2300ff41' fill-opacity='0.15'/%3E%3Cpath d='M9.5 23 L14 21.5 L14.5 25 L10 26 Z' fill='%2300ff41'/%3E%3Cpath d='M17.5 25 L18 21.5 L22.5 23 L22 26 Z' fill='%2300ff41'/%3E%3C/svg%3E" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg viewBox='0 0 32 32' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='32' height='32' rx='7' fill='%230e0e0e'/%3E%3Cpath d='M7 24 L12 5 L16 16 L20 5 L25 24 L20 19 L16 26 L12 19 Z' fill='%2300ff41'/%3E%3Ccircle cx='13' cy='17.5' r='1.5' fill='%230e0e0e'/%3E%3Ccircle cx='19' cy='17.5' r='1.5' fill='%230e0e0e'/%3E%3C/svg%3E" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>Wolfpack</title>
     <style>
       * {
@@ -123,6 +124,10 @@
       .view.animating {
         transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
       }
+      /* kill all transitions during swipe gesture — immune to animations toggle */
+      .swipe-active, .swipe-active * {
+        transition: none !important;
+      }
       /* edge shadow on the foreground view during swipe (iOS-style) */
       .view::before {
         content: "";
@@ -205,29 +210,12 @@
         from { opacity: 0; }
         to { opacity: 1; }
       }
-      .card-stagger { animation: fadeIn 0.2s ease both; }
-      /* scanlines overlay — toggled via .scanlines on body */
-      body.scanlines::after {
-        content: "";
-        position: fixed;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 3px);
-        pointer-events: none;
-        z-index: 9999;
-      }
+      .card-stagger { }
       /* master animation kill switch */
       body.no-animations, body.no-animations * {
         transition: none !important;
         animation: none !important;
       }
-      /* reduced effects — suppress all glows/shadows */
-      body.reduced-effects * {
-        text-shadow: none !important;
-      }
-      body.reduced-effects *:not(header):not(.nav-icon):not(.session-card):not(.session-card *):not(button) {
-        box-shadow: none !important;
-      }
-      body.reduced-effects .scanlines::after { display: none !important; }
       /* terminal font size presets */
       body.term-size-small #terminal { font-size: 12px !important; line-height: 1.35 !important; }
       body.term-size-medium #terminal { font-size: 13px !important; line-height: 1.45 !important; }
@@ -2345,10 +2333,7 @@
             <input type="checkbox" id="setting-haptics" checked onchange="toggleSetting('haptics', this.checked)"> Haptic feedback
           </label>
           <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
-            <input type="checkbox" id="setting-scanlines" onchange="toggleSetting('scanlines', this.checked)"> Scanlines
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
-            <input type="checkbox" id="setting-reducedEffects" onchange="toggleSetting('reducedEffects', this.checked)"> Reduced effects (no glows)
+            <input type="checkbox" id="setting-notifications" onchange="toggleSetting('notifications', this.checked)"> Notifications
           </label>
         </div>
         <div class="settings-section">
@@ -2378,35 +2363,6 @@
             <input type="range" id="setting-snapshotTtl" min="60" max="1800" step="60" value="300"
               style="width:100%;accent-color:#00ff41;margin-top:4px"
               oninput="toggleSetting('snapshotTtl', +this.value); document.getElementById('snapshot-ttl-val').textContent=formatSnapshotTtl(this.value)">
-          </div>
-        </div>
-        <div class="settings-section">
-          <div class="settings-label">Notifications</div>
-          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
-            <input type="checkbox" id="setting-notifyPrompts" checked onchange="toggleSetting('notifyPrompts', this.checked)"> Prompt alerts (y/n, approve, etc.)
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
-            <input type="checkbox" id="setting-notifyErrors" checked onchange="toggleSetting('notifyErrors', this.checked)"> Error alerts (failed, error, etc.)
-          </label>
-          <div style="padding:4px 0;font-size:12px;color:#888">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span>Cooldown</span><span id="cooldown-val" style="color:#00ff41;font-size:11px">30s</span>
-            </div>
-            <input type="range" id="setting-notifyCooldown" min="10" max="120" step="10" value="30"
-              style="width:100%;accent-color:#00ff41;margin-top:4px"
-              oninput="toggleSetting('notifyCooldown', +this.value); document.getElementById('cooldown-val').textContent=this.value+'s'">
-          </div>
-          <div style="padding:4px 0;font-size:12px;color:#888">
-            <div>Quiet hours</div>
-            <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
-              <input type="time" id="setting-quietStart"
-                style="background:#111;border:1px solid #333;border-radius:4px;padding:4px 6px;color:#00ff41;font-family:inherit;font-size:11px"
-                onchange="toggleSetting('quietStart', this.value)">
-              <span style="color:#555">to</span>
-              <input type="time" id="setting-quietEnd"
-                style="background:#111;border:1px solid #333;border-radius:4px;padding:4px 6px;color:#00ff41;font-family:inherit;font-size:11px"
-                onchange="toggleSetting('quietEnd', this.value)">
-            </div>
           </div>
         </div>
         <div class="settings-section">
@@ -2540,6 +2496,7 @@
         <label for="ralph-agent-select">Agent</label>
         <select id="ralph-agent-select">
           <option value="claude">claude</option>
+          <option value="cursor">cursor</option>
           <option value="codex">codex</option>
           <option value="gemini">gemini</option>
         </select>
@@ -2565,7 +2522,7 @@
 
     <script>
       // ── Settings (persisted to localStorage) ──
-      const wpDefaults = {animations:true, haptics:true, scanlines:false, enterSends: window.innerWidth > 768, holdToSend:false, notifyPrompts:true, notifyErrors:true, notifyCooldown:30, quietStart:"", quietEnd:"", termFontSize:"medium", termWrap:false, termFont:"default", reducedEffects:false, snapshotTtl:300, debugPanel:false};
+      const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:300, debugPanel:false};
       const wpSettings = Object.assign({}, wpDefaults, JSON.parse(localStorage.getItem("wp-effects") || "{}"));
       function toggleSetting(key, val) {
         wpSettings[key] = val;
@@ -2574,8 +2531,7 @@
       }
       function applySetting(key, val) {
         if (key === "animations") document.body.classList.toggle("no-animations", !val);
-        if (key === "scanlines") document.body.classList.toggle("scanlines", val);
-        if (key === "reducedEffects") document.body.classList.toggle("reduced-effects", val);
+        if (key === "notifications" && val) requestNotifications();
         if (key === "enterSends") {
           const el = document.getElementById("msg-input");
           if (el) el.placeholder = val ? "$ (Enter to send)" : "$ (⚡ to send)";
@@ -2616,8 +2572,6 @@
           if (el.type === "checkbox") el.checked = v;
           else el.value = v;
         });
-        const cdLabel = document.getElementById("cooldown-val");
-        if (cdLabel) cdLabel.textContent = wpSettings.notifyCooldown + "s";
         const ttlLabel = document.getElementById("snapshot-ttl-val");
         if (ttlLabel) ttlLabel.textContent = formatSnapshotTtl(wpSettings.snapshotTtl);
       }
@@ -3031,15 +2985,21 @@
           const d = await api("/discover");
           const peers = d.peers || [];
           if (peers.length) {
-            const machines = getMachines();
+            const peerUrls = new Set(peers.map(p => p.url));
+            // Start from peers as source of truth, preserve any non-tailnet manual entries
+            let machines = getMachines();
             let changed = false;
+            // Prune stale tailnet machines no longer in peer list
+            const before = machines.length;
+            machines = machines.filter(m => peerUrls.has(m.url));
+            if (machines.length !== before) changed = true;
+            // Add/update from peer list
             for (const p of peers) {
               const existing = machines.find(m => m.url === p.url);
               if (!existing) {
                 machines.push({ url: p.url, name: p.name || p.hostname });
                 changed = true;
               } else if (existing.name !== (p.name || p.hostname)) {
-                // Update name if changed (e.g. Tailscale rename)
                 existing.name = p.name || p.hostname;
                 changed = true;
               }
@@ -3775,6 +3735,7 @@
           allSessions = g.sessions.map(s => ({ ...s, machineUrl: "", machineName: g.machine.name }));
           const html = renderSingleMachineHtml(g);
           if (html !== lastSessionsHtml) { el.innerHTML = html; lastSessionsHtml = html; }
+          checkStateTransitions([g]);
           firstLoad = false;
           return;
         }
@@ -3835,9 +3796,10 @@
         lastSessionGroups = groups;
         allSessions = [];
         groups.forEach(g => g.sessions.forEach(s => allSessions.push({ ...s, machineUrl: g.machine.url, machineName: g.machine.name })));
+        checkStateTransitions(groups);
       }
 
-      function openSession(name, machineUrl) {
+      async function openSession(name, machineUrl) {
         // Exit expanded sessions mode when opening a session
         if (sessionsExpanded) {
           sessionsExpanded = false;
@@ -3889,7 +3851,7 @@
           const term = document.getElementById("terminal");
           term.textContent = cached || "";
           if (cached) term.scrollTop = term.scrollHeight;
-          resizePane();
+          await resizePane();
           startPolling();
         }
         renderSidebar();
@@ -4056,7 +4018,7 @@
               destroyDesktopTerminal();
               initDesktopTerminal();
             } else {
-              resizePane();
+              await resizePane();
               startPolling();
             }
           } else {
@@ -4349,7 +4311,6 @@
           wpMetrics.recordLatency(performance.now() - renderStart);
           if (termFollowMode) term.scrollTop = term.scrollHeight;
         }
-        if (pane.trim()) checkForAttention(pane);
         if (changed && !useDesktopTerminal) {
           scheduleSnapshotSave(pane);
         }
@@ -4420,7 +4381,7 @@
         const ws = new WebSocket(mobileTerminalWsUrl());
         mobileWs = ws;
 
-        ws.onopen = () => {
+        ws.onopen = async () => {
           if (mobileWs !== ws) return;
           if (!mobileStreamingActive || useDesktopTerminal || connectKey !== terminalSessionKey()) {
             ws.close();
@@ -4431,7 +4392,7 @@
           mobileReconnectStartedAt = 0;
           mobileRetryBlocked = false;
           setConnState("live");
-          resizePane();
+          await resizePane();
         };
 
         ws.onmessage = (ev) => {
@@ -4888,7 +4849,7 @@
         drawer.addEventListener("touchend", onEnd, { passive: true });
       })();
 
-      function switchSession(val) {
+      async function switchSession(val) {
         let name, machineUrl;
         // Values with | are remote: "url|sessionName"
         const pipeIdx = val.indexOf("|");
@@ -4936,7 +4897,7 @@
           initDesktopTerminal();
         } else {
           document.getElementById("terminal").textContent = "";
-          resizePane();
+          await resizePane();
           startPolling();
         }
         renderSidebar();
@@ -4945,155 +4906,79 @@
 
       // ── Notifications ──
 
-      let notificationsEnabled = false;
-
+      let notificationsEnabled = ("Notification" in window && Notification.permission === "granted");
 
       function requestNotifications() {
         if ("Notification" in window && Notification.permission === "default") {
           Notification.requestPermission().then((p) => {
             notificationsEnabled = p === "granted";
           });
-        } else if (
-          "Notification" in window &&
-          Notification.permission === "granted"
-        ) {
+        } else if ("Notification" in window && Notification.permission === "granted") {
           notificationsEnabled = true;
         }
       }
 
-      const NOTIF_PROMPT_PATTERNS = [
-        /\? \(y\/n\)/i,
-        /\[Y\/n\]/i,
-        /\[yes\/no\]/i,
-        /Do you want to/i,
-        /Press Enter/i,
-        /permission/i,
-        /approve/i,
-        /waiting for/i,
-      ];
-      const ERROR_PATTERNS = [
-        /Error:/i,
-        /error\[/i,
-        /failed/i,
-        /❌/,
-      ];
+      // State-transition notification tracking
+      const prevSessionStates = {};  // "machineUrl|sessionName" → triage
+      const prevRalphStates = {};    // "machineUrl|project" → status
 
-      // Per-session notification tracking: { "machineUrl|sessionName": "lastNotifiedText" }
-      const notifiedSessions = {};
-      // Cooldown timestamps: { "machineUrl|sessionName|type": timestamp }
-      const notifyCooldowns = {};
-
-      function isQuietHours() {
-        const { quietStart, quietEnd } = wpSettings;
-        if (!quietStart || !quietEnd) return false;
-        const now = new Date();
-        const mins = now.getHours() * 60 + now.getMinutes();
-        const [sh, sm] = quietStart.split(":").map(Number);
-        const [eh, em] = quietEnd.split(":").map(Number);
-        const start = sh * 60 + sm;
-        const end = eh * 60 + em;
-        if (start <= end) return mins >= start && mins < end;
-        return mins >= start || mins < end; // wraps midnight
+      function getRalphStatus(loop) {
+        if (loop.cleanup) return "running";
+        if (loop.active) return "running";
+        if (loop.completed) return "done";
+        if (!loop.active && !loop.completed && loop.finished) return "limit";
+        return "idle";
       }
 
-      function checkForAttention(paneText) {
-        if (!notificationsEnabled || !currentSession) return;
+      function checkStateTransitions(groups) {
+        if (!notificationsEnabled || !wpSettings.notifications) return;
         if (document.visibilityState === "visible") return;
-        checkSessionAttention(currentSession, currentMachine, paneText);
-      }
 
-      function checkSessionAttention(sessionName, machineUrl, paneText) {
-        if (!notificationsEnabled) return;
-        if (document.visibilityState === "visible") return;
-        if (!wpSettings.notifyPrompts && !wpSettings.notifyErrors) return;
-        if (isQuietHours()) return;
+        for (const g of groups) {
+          if (!g.online) continue;
+          const mUrl = g.machine.url || "";
+          const mName = g.machine.name || "local";
 
-        const lastLines = paneText.trimEnd().split("\n").slice(-5).join("\n");
-        const key = (machineUrl || "") + "|" + sessionName;
-        if (notifiedSessions[key] === lastLines) return;
-
-        // Match against enabled pattern categories
-        let matchedType = null;
-        if (wpSettings.notifyPrompts) {
-          for (const pat of NOTIF_PROMPT_PATTERNS) {
-            if (pat.test(lastLines)) { matchedType = "prompt"; break; }
-          }
-        }
-        if (!matchedType && wpSettings.notifyErrors) {
-          for (const pat of ERROR_PATTERNS) {
-            if (pat.test(lastLines)) { matchedType = "error"; break; }
-          }
-        }
-
-        if (!matchedType) {
-          delete notifiedSessions[key];
-          return;
-        }
-
-        // Cooldown: dedupe window per session + signal type
-        const cooldownKey = key + "|" + matchedType;
-        const now = Date.now();
-        const cooldownMs = (wpSettings.notifyCooldown || 30) * 1000;
-        if (notifyCooldowns[cooldownKey] && (now - notifyCooldowns[cooldownKey]) < cooldownMs) return;
-
-        notifiedSessions[key] = lastLines;
-        notifyCooldowns[cooldownKey] = now;
-
-        const machineName = machineUrl
-          ? (getMachines().find(m => m.url === machineUrl)?.name || "remote")
-          : (selfName || "local");
-        const title = getMachines().length > 0
-          ? `${machineName}: ${sessionName}`
-          : `Wolfpack: ${sessionName}`;
-        new Notification(title, {
-          body: lastLines.slice(-120),
-          tag: "wolfpack-" + key,
-        });
-        haptic([200, 100, 200]);
-      }
-
-      // Background attention check for ALL sessions (runs regardless of current view)
-      let bgAttentionTimer = null;
-
-      async function checkAllSessionsAttention() {
-        if (!notificationsEnabled) return;
-        if (document.visibilityState === "visible") return;
-        try {
-          const machines = getMachines();
-          const fetches = [
-            api("/sessions").then(d => ({ sessions: d.sessions || [], machineUrl: "" })).catch(() => null),
-            ...machines.map(m =>
-              api("/sessions", undefined, m.url).then(d => ({ sessions: d.sessions || [], machineUrl: m.url })).catch(() => null)
-            ),
-          ];
-          const results = await Promise.all(fetches);
-          for (const r of results) {
-            if (!r) continue;
-            for (const s of r.sessions) {
-              // Skip current session — active terminal stream handles it
-              if (s.name === currentSession && r.machineUrl === currentMachine) continue;
-              if (s.lastLine) checkSessionAttention(s.name, r.machineUrl, s.lastLine);
+          // Session transitions: running → idle or needs-input
+          for (const s of g.sessions) {
+            const key = mUrl + "|" + s.name;
+            const prev = prevSessionStates[key];
+            const cur = s.triage || "idle";
+            prevSessionStates[key] = cur;
+            if (prev === "running" && (cur === "idle" || cur === "needs-input")) {
+              const title = getMachines().length > 0 ? `${mName}: ${s.name}` : `Wolfpack: ${s.name}`;
+              new Notification(title, {
+                body: cur === "needs-input" ? "Needs input" : "Finished",
+                tag: "wolfpack-session-" + key,
+              });
+              haptic([200, 100, 200]);
             }
           }
-        } catch {}
+
+          // Ralph transitions: running/cleanup → done/idle/limit
+          if (g.loops) {
+            for (const loop of g.loops) {
+              const key = mUrl + "|" + loop.project;
+              const prev = prevRalphStates[key];
+              const cur = getRalphStatus(loop);
+              prevRalphStates[key] = cur;
+              if ((prev === "running") && (cur === "done" || cur === "idle" || cur === "limit")) {
+                const title = getMachines().length > 0 ? `${mName}: ralph` : "Wolfpack: ralph";
+                const labels = { done: "All tasks complete", idle: "Stopped", limit: "Hit iteration limit" };
+                new Notification(title, {
+                  body: `${loop.project}: ${labels[cur] || cur}`,
+                  tag: "wolfpack-ralph-" + key,
+                });
+                haptic([200, 100, 200]);
+              }
+            }
+          }
+        }
       }
 
-      function startBgAttention() {
-        if (bgAttentionTimer) return;
-        bgAttentionTimer = setInterval(checkAllSessionsAttention, 10000);
-      }
-
-      function stopBgAttention() {
-        if (bgAttentionTimer) { clearInterval(bgAttentionTimer); bgAttentionTimer = null; }
-      }
-
-      requestNotifications();
-      startBgAttention();
-
-      // Pause bg attention when visible, resume when hidden; recover terminal stream on foreground
+      // Recover terminal stream on foreground; manage session refresh
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
-          stopBgAttention();
           // Restart session refresh if on sessions view
           if (currentView === "sessions" && !sessionRefreshTimer) {
             loadSessions();
@@ -5114,12 +4999,11 @@
             }
           }
         } else {
-          // Stop session refresh when backgrounded — bgAttention covers notifications
+          // Stop session refresh when backgrounded
           if (sessionRefreshTimer) {
             clearInterval(sessionRefreshTimer);
             sessionRefreshTimer = null;
           }
-          startBgAttention();
         }
       });
 
@@ -5380,21 +5264,32 @@
             statusEl.style.color = "#555";
             return;
           }
-          const machines = getMachines();
+          const peerUrls = new Set(peers.map(p => p.url));
+          let machines = getMachines();
+          // Prune stale machines no longer in peer list
+          const before = machines.length;
+          machines = machines.filter(m => peerUrls.has(m.url));
+          const pruned = before - machines.length;
+          // Add new / update existing
           let added = 0;
           for (const p of peers) {
-            if (!machines.some(m => m.url === p.url)) {
+            const existing = machines.find(m => m.url === p.url);
+            if (!existing) {
               machines.push({ url: p.url, name: p.name || p.hostname });
               added++;
+            } else if (existing.name !== (p.name || p.hostname)) {
+              existing.name = p.name || p.hostname;
             }
           }
-          if (added > 0) {
+          if (added > 0 || pruned > 0) {
             saveMachines(machines);
             renderMachinesList();
           }
-          statusEl.textContent = added > 0
-            ? `Found ${peers.length}, added ${added} new`
-            : `Found ${peers.length}, all already added`;
+          const parts = [`Found ${peers.length}`];
+          if (added > 0) parts.push(`added ${added}`);
+          if (pruned > 0) parts.push(`pruned ${pruned} stale`);
+          if (!added && !pruned) parts.push("all up to date");
+          statusEl.textContent = parts.join(", ");
           statusEl.style.color = "#00ff41";
         } catch {
           statusEl.textContent = "Discovery failed";
@@ -5599,11 +5494,11 @@
               bgEl = document.getElementById(targetView + "-view");
             } else { scrolling = true; return; }
 
+            vc.classList.add("swipe-active");
+
             if (isBack) {
-              fgEl.style.transition = "none";
               fgEl.style.zIndex = "2";
               fgEl.classList.add("swiping");
-              bgEl.style.transition = "none";
               bgEl.style.transform = "translate3d(-30%, 0, 0)";
               bgEl.classList.add("visible");
               bgEl.style.zIndex = "0";
@@ -5622,8 +5517,6 @@
                     .catch(() => {});
                 }
               }
-              if (swipeCard) swipeCard.style.transition = "none";
-              bgEl.style.transition = "none";
               bgEl.style.transform = "translate3d(100%, 0, 0)";
               bgEl.classList.add("visible");
               bgEl.style.zIndex = "2";
@@ -5639,64 +5532,30 @@
 
         vc.addEventListener("touchend", () => {
           cancelAnimationFrame(rafId);
-          if (!fgEl || !locked) return;
+          if (!fgEl || !locked) {
+            vc.classList.remove("swipe-active");
+            return;
+          }
 
           const elapsed = Date.now() - st;
           const velocity = Math.abs(dx) / Math.max(elapsed, 1) * 1000;
           const committed = Math.abs(dx) > 60 || (velocity > 250 && Math.abs(dx) > 15);
           const shouldComplete = isBack ? (committed && dx > 0) : (committed && dx < 0);
 
-          // velocity-adaptive duration: fast flick = short animation, slow drag = longer
-          const baseDur = shouldComplete ? 0.22 : 0.3;
-          const speedFactor = Math.min(velocity / 1500, 1);
-          const dur = Math.max(0.12, baseDur * (1 - speedFactor * 0.6)).toFixed(2) + "s";
-          const ease = "cubic-bezier(0.2, 0.9, 0.3, 1)";
-          const trans = `transform ${dur} ${ease}`;
-
-          if (isBack) {
-            fgEl.style.transition = trans;
-            bgEl.style.transition = trans;
-            if (shouldComplete) {
-              fgEl.style.transform = "translate3d(100%, 0, 0)";
-              bgEl.style.transform = "translate3d(0, 0, 0)";
-            } else {
-              fgEl.style.transform = "translate3d(0, 0, 0)";
-              bgEl.style.transform = "translate3d(-30%, 0, 0)";
-            }
-          } else {
-            // forward: animate the card + terminal independently
-            if (swipeCard) swipeCard.style.transition = trans;
-            bgEl.style.transition = trans;
-            if (shouldComplete) {
-              if (swipeCard) swipeCard.style.transform = `translate3d(-${W()}px, 0, 0)`;
-              bgEl.style.transform = "translate3d(0, 0, 0)";
-            } else {
-              if (swipeCard) swipeCard.style.transform = "translate3d(0, 0, 0)";
-              bgEl.style.transform = "translate3d(100%, 0, 0)";
-            }
-          }
-
           const fg = fgEl, bg = bgEl, card = swipeCard, back = isBack;
-          const durMs = parseFloat(dur) * 1000 + 50;
-          let finalized = false;
-          const finalize = () => {
-            if (finalized) return;
-            finalized = true;
-            if (card) { card.style.transition = ""; card.style.transform = ""; }
 
-            if (!shouldComplete) {
-              // cancelled — departing view (bg) snaps away, reset both
-              bg.classList.remove("visible");
-              [fg, bg].forEach(el => {
-                el.style.transition = ""; el.style.zIndex = ""; el.style.transform = ""; el.classList.remove("swiping");
-              });
-              return;
-            }
+          // snap — no transition animation
+          if (card) { card.style.transform = ""; }
 
-            // remove .visible from departing view BEFORE clearing transforms to prevent flash
+          if (!shouldComplete) {
+            bg.classList.remove("visible");
+            [fg, bg].forEach(el => {
+              el.style.zIndex = ""; el.style.transform = ""; el.classList.remove("swiping");
+            });
+          } else {
             fg.classList.remove("visible");
             [fg, bg].forEach(el => {
-              el.style.transition = ""; el.style.zIndex = ""; el.style.transform = ""; el.classList.remove("swiping");
+              el.style.zIndex = ""; el.style.transform = ""; el.classList.remove("swiping");
             });
 
             haptic(10);
@@ -5713,10 +5572,9 @@
             } else if (card) {
               card.click();
             }
-          };
-          fg.addEventListener("transitionend", finalize, { once: true });
-          setTimeout(finalize, durMs);
+          }
 
+          vc.classList.remove("swipe-active");
           fgEl = null; bgEl = null; swipeCard = null;
         }, { passive: true });
       }
