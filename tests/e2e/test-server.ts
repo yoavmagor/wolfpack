@@ -13,21 +13,19 @@ process.env.WOLFPACK_TEST = "1";
 import {
   server,
   __setTmuxList,
-  __setTmuxListWithActivity,
   __setTmuxSend,
   __setTmuxSendKey,
   __setTmuxResize,
   __setCapturePane,
-} from "../../serve.ts";
+} from "../../src/server/index.ts";
 
 // ── Mock tmux ──
 
-const now = Math.floor(Date.now() / 1000);
 const fakeSessions = [
-  { name: "test-project", activity: now },
-  { name: "another-project", activity: now - 30 },
-  { name: "prompt-project", activity: now },
-  { name: "error-project", activity: now - 5 },
+  "test-project",
+  "another-project",
+  "prompt-project",
+  "error-project",
 ];
 
 // Stateful pane content — updates when tmuxSend is called
@@ -38,8 +36,7 @@ const paneContent: Record<string, string> = {
   "error-project": "$ bun test\nError: 3 tests failed\n",
 };
 
-__setTmuxList(async () => fakeSessions.map((s) => s.name));
-__setTmuxListWithActivity(async () => [...fakeSessions]);
+__setTmuxList(async () => [...fakeSessions]);
 __setTmuxSend(async (session, text) => {
   // Simulate command echo + output
   paneContent[session] = (paneContent[session] || "") + `$ ${text}\ncommand-output\n`;

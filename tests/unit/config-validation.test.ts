@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig, saveConfig, isPortInUse, type Config } from "../../cli.ts";
+import { loadConfig, saveConfig, isPortInUse, type Config } from "../../src/cli/index.ts";
 
 // ── loadConfig tests ──
 // loadConfig reads from ~/.wolfpack/config.json (hardcoded path).

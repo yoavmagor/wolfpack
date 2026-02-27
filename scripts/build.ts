@@ -16,7 +16,7 @@ import { arch, platform } from "node:os";
 const ROOT = join(import.meta.dirname, "..");
 const DIST = join(ROOT, "dist");
 const NPM_DIR = join(DIST, "npm");
-const ENTRY = join(ROOT, "cli.ts");
+const ENTRY = join(ROOT, "src", "cli", "index.ts");
 
 const TARGETS = [
   "bun-linux-x64",

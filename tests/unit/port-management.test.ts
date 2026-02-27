@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { isPortInUse, killPortHolder } from "../../cli.ts";
+import { isPortInUse, killPortHolder } from "../../src/cli/index.ts";
 
 describe("isPortInUse", () => {
   test("returns false for unused port", () => {

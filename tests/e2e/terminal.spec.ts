@@ -73,16 +73,3 @@ test("sending input updates terminal output", async ({ page }, testInfo) => {
   await expect(terminal).toContainText("command-output", { timeout: 5000 });
 });
 
-test("action bar keys are visible in terminal view", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === "desktop", "mobile-only /ws/terminal flow");
-  await page.goto(srv.baseUrl);
-  await page.waitForSelector(".card", { timeout: 5000 });
-
-  const card = page.locator(".card", { hasText: "test-project" }).first();
-  await card.click();
-
-  // Action bar with Enter, Esc, arrows, Ctrl+C should be visible on mobile
-  const actionBar = page.locator("#action-bar");
-  await expect(actionBar).toBeVisible();
-  await expect(page.locator("#action-bar .primary")).toContainText("Enter");
-});

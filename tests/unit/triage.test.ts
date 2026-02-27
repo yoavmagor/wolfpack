@@ -1,125 +1,126 @@
 import { describe, expect, test } from "bun:test";
-import { classifySession } from "../../triage.ts";
+import { isInputPrompt, isJunkLine } from "../../src/triage.ts";
 
-describe("classifySession", () => {
-  // ── needs-input ──
-
+describe("isInputPrompt", () => {
   test("detects y/n prompt", () => {
-    expect(classifySession("Overwrite file? (y/n)", 999)).toBe("needs-input");
+    expect(isInputPrompt("Overwrite file? (y/n)")).toBe(true);
   });
 
   test("detects [Y/n] prompt", () => {
-    expect(classifySession("Install? [Y/n]", 999)).toBe("needs-input");
+    expect(isInputPrompt("Install? [Y/n]")).toBe(true);
   });
 
   test("detects [yes/no] prompt", () => {
-    expect(classifySession("Are you sure? [yes/no]", 999)).toBe("needs-input");
+    expect(isInputPrompt("Are you sure? [yes/no]")).toBe(true);
   });
 
   test("detects Do you want to", () => {
-    expect(classifySession("Do you want to continue?", 999)).toBe("needs-input");
+    expect(isInputPrompt("Do you want to continue?")).toBe(true);
   });
 
   test("detects Press Enter", () => {
-    expect(classifySession("Press Enter to continue", 999)).toBe("needs-input");
+    expect(isInputPrompt("Press Enter to continue")).toBe(true);
   });
 
   test("detects permission request", () => {
-    expect(classifySession("Need permission to write /etc/hosts", 999)).toBe("needs-input");
+    expect(isInputPrompt("Need permission to write /etc/hosts")).toBe(true);
   });
 
   test("detects approve prompt", () => {
-    expect(classifySession("Approve this deployment?", 999)).toBe("needs-input");
-    expect(classifySession("Please approve the changes", 999)).toBe("needs-input");
+    expect(isInputPrompt("Approve this deployment?")).toBe(true);
+    expect(isInputPrompt("Please approve the changes")).toBe(true);
   });
 
   test("detects waiting for", () => {
-    expect(classifySession("waiting for input", 999)).toBe("needs-input");
+    expect(isInputPrompt("waiting for input")).toBe(true);
   });
 
   test("detects (yes/no) prompt", () => {
-    expect(classifySession("Remove entry (yes/no)", 999)).toBe("needs-input");
+    expect(isInputPrompt("Remove entry (yes/no)")).toBe(true);
   });
 
   test("detects trailing ? with bracket choices", () => {
-    expect(classifySession("Continue? [y/N]", 999)).toBe("needs-input");
+    expect(isInputPrompt("Continue? [y/N]")).toBe(true);
   });
 
-  // ── error ──
-
-  test("detects Error: prefix", () => {
-    expect(classifySession("Error: module not found", 999)).toBe("error");
+  test("detects auth prompts", () => {
+    expect(isInputPrompt("Enter your password:")).toBe(true);
+    expect(isInputPrompt("Enter a passphrase for key:")).toBe(true);
+    expect(isInputPrompt("type your token:")).toBe(true);
+    expect(isInputPrompt("Enter username:")).toBe(true);
   });
 
-  test("detects error[ prefix", () => {
-    expect(classifySession("error[E0001]: type mismatch", 999)).toBe("error");
+  test("detects 'are you sure' prompts", () => {
+    expect(isInputPrompt("Are you sure you want to delete?")).toBe(true);
+    expect(isInputPrompt("are you sure (y/n)?")).toBe(true);
   });
 
-  test("detects build/test/compile failed", () => {
-    expect(classifySession("build failed with 3 errors", 999)).toBe("error");
-    expect(classifySession("test failed — 2 assertions", 999)).toBe("error");
-    expect(classifySession("compile failed", 999)).toBe("error");
+  test("detects bracketed [y] default", () => {
+    expect(isInputPrompt("Proceed? [y]")).toBe(true);
   });
 
-  test("detects ❌ emoji", () => {
-    expect(classifySession("❌ Tests failed", 999)).toBe("error");
+  test("does not match normal output", () => {
+    expect(isInputPrompt("compiling...")).toBe(false);
+    expect(isInputPrompt("Running 10 tests using 5 workers")).toBe(false);
+    expect(isInputPrompt("✽ Cerebrating…")).toBe(false);
+    expect(isInputPrompt("")).toBe(false);
+  });
+});
+
+describe("isJunkLine", () => {
+  // ── box-drawing lines ──
+  test("matches lines of box-drawing chars", () => {
+    expect(isJunkLine("─────────────────────")).toBe(true);
+    expect(isJunkLine("━━━━━━━━━━━━")).toBe(true);
+    expect(isJunkLine("═══════════════")).toBe(true);
+    expect(isJunkLine("╔═══════════════╗")).toBe(true);
+    expect(isJunkLine("│               │")).toBe(true);
+    expect(isJunkLine("┌───────────────┐")).toBe(true);
+    expect(isJunkLine("╭───────────────╮")).toBe(true);
   });
 
-  test("detects panic:", () => {
-    expect(classifySession("panic: runtime error", 999)).toBe("error");
+  test("does not match lines with text content among box-drawing", () => {
+    expect(isJunkLine("│ hello world │")).toBe(false);
+    expect(isJunkLine("┌ error: something ┐")).toBe(false);
   });
 
-  test("detects FATAL", () => {
-    expect(classifySession("FATAL exception in main", 999)).toBe("error");
+  // ── Claude Code hint bar ──
+  test("matches Claude Code hint bar (accept edits)", () => {
+    expect(isJunkLine("  ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt")).toBe(true);
   });
 
-  test("detects unhandled exception/rejection", () => {
-    expect(classifySession("unhandled rejection at Promise", 999)).toBe("error");
-    expect(classifySession("unhandled exception in worker", 999)).toBe("error");
+  test("matches esc to interrupt", () => {
+    expect(isJunkLine("esc to interrupt")).toBe(true);
   });
 
-  test("detects segfault", () => {
-    expect(classifySession("segfault at 0x0", 999)).toBe("error");
+  // ── bare prompts ──
+  test("matches bare shell prompts", () => {
+    expect(isJunkLine("$ ")).toBe(true);
+    expect(isJunkLine("❯ ")).toBe(true);
+    expect(isJunkLine("% ")).toBe(true);
+    expect(isJunkLine("> ")).toBe(true);
+    expect(isJunkLine("  $ ")).toBe(true);
   });
 
-  // ── running ──
-
-  test("running when activity age <= 20s", () => {
-    expect(classifySession("$ compiling...", 10)).toBe("running");
+  test("does not match prompts with commands after them", () => {
+    expect(isJunkLine("$ ls -la")).toBe(false);
+    expect(isJunkLine("❯ npm test")).toBe(false);
   });
 
-  test("running at exactly 20s", () => {
-    expect(classifySession("normal output", 20)).toBe("running");
+  // ── whitespace ──
+  test("matches whitespace-only lines", () => {
+    expect(isJunkLine("")).toBe(true);
+    expect(isJunkLine("   ")).toBe(true);
+    expect(isJunkLine("\t")).toBe(true);
+    expect(isJunkLine("  \t  ")).toBe(true);
   });
 
-  // ── idle ──
-
-  test("idle when activity age > 20s", () => {
-    expect(classifySession("$ ", 21)).toBe("idle");
-  });
-
-  test("idle with old activity", () => {
-    expect(classifySession("normal output", 300)).toBe("idle");
-  });
-
-  // ── priority: input > error > running > idle ──
-
-  test("input takes priority over error patterns", () => {
-    // "build failed" is error pattern, but "Do you want to continue" is input
-    expect(classifySession("Build failed. Do you want to continue?", 5)).toBe("needs-input");
-  });
-
-  test("error takes priority over running (even if recent activity)", () => {
-    expect(classifySession("Error: compilation failed", 5)).toBe("error");
-  });
-
-  // ── edge cases ──
-
-  test("empty string with old activity = idle", () => {
-    expect(classifySession("", 999)).toBe("idle");
-  });
-
-  test("empty string with recent activity = running", () => {
-    expect(classifySession("", 5)).toBe("running");
+  // ── real content is not junk ──
+  test("does not match real content", () => {
+    expect(isJunkLine("Error: module not found")).toBe(false);
+    expect(isJunkLine("✽ Cerebrating…")).toBe(false);
+    expect(isJunkLine("compiling...")).toBe(false);
+    expect(isJunkLine("Running 10 tests using 5 workers")).toBe(false);
+    expect(isJunkLine("Do you want to continue? (y/n)")).toBe(false);
   });
 });

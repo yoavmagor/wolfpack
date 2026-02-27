@@ -10,7 +10,7 @@ import {
   clampRows,
   isValidPort,
   shellEscape,
-} from "../../validation.ts";
+} from "../../src/validation.ts";
 
 // ── WS_ALLOWED_KEYS ──
 

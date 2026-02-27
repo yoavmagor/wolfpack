@@ -8,10 +8,10 @@ process.env.WOLFPACK_JWT_SECRET = "wolfpack-test-secret-long-enough-for-validati
 process.env.WOLFPACK_JWT_AUDIENCE = "wolfpack-client";
 
 // Reset cached auth config + dynamic import so env vars take effect
-const { __resetJwtAuthConfig } = await import("../../auth.ts");
+const { __resetJwtAuthConfig } = await import("../../src/auth.ts");
 __resetJwtAuthConfig();
 
-const { __setTmuxList, server } = await import("../../serve.ts") as {
+const { __setTmuxList, server } = await import("../../src/server/index.ts") as {
   __setTmuxList: (fn: () => Promise<string[]>) => void;
   server: Server;
 };
