@@ -576,7 +576,7 @@ export const routes: Record<
       }
     }
 
-    const iters = Math.max(1, Math.min(50, iterations ?? 5));
+    const iters = Math.max(1, Math.min(500, iterations ?? 5));
     const resolvedPlan = planFile || "PLAN.md";
     if (!/^[a-zA-Z0-9._\- ]+\.md$/.test(resolvedPlan) || resolvedPlan === ".." || resolvedPlan === ".") {
       return json(res, { error: "invalid plan file name" }, 400);

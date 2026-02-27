@@ -132,7 +132,7 @@ export async function tmuxResize(session: string, cols: number, rows: number): P
 let _capturePane: (session: string) => Promise<string> = async (session) => {
   try {
     const { stdout } = await exec(TMUX, [
-      "capture-pane", "-t", session, "-p", "-J", "-S", "-2000",
+      "capture-pane", "-t", session, "-p", "-S", "-2000",
     ]);
     return stdout;
   } catch {
@@ -164,12 +164,12 @@ export function __setCapturePane(fn: (session: string) => Promise<string>): void
 
 // ── tmuxNewSession ──
 
-const RALPH_AGENTS = new Set(["claude", "codex", "gemini"]);
+const RALPH_AGENTS = new Set(["claude", "codex", "gemini", "cursor"]);
 
 /** Detect which agent an agentCmd refers to */
-export function detectAgent(agentCmd: string): "claude" | "gemini" | "codex" | null {
+export function detectAgent(agentCmd: string): "claude" | "gemini" | "codex" | "cursor" | null {
   for (const agent of RALPH_AGENTS) {
-    if (new RegExp(`^${agent}\\b`).test(agentCmd)) return agent as "claude" | "gemini" | "codex";
+    if (new RegExp(`^${agent}\\b`).test(agentCmd)) return agent as "claude" | "gemini" | "codex" | "cursor";
   }
   return null;
 }

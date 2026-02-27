@@ -6,6 +6,7 @@ STATUS.md
 CLAUDE.md
 *.log
 *.gif
+!docs/*.gif
 *.png
 !public/icon-*.png
 !public/wolf-face.png
