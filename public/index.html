@@ -14,6 +14,7 @@
       content="black-translucent"
     />
     <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg viewBox='0 0 32 36' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M5 20 L10 3 L14.5 16.5' fill='%2300ff41' fill-opacity='0.4'/%3E%3Cpath d='M17.5 16.5 L22 3 L27 20' fill='%2300ff41' fill-opacity='0.4'/%3E%3Cpath d='M5 20 L14.5 16.5 L16 15 L17.5 16.5 L27 20 L24 30 L18 34 L16 35.5 L14 34 L8 30 Z' fill='%2300ff41' fill-opacity='0.15'/%3E%3Cpath d='M9.5 23 L14 21.5 L14.5 25 L10 26 Z' fill='%2300ff41'/%3E%3Cpath d='M17.5 25 L18 21.5 L22.5 23 L22 26 Z' fill='%2300ff41'/%3E%3C/svg%3E" />
     <title>Wolfpack</title>
     <style>
       * {
@@ -569,6 +570,30 @@
         box-shadow: 0 0 12px rgba(0, 255, 65, 0.3);
       }
 
+      .picker-cancel-btn {
+        display: none;
+        margin: 8px 8px 4px;
+        padding: 6px 12px;
+        background: #141414;
+        border: 1px solid #2a2a2a;
+        border-radius: 6px;
+        color: #666;
+        font-family: inherit;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        transition: color 0.15s, border-color 0.15s;
+      }
+      .picker-cancel-btn:hover {
+        color: #999;
+        border-color: #333;
+      }
+      .picker-cancel-btn:active {
+        color: #00ff41;
+        border-color: rgba(0,255,65,0.3);
+      }
       .new-project-row {
         display: flex;
         gap: 6px;
@@ -1316,13 +1341,33 @@
 
       /* ── Header enhancement ── */
       header {
-        border-bottom: 1px solid rgba(0,255,65,0.12) !important;
-        box-shadow: 0 1px 20px rgba(0,255,65,0.04), 0 1px 0 rgba(0,255,65,0.06);
+        background: linear-gradient(180deg, #131313 0%, #0f0f0f 100%) !important;
+        border-bottom: 1px solid rgba(0,255,65,0.15) !important;
+        box-shadow: 0 1px 24px rgba(0,255,65,0.06), 0 1px 0 rgba(0,255,65,0.08);
+        min-height: 46px !important;
       }
       header h1 {
+        font-size: 14px !important;
         font-weight: 800 !important;
-        letter-spacing: 3px !important;
-        text-shadow: 0 0 12px rgba(0,255,65,0.4), 0 0 40px rgba(0,255,65,0.08) !important;
+        letter-spacing: 4px !important;
+        text-shadow: 0 0 14px rgba(0,255,65,0.45), 0 0 40px rgba(0,255,65,0.1) !important;
+      }
+
+      /* ── Empty state enhancement ── */
+      .empty {
+        position: relative;
+      }
+      #session-list:empty::after {
+        content: '';
+        display: block;
+        width: 120px;
+        height: 135px;
+        margin: 80px auto 20px;
+        opacity: 0.03;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 32 36' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M5 20 L10 3 L14.5 16.5' fill='%2300ff41' fill-opacity='1' stroke='%2300ff41' stroke-width='0.8'/%3E%3Cpath d='M17.5 16.5 L22 3 L27 20' fill='%2300ff41' fill-opacity='1' stroke='%2300ff41' stroke-width='0.8'/%3E%3Cpath d='M5 20 L14.5 16.5 L16 15 L17.5 16.5 L27 20 L24 30 L18 34 L16 35.5 L14 34 L8 30 Z' fill='%2300ff41' fill-opacity='0.5' stroke='%2300ff41' stroke-width='0.8'/%3E%3Cpath d='M7 20.5 L14.5 17.5 L16 16 L17.5 17.5 L25 20.5' stroke='%2300ff41' stroke-width='1.2' fill='none'/%3E%3Cpath d='M9.5 23 L14 21.5 L14.5 25 L10 26 Z' fill='%2300ff41'/%3E%3Cpath d='M17.5 25 L18 21.5 L22.5 23 L22 26 Z' fill='%2300ff41'/%3E%3Cpath d='M15 30 L16 28 L17 30 L16 31 Z' fill='%2300ff41' fill-opacity='0.6'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-size: contain;
+        background-position: center;
       }
 
       /* ── Card overhaul ── */
@@ -1593,6 +1638,269 @@
       @media (min-width: 769px) {
         .card-name { letter-spacing: 2px !important; }
         .dot { width: 7px !important; height: 7px !important; }
+        .picker-cancel-btn { display: inline-block; }
+      }
+
+      /* ══════════════════════════════════════════════════════════
+         DESKTOP SIDEBAR
+         ══════════════════════════════════════════════════════════ */
+
+      /* Hidden by default (mobile-first) */
+      #desktop-sidebar { display: none; }
+      #sidebar-hover-edge { display: none; }
+
+      @media (min-width: 769px) {
+        /* Hide mobile header on desktop */
+        header { display: none !important; }
+
+        /* Horizontal flex: sidebar + main */
+        body { flex-direction: row !important; }
+
+        #desktop-sidebar {
+          width: 260px;
+          flex-shrink: 0;
+          display: flex !important;
+          flex-direction: column;
+          background: linear-gradient(180deg, #131313 0%, #0f0f0f 100%);
+          border-right: 1px solid rgba(0,255,65,0.12);
+          transition: margin-left 0.2s ease;
+          z-index: 50;
+          height: 100dvh;
+        }
+
+        #desktop-sidebar.collapsed {
+          margin-left: -260px;
+        }
+
+        /* Sidebar header */
+        .sidebar-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 12px;
+          border-bottom: 1px solid rgba(0,255,65,0.12);
+          flex-shrink: 0;
+        }
+        .sidebar-header h1 {
+          font-size: 13px;
+          font-weight: 800;
+          letter-spacing: 4px;
+          color: #00ff41;
+          text-shadow: 0 0 14px rgba(0,255,65,0.45), 0 0 40px rgba(0,255,65,0.1);
+        }
+        .sidebar-controls {
+          display: flex;
+          gap: 4px;
+        }
+        .sidebar-controls button {
+          background: none;
+          border: 1px solid #2a2a2a;
+          color: #555;
+          font-size: 10px;
+          cursor: pointer;
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-family: inherit;
+          transition: color 0.25s, border-color 0.25s, background 0.25s, box-shadow 0.25s, transform 0.2s;
+        }
+        .sidebar-controls button:hover {
+          color: #999;
+          border-color: #3a3a3a;
+        }
+
+        /* Pin button states */
+        #sidebar-collapse-btn {
+          position: relative;
+        }
+        #sidebar-collapse-btn .pin-icon {
+          display: inline-block;
+          transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), color 0.25s;
+        }
+        #sidebar-collapse-btn.pinned {
+          color: #00ff41;
+          border-color: rgba(0,255,65,0.4);
+          background: rgba(0,255,65,0.06);
+          box-shadow: 0 0 8px rgba(0,255,65,0.1);
+        }
+        #sidebar-collapse-btn.pinned .pin-icon {
+          transform: rotate(-45deg);
+        }
+        #sidebar-collapse-btn.pinned:hover {
+          color: #00ff41;
+          border-color: rgba(0,255,65,0.6);
+          background: rgba(0,255,65,0.1);
+        }
+
+        /* Expand button */
+        #sidebar-expand-btn:hover {
+          color: #00ff41;
+          border-color: rgba(0,255,65,0.4);
+        }
+        #sidebar-expand-btn.active {
+          color: #00ff41;
+          border-color: rgba(0,255,65,0.4);
+          background: rgba(0,255,65,0.06);
+        }
+
+        /* Sidebar session list */
+        .sidebar-sessions {
+          flex: 1;
+          overflow-y: auto;
+          padding: 6px;
+        }
+
+        /* Sidebar cards — denser than mobile */
+        .sidebar-sessions .card {
+          padding: 6px 8px !important;
+          min-height: 0 !important;
+          margin-bottom: 3px !important;
+          border-left-width: 2px !important;
+        }
+        .sidebar-sessions .card-name {
+          font-size: 11px !important;
+          letter-spacing: 1.5px !important;
+        }
+        .sidebar-sessions .card-preview {
+          -webkit-line-clamp: 1 !important;
+          font-size: 10px !important;
+        }
+        .sidebar-sessions .dot {
+          width: 7px !important;
+          height: 7px !important;
+        }
+        .sidebar-sessions .kill-btn {
+          opacity: 0;
+          transition: opacity 0.15s;
+        }
+        .sidebar-sessions .card:hover .kill-btn {
+          opacity: 1;
+        }
+
+        /* Active session highlight in sidebar */
+        .sidebar-sessions .card.sidebar-active {
+          border-left-color: #00ff41 !important;
+          background: linear-gradient(90deg, rgba(0,255,65,0.06) 0%, transparent 60%) !important;
+        }
+
+        /* Sidebar machine headers */
+        .sidebar-sessions .machine-header {
+          font-size: 10px;
+          padding: 6px 4px 4px;
+        }
+        .sidebar-sessions .new-btn {
+          font-size: 11px !important;
+          padding: 8px 10px !important;
+          margin-bottom: 4px !important;
+        }
+
+        /* Sidebar footer */
+        .sidebar-footer {
+          flex-shrink: 0;
+          padding: 8px;
+          border-top: 1px solid rgba(0,255,65,0.12);
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .sidebar-footer button {
+          background: #1a1a1a;
+          border: 1px solid #2a2a2a;
+          color: #888;
+          font-family: inherit;
+          font-size: 11px;
+          text-transform: uppercase;
+          letter-spacing: 1.5px;
+          cursor: pointer;
+          padding: 8px 12px;
+          border-radius: 4px;
+          transition: color 0.15s, border-color 0.15s, background 0.15s;
+        }
+        .sidebar-footer button:hover {
+          color: #00ff41;
+          border-color: rgba(0,255,65,0.4);
+          background: #111;
+        }
+        .sidebar-footer-row {
+          display: flex;
+          gap: 6px;
+        }
+        .sidebar-footer-row button {
+          flex: 1;
+          text-align: center;
+        }
+        #sidebar-new-btn {
+          color: #00ff41;
+          border-color: rgba(0,255,65,0.3);
+        }
+
+        /* Hide sessions-view on desktop (sidebar replaces it) */
+        #sessions-view { display: none !important; }
+
+        /* Expanded sessions view — full-page grid on desktop */
+        body.sessions-expanded #sessions-view {
+          display: block !important;
+        }
+        /* Column per machine — fills screen width */
+        body.sessions-expanded #sessions-view #session-list {
+          display: flex;
+          gap: 12px;
+          padding: 16px;
+          height: calc(100dvh - 32px);
+          overflow-x: auto;
+        }
+        body.sessions-expanded #sessions-view .machine-group {
+          flex: 1;
+          min-width: 200px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          overflow-y: auto;
+        }
+        body.sessions-expanded #sessions-view .card {
+          padding: 16px 14px !important;
+          min-height: 64px !important;
+          border-left-width: 3px !important;
+          margin-bottom: 0 !important;
+        }
+        body.sessions-expanded #sessions-view .card-name {
+          font-size: 14px !important;
+          letter-spacing: 1.8px !important;
+        }
+        body.sessions-expanded #sessions-view .card-preview {
+          -webkit-line-clamp: 2 !important;
+          font-size: 12px !important;
+        }
+        body.sessions-expanded #sessions-view .machine-header {
+          padding: 8px 4px 4px;
+          flex-shrink: 0;
+        }
+        body.sessions-expanded #sessions-view .machine-add-btn {
+          float: right;
+        }
+
+        /* Main area fills remaining space */
+        #view-container { flex: 1; min-width: 0; }
+
+        /* Hover edge — invisible trigger to re-open collapsed sidebar */
+        #sidebar-hover-edge {
+          display: none !important;
+          position: fixed;
+          left: 0; top: 0; bottom: 0;
+          width: 8px;
+          z-index: 60;
+        }
+        #desktop-sidebar.collapsed ~ #sidebar-hover-edge {
+          display: block !important;
+        }
+
+        /* Hide drawer elements on desktop */
+        #session-drawer { display: none !important; }
+        #drawer-backdrop { display: none !important; }
+      }
+
+      @media (max-width: 768px) {
+        #desktop-sidebar { display: none !important; }
+        #sidebar-hover-edge { display: none !important; }
       }
 
       /* ══════════════════════════════════════════════════════════
@@ -1934,7 +2242,6 @@
       </div>
       <div class="header-center" id="header-center">
         <div style="display:flex;align-items:center;gap:8px">
-          <img id="wolf-icon" src="/wolf-face.png" width="42" height="42" alt="wolfpack" style="object-fit:contain;filter:invert(1) brightness(0.55);margin:-8px -2px -8px -4px" />
           <h1 id="header-title">wolfpack</h1>
         </div>
       </div>
@@ -1945,6 +2252,24 @@
         <button class="settings-gear" id="gear-btn" onclick="showSettings()">&#9881;</button>
       </div>
     </header>
+    <div id="desktop-sidebar">
+      <div class="sidebar-header">
+        <h1>WOLFPACK</h1>
+        <div class="sidebar-controls">
+          <button id="sidebar-expand-btn" title="Expand sessions">&#x26F6;</button>
+          <button id="sidebar-collapse-btn" title="Pin sidebar"><span class="pin-icon">&#x1F4CC;</span></button>
+        </div>
+      </div>
+      <div id="sidebar-session-list" class="sidebar-sessions"></div>
+      <div class="sidebar-footer">
+        <button id="sidebar-new-btn">+ New</button>
+        <div class="sidebar-footer-row">
+          <button id="sidebar-ralph-btn">&#129355;</button>
+          <button id="sidebar-settings-btn">&#9881;</button>
+        </div>
+      </div>
+    </div>
+    <div id="sidebar-hover-edge"></div>
     <div id="drawer-backdrop" onclick="closeDrawer()"></div>
     <div id="git-status-overlay" onclick="dismissGitStatus()"></div>
     <div id="session-drawer">
@@ -1959,6 +2284,7 @@
 
     <!-- Project picker view -->
     <div id="projects-view" class="view">
+      <button class="picker-cancel-btn" onclick="showView(viewBeforePicker); loadSessions();">← Cancel</button>
       <div class="new-project-row">
         <input
           id="new-project-name"
@@ -1975,6 +2301,7 @@
 
     <!-- Agent picker view -->
     <div id="agent-view" class="view">
+      <button class="picker-cancel-btn" onclick="showView('projects')">← Back</button>
       <div id="agent-list" class="list"></div>
       <div style="padding:6px;display:flex;gap:6px">
         <input id="custom-cmd-input" type="text" placeholder="custom command…"
@@ -2531,6 +2858,7 @@
       let currentSession = null;
       let currentMachine = ""; // "" = self, URL string = remote
       let currentView = "sessions";
+      let viewBeforePicker = "sessions"; // stashed view to return to on Escape from project/agent picker
       const RECONNECT_BUDGET_MS = 2 * 60 * 1000;
       const RECONNECT_BASE_DELAY_MS = 500;
       const RECONNECT_MAX_DELAY_MS = 5000;
@@ -2696,14 +3024,19 @@
           const peers = d.peers || [];
           if (peers.length) {
             const machines = getMachines();
-            let added = 0;
+            let changed = false;
             for (const p of peers) {
-              if (!machines.some(m => m.url === p.url)) {
+              const existing = machines.find(m => m.url === p.url);
+              if (!existing) {
                 machines.push({ url: p.url, name: p.name || p.hostname });
-                added++;
+                changed = true;
+              } else if (existing.name !== (p.name || p.hostname)) {
+                // Update name if changed (e.g. Tailscale rename)
+                existing.name = p.name || p.hostname;
+                changed = true;
               }
             }
-            if (added > 0) { saveMachines(machines); loadSessions(); }
+            if (changed) { saveMachines(machines); loadSessions(); }
           }
         } catch {}
       })();
@@ -2737,20 +3070,24 @@
       function showView(name, skipAnimation) {
         const prevView = currentView;
         const prevEl = document.getElementById(prevView + "-view");
-        const nextEl = document.getElementById(name + "-view");
         const isMobile = !isDesktop();
+
+        // Desktop: "sessions" view is hidden — redirect to terminal if active (unless sessions expanded)
+        const effectiveName = (!isMobile && name === "sessions" && currentSession && !sessionsExpanded) ? "terminal" : name;
+
+        const nextEl = document.getElementById(effectiveName + "-view");
         const wasSwipe = swipeNavigated;
         if (swipeNavigated) { skipAnimation = true; swipeNavigated = false; }
-        const animate = isMobile && !skipAnimation && prevView !== name && prevEl && nextEl;
-        const animateHeader = isMobile && prevView !== name && !skipAnimation || wasSwipe;
-        const goingForward = (VIEW_DEPTH[name] || 0) > (VIEW_DEPTH[prevView] || 0);
+        const animate = isMobile && !skipAnimation && prevView !== effectiveName && prevEl && nextEl;
+        const animateHeader = isMobile && prevView !== effectiveName && !skipAnimation || wasSwipe;
+        const goingForward = (VIEW_DEPTH[effectiveName] || 0) > (VIEW_DEPTH[prevView] || 0);
 
         // Stop debug panel refresh when leaving settings
-        if (prevView === "settings" && name !== "settings" && debugPanelTimer) {
+        if (prevView === "settings" && effectiveName !== "settings" && debugPanelTimer) {
           clearInterval(debugPanelTimer); debugPanelTimer = null;
         }
 
-        currentView = name;
+        currentView = effectiveName;
 
         if (animate) {
           const fg = goingForward ? nextEl : prevEl;
@@ -2809,7 +3146,6 @@
         const ralphBtn = document.getElementById("ralph-btn");
 
         const chip = document.getElementById("session-chip");
-        const wolfIcon = document.getElementById("wolf-icon");
         const headerCenter = document.getElementById("header-center");
 
         // Stop timers immediately (don't defer these)
@@ -2817,6 +3153,37 @@
         if (ralphRefreshTimer) { clearInterval(ralphRefreshTimer); ralphRefreshTimer = null; }
         if (ralphLogPollTimer) { clearInterval(ralphLogPollTimer); ralphLogPollTimer = null; }
 
+        // Desktop: skip all header manipulation, handle view-specific logic only
+        if (!isMobile) {
+          // Exit expanded sessions mode when navigating away from sessions
+          if (effectiveName !== "sessions" && sessionsExpanded) {
+            sessionsExpanded = false;
+            document.body.classList.remove("sessions-expanded");
+            const expandBtn = document.getElementById("sidebar-expand-btn");
+            if (expandBtn) expandBtn.classList.remove("active");
+            // Restore sidebar based on pin state
+            if (sidebarPinned) {
+              const sb = document.getElementById("desktop-sidebar");
+              if (sb) { sb.classList.remove("collapsed"); sidebarCollapsed = false; }
+            }
+          }
+          if (effectiveName === "settings") {
+            renderQuickCmdSettings();
+          } else if (effectiveName === "ralph") {
+            loadRalphLoops();
+            ralphRefreshTimer = setInterval(loadRalphLoops, 3000);
+          } else if (effectiveName === "ralph-detail") {
+            refreshRalphDetail();
+            ralphLogPollTimer = setInterval(refreshRalphDetail, 2000);
+          } else if (effectiveName === "ralph-start") {
+            loadRalphStartForm();
+          }
+          // Update sidebar active highlight
+          renderSidebar();
+          return;
+        }
+
+        // Mobile: full header management
         const applyHeader = () => {
           // Always start with kb-accessory closed on view change
           document.getElementById("kb-accessory").classList.remove("visible");
@@ -2838,26 +3205,25 @@
             gear.style.display = "";
             ralphBtn.style.display = "";
             title.textContent = "wolfpack";
-            wolfIcon.style.display = "";
             sessionRefreshTimer = setInterval(loadSessions, 5000);
           } else if (name === "projects") {
             back.style.display = "block";
-            back.onclick = () => { stopPolling(); showView("sessions"); loadSessions(); };
+            back.onclick = () => { stopPolling(); showView(viewBeforePicker); loadSessions(); };
             gear.style.display = "none";
             title.textContent = "select project";
-            wolfIcon.style.display = "none";
+
           } else if (name === "agent") {
             back.style.display = "block";
             back.onclick = () => { showView("projects"); };
             gear.style.display = "none";
             title.textContent = "select agent";
-            wolfIcon.style.display = "none";
+
           } else if (name === "settings") {
             back.style.display = "block";
             back.onclick = () => { showView("sessions"); loadSessions(); };
             gear.style.display = "none";
             title.textContent = "settings";
-            wolfIcon.style.display = "none";
+
             renderQuickCmdSettings();
           } else if (name === "terminal") {
             back.style.display = "block";
@@ -2872,7 +3238,6 @@
             };
             gear.style.display = "none";
             title.style.display = "none";
-            wolfIcon.style.display = "";
             loadSessionSwitcher();
             chip.style.display = "flex";
             headerCenter.style.transform = "";
@@ -2890,7 +3255,7 @@
             back.onclick = () => { showView("sessions"); loadSessions(); };
             gear.style.display = "none";
             title.textContent = "ralph loops";
-            wolfIcon.style.display = "none";
+
             loadRalphLoops();
             ralphRefreshTimer = setInterval(loadRalphLoops, 3000);
           } else if (name === "ralph-detail") {
@@ -2901,7 +3266,7 @@
               ? " @ " + (getMachines().find(m => m.url === currentRalphMachine)?.name || "remote")
               : "";
             title.textContent = (currentRalphProject || "ralph") + ralphMachineSuffix;
-            wolfIcon.style.display = "none";
+
             refreshRalphDetail();
             ralphLogPollTimer = setInterval(refreshRalphDetail, 2000);
           } else if (name === "ralph-start") {
@@ -2909,7 +3274,7 @@
             back.onclick = () => { showView("ralph"); };
             gear.style.display = "none";
             title.textContent = "start ralph";
-            wolfIcon.style.display = "none";
+
             loadRalphStartForm();
           }
         };
@@ -2948,7 +3313,7 @@
             const machineLabel = multiMachine ? '<div class="ralph-machine-label">' + esc(loop.machineName || "local") + '</div>' : '';
             return '<div class="ralph-card ' + status + '" onclick="openRalphDetail(\'' + escAttr(loop.project) + '\', \'' + escAttr(loop.machineUrl || '') + '\')">' +
               '<div class="ralph-card-header">' +
-                '<span class="ralph-card-name"><span class="dot ' + dotClass + '" title="' + dotTitle + '"></span>' + esc(loop.project) + '</span>' +
+                '<span class="ralph-card-name"><span class="dot ' + dotClass + '" title="' + dotTitle + '"></span>' + esc(loop.project) + (loop.planFile ? ' <span style="color:#555;font-weight:400">— ' + esc(loop.planFile.replace(/\.md$/i, '')) + '</span>' : '') + '</span>' +
                 '<span class="ralph-status ' + status + '">' + statusLabel + '</span>' +
                 '<button class="kill-btn" onclick="dismissRalph(\'' + escAttr(loop.project) + '\', event, \'' + escAttr(loop.machineUrl || '') + '\')">&times;</button>' +
               '</div>' +
@@ -3350,7 +3715,8 @@
       }
 
       function renderSingleMachineHtml(g) {
-        let html = '<div class="new-btn" onclick="showProjectPicker()">+ New Session</div>';
+        let html = `<div class="machine-group">`;
+        html += `<div class="machine-header"><div class="dot green"></div>${esc(g.machine.name)}<button class="machine-add-btn" onclick="showProjectPicker()">+</button></div>`;
         if (g.online && g.sessions.length) {
           html += g.sessions.map((s, i) => {
             const lastLine = s.lastLine || "";
@@ -3366,6 +3732,7 @@
             </div>`;
           }).join("");
         }
+        html += '</div>';
         return html;
       }
 
@@ -3458,6 +3825,40 @@
       }
 
       function openSession(name, machineUrl) {
+        // Exit expanded sessions mode when opening a session
+        if (sessionsExpanded) {
+          sessionsExpanded = false;
+          document.body.classList.remove("sessions-expanded");
+          const expandBtn = document.getElementById("sidebar-expand-btn");
+          if (expandBtn) expandBtn.classList.remove("active");
+          // Restore sidebar based on pin state
+          if (sidebarPinned) {
+            const sb = document.getElementById("desktop-sidebar");
+            if (sb) { sb.classList.remove("collapsed"); sidebarCollapsed = false; }
+          }
+        }
+        // On desktop, if already in terminal view, do a session switch
+        if (isDesktop() && currentView === "terminal" && currentSession) {
+          // If sidebar is auto-expanded (hover), instantly collapse it before
+          // switching so the new terminal fits to full width. Without this,
+          // initDesktopTerminal() fits to the narrow width, triggering a PTY
+          // resize that causes Claude Code's TUI to redraw with · fill dots.
+          if (sidebarAutoExpanded) {
+            const sb = document.getElementById("desktop-sidebar");
+            if (sb) {
+              sb.style.transition = "none";
+              sb.classList.add("collapsed");
+              sb.offsetHeight; // force reflow
+              sb.style.transition = "";
+            }
+            sidebarCollapsed = true;
+            sidebarAutoExpanded = false;
+            if (sidebarAutoCollapseTimer) { clearTimeout(sidebarAutoCollapseTimer); sidebarAutoCollapseTimer = null; }
+          }
+          switchSession(machineUrl ? machineUrl + "|" + name : name);
+          renderSidebar();
+          return;
+        }
         currentSession = name;
         currentMachine = machineUrl || "";
         recordRecent(currentMachine, name);
@@ -3478,6 +3879,7 @@
           resizePane();
           startPolling();
         }
+        renderSidebar();
       }
 
       async function resizePane() {
@@ -3510,6 +3912,7 @@
 
       async function showProjectPicker(machineUrl) {
         projectMachine = machineUrl || "";
+        viewBeforePicker = currentView;
         showView("projects");
         document.getElementById("new-project-name").value = "";
         const el = document.getElementById("project-list");
@@ -3635,7 +4038,7 @@
             currentMachine = machine;
             useDesktopTerminal = isDesktop();
             // Refresh session list in background so it doesn't block terminal init
-            loadSessions().then(loadSessionSwitcher);
+            loadSessions().then(() => { loadSessionSwitcher(); renderSidebar(); });
             if (useDesktopTerminal) {
               destroyDesktopTerminal();
               initDesktopTerminal();
@@ -4235,7 +4638,7 @@
           currentMachine = "";
           showView("sessions");
         }
-        loadSessions();
+        loadSessions().then(renderSidebar);
       }
 
       // ── Session drawer ──
@@ -4290,6 +4693,7 @@
 
       var lastToggleT = 0;
       function toggleDrawer() {
+        if (isDesktop()) return; // sidebar handles session switching on desktop
         var now = Date.now();
         if (now - lastToggleT < 300) return;
         lastToggleT = now;
@@ -4298,6 +4702,7 @@
       }
 
       function openDrawer() {
+        if (isDesktop()) return; // sidebar handles session switching on desktop
         if (drawerOpen) return;
         drawerOpen = true;
         const drawer = document.getElementById("session-drawer");
@@ -4512,6 +4917,7 @@
           resizePane();
           startPolling();
         }
+        renderSidebar();
       }
 
 
@@ -4869,6 +5275,13 @@
         const keyMap = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Enter: "Enter", Escape: "Escape" };
         const mapped = keyMap[e.key];
         if (mapped) { e.preventDefault(); sendKey(mapped); }
+      });
+
+      // Escape to back out of project/agent picker
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        if (currentView === "agent") { e.preventDefault(); showView("projects"); }
+        else if (currentView === "projects") { e.preventDefault(); showView(viewBeforePicker); loadSessions(); }
       });
 
       document
@@ -5270,11 +5683,215 @@
         }, { passive: true });
       }
 
+      // ── Desktop Sidebar ──
+
+      let sidebarRefreshTimer = null;
+      // Migrate old collapsed key → new pinned key (inverted)
+      let sidebarPinned = (() => {
+        const v = localStorage.getItem("wolfpack-sidebar-pinned");
+        if (v !== null) return v !== "0";
+        // Migrate from old key
+        const old = localStorage.getItem("wolfpack-sidebar-collapsed");
+        if (old === "1") return false;
+        return true; // default pinned
+      })();
+      let sidebarCollapsed = !sidebarPinned;
+      let sidebarAutoExpanded = false;
+      let sidebarAutoCollapseTimer = null;
+      let sessionsExpanded = true; // default to expanded sessions view
+
+      let sidebarInitialRender = false;
+      function renderSidebar() {
+        if (!isDesktop()) return;
+        const el = document.getElementById("sidebar-session-list");
+        if (!el) return;
+        const groups = lastSessionGroups;
+        // Don't wipe sidebar with empty content if sessions haven't loaded yet
+        if (!groups.length && sidebarInitialRender) return;
+        if (groups.length) sidebarInitialRender = true;
+        const machines = getMachines();
+        const multiMachine = machines.length > 0;
+
+        let html = "";
+        if (!multiMachine) {
+          // Single machine — simple list with + New
+          const g = groups[0];
+          if (g && g.online && g.sessions.length) {
+            html += '<div class="new-btn" onclick="showProjectPicker()">+ New Session</div>';
+            html += g.sessions.map(s => sidebarCardHtml(s, "")).join("");
+          } else {
+            html += '<div class="new-btn" onclick="showProjectPicker()">+ New Session</div>';
+            html += '<div style="padding:8px 4px;color:#444;font-size:10px;text-transform:uppercase;letter-spacing:1px">No active sessions</div>';
+          }
+        } else {
+          // Multi-machine
+          for (const g of groups) {
+            const mUrl = esc(g.machine.url);
+            const mName = esc(g.machine.name);
+            const statusDot = g.online ? "green" : (g.pending ? "gray" : "red");
+            html += `<div class="machine-group" data-machine="${mUrl}">`;
+            html += `<div class="machine-header"><div class="dot ${statusDot}"></div>${mName}<button class="machine-add-btn" onclick="showProjectPicker('${escAttr(g.machine.url)}')">+</button></div>`;
+            if (g.online && g.sessions.length) {
+              html += g.sessions.map(s => sidebarCardHtml(s, g.machine.url)).join("");
+            } else if (g.pending) {
+              html += '<div style="padding:4px;color:#555;font-size:10px">Connecting...</div>';
+            } else if (!g.online) {
+              html += '<div style="padding:4px;color:#555;font-size:10px">Offline</div>';
+            }
+            html += '</div>';
+          }
+        }
+        el.innerHTML = html;
+      }
+
+      function sidebarCardHtml(s, machineUrl) {
+        const lastLine = s.lastLine || "";
+        const ui = triageUi(s.triage);
+        const isActive = s.name === currentSession && machineUrl === currentMachine;
+        const activeClass = isActive ? " sidebar-active" : "";
+        const onclick = machineUrl
+          ? `openSession('${escAttr(s.name)}', '${escAttr(machineUrl)}')`
+          : `openSession('${escAttr(s.name)}')`;
+        return `<div class="card ${ui.card}${activeClass}" onclick="${onclick}">
+          <div class="dot ${ui.dot}" title="${ui.title}"></div>
+          <div class="card-info">
+            <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
+            <div class="card-preview">${esc(lastLine)}</div>
+          </div>
+          <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event${machineUrl ? ", '" + escAttr(machineUrl) + "'" : ''})">&times;</button>
+        </div>`;
+      }
+
+      function updatePinButton() {
+        const btn = document.getElementById("sidebar-collapse-btn");
+        btn.classList.toggle("pinned", sidebarPinned);
+        btn.title = sidebarPinned ? "Unpin sidebar" : "Pin sidebar";
+      }
+
+      function initSidebar() {
+        if (!isDesktop()) return;
+        const sidebar = document.getElementById("desktop-sidebar");
+        const hoverEdge = document.getElementById("sidebar-hover-edge");
+
+        // Restore state
+        if (!sidebarPinned) {
+          sidebar.classList.add("collapsed");
+          sidebarCollapsed = true;
+        }
+        updatePinButton();
+
+        // Pin/unpin button
+        document.getElementById("sidebar-collapse-btn").onclick = () => {
+          sidebarPinned = !sidebarPinned;
+          localStorage.setItem("wolfpack-sidebar-pinned", sidebarPinned ? "1" : "0");
+          if (sidebarPinned) {
+            // Pin: ensure visible
+            sidebar.classList.remove("collapsed");
+            sidebarCollapsed = false;
+            sidebarAutoExpanded = false;
+          } else {
+            // Unpin: collapse immediately
+            sidebar.classList.add("collapsed");
+            sidebarCollapsed = true;
+          }
+          updatePinButton();
+        };
+
+        // Expand button — toggle full-page sessions view
+        document.getElementById("sidebar-expand-btn").onclick = () => {
+          sessionsExpanded = !sessionsExpanded;
+          document.body.classList.toggle("sessions-expanded", sessionsExpanded);
+          document.getElementById("sidebar-expand-btn").classList.toggle("active", sessionsExpanded);
+          if (sessionsExpanded) {
+            // Collapse sidebar when expanded — main area has all sessions
+            sidebar.classList.add("collapsed");
+            sidebarCollapsed = true;
+            sidebarAutoExpanded = false;
+            showView("sessions");
+            loadSessions();
+          } else {
+            // Restore sidebar based on pin state
+            if (sidebarPinned) {
+              sidebar.classList.remove("collapsed");
+              sidebarCollapsed = false;
+            }
+            // Return to terminal if we have a session, else just stay
+            if (currentSession) showView("terminal");
+          }
+        };
+
+        // Hover edge — expand on hover (only when unpinned and not in expanded mode)
+        hoverEdge.addEventListener("mouseenter", () => {
+          if (sidebarCollapsed && !sidebarPinned && !sessionsExpanded) {
+            sidebar.classList.remove("collapsed");
+            sidebarAutoExpanded = true;
+          }
+        });
+
+        // Auto-collapse when mouse leaves sidebar (only if auto-expanded, not pinned)
+        sidebar.addEventListener("mouseleave", () => {
+          if (sidebarAutoExpanded && !sidebarPinned) {
+            sidebarAutoCollapseTimer = setTimeout(() => {
+              if (sidebarAutoExpanded) {
+                sidebar.classList.add("collapsed");
+                sidebarCollapsed = true;
+                sidebarAutoExpanded = false;
+              }
+            }, 300);
+          }
+        });
+        sidebar.addEventListener("mouseenter", () => {
+          if (sidebarAutoCollapseTimer) {
+            clearTimeout(sidebarAutoCollapseTimer);
+            sidebarAutoCollapseTimer = null;
+          }
+        });
+
+        // Refit xterm after sidebar transition completes — but ONLY for stable
+        // state changes (pin/unpin), NOT for transient auto-expand hover.
+        // Resizing the PTY during hover causes Claude Code's TUI to redraw with
+        // a right-margin dot fill (·) that persists after the sidebar collapses.
+        sidebar.addEventListener("transitionend", (e) => {
+          if (e.propertyName === "margin-left" && desktopFitAddon && !sidebarAutoExpanded) {
+            desktopFitAddon.fit();
+          }
+        });
+
+        // Nav buttons
+        document.getElementById("sidebar-new-btn").onclick = () => showProjectPicker();
+        document.getElementById("sidebar-ralph-btn").onclick = () => showView("ralph");
+        document.getElementById("sidebar-settings-btn").onclick = () => showSettings();
+
+        // Start session refresh for sidebar
+        startSidebarRefresh();
+
+        // Initial render
+        renderSidebar();
+      }
+
+      function startSidebarRefresh() {
+        if (sidebarRefreshTimer) clearInterval(sidebarRefreshTimer);
+        if (isDesktop()) {
+          sidebarRefreshTimer = setInterval(() => {
+            loadSessions().then(renderSidebar);
+          }, 5000);
+        }
+      }
+
       initSettings();
       cleanStaleSnapshots();
       renderCmdPalette();
+      initSidebar(); // Init sidebar early so pin/expand/hover handlers are ready
+      // Apply expanded sessions as default on desktop — sidebar collapsed in this mode
+      if (isDesktop() && sessionsExpanded) {
+        document.body.classList.add("sessions-expanded");
+        const expandBtn = document.getElementById("sidebar-expand-btn");
+        if (expandBtn) expandBtn.classList.add("active");
+        const sb = document.getElementById("desktop-sidebar");
+        if (sb) { sb.classList.add("collapsed"); sidebarCollapsed = true; }
+      }
       showView("sessions", true);
-      loadSessions();
+      loadSessions().then(renderSidebar);
 
       // Unregister any stale service workers (no longer used)
       if ("serviceWorker" in navigator) {

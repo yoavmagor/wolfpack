@@ -56,7 +56,7 @@ import {
   cachedPeers,
   discoverPeers,
 } from "./http.js";
-import { activePtySessions } from "./websocket.js";
+import { activePtySessions, teardownPty } from "./websocket.js";
 
 const VERSION: string = pkg.version;
 const SETTINGS_PATH = join(homedir(), ".wolfpack", "bridge-settings.json");
@@ -298,6 +298,8 @@ export const routes: Record<
     if (!session) return json(res, { error: "missing session" }, 400);
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
+    // Clean up any associated desktop PTY session (wp_*) before killing
+    teardownPty(session);
     await exec(TMUX, ["kill-session", "-t", session]);
     json(res, { ok: true });
   },

@@ -151,7 +151,7 @@ function schedulePtyTeardown(session: string): void {
   }, PTY_TEARDOWN_GRACE_MS);
 }
 
-function teardownPty(session: string): void {
+export function teardownPty(session: string): void {
   const entry = activePtySessions.get(session);
   if (!entry) return;
   if (entry.teardownTimer) {
