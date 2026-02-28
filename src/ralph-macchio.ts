@@ -227,6 +227,7 @@ RULES:
 - ONLY work on ONE task per iteration.
 - If a task has sub-tasks, complete one sub-task.
 - If you decide the task needs breakdown, output a <subtasks> block with one task per line, and DO NOT modify any files or make a commit in that iteration. Follow the Task Granularity rules from the context above.
+- Do NOT modify ${PLAN_FILE} — the task runner manages plan file updates automatically. Editing it will corrupt the task format and break the automation.
 - Be thorough but focused.
 
 BEGIN.`;

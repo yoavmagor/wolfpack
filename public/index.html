@@ -3322,7 +3322,7 @@
           if (loop.active) {
             actions.innerHTML = '<button class="ralph-launch-btn" style="background:#e74c3c" onclick="cancelRalph()">Cancel</button>';
           } else {
-            actions.innerHTML = '<button class="ralph-launch-btn" onclick="restartRalph(\'' + escAttr(loop.planFile || '') + '\')">Restart</button>';
+            actions.innerHTML = '<button class="ralph-launch-btn" onclick="restartRalph(\'' + escAttr(loop.planFile || '') + '\',\'' + escAttr(loop.agent || '') + '\')">Restart</button>';
           }
 
           // stop polling if loop finished
@@ -3468,6 +3468,10 @@
           document.getElementById("ralph-plan-select").value = currentRalphPlanFile;
           currentRalphPlanFile = "";
         }
+        if (currentRalphAgent) {
+          document.getElementById("ralph-agent-select").value = currentRalphAgent;
+          currentRalphAgent = "";
+        }
       }
 
       async function loadPlanFiles(project) {
@@ -3577,8 +3581,10 @@
       }
 
       let restartingRalph = false;
-      function restartRalph(planFile) {
+      let currentRalphAgent = "";
+      function restartRalph(planFile, agent) {
         currentRalphPlanFile = planFile || "";
+        currentRalphAgent = agent || "";
         restartingRalph = true;
         ralphStartMachine = currentRalphMachine;
         showView("ralph-start");
