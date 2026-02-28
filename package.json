@@ -1,6 +1,6 @@
 {
   "name": "wolfpack-bridge",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "type": "module",
   "description": "Mobile command center for tmux-based AI agent sessions",
   "bin": {
