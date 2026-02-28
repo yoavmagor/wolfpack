@@ -51,15 +51,13 @@ export function countPlanTasks(planPath: string): { done: number; total: number;
     const plan = readFileSync(planPath, "utf-8");
     const { issues } = validatePlanFormat(plan);
 
-    // checkbox mode
-    if (/^- \[[ x]\] /m.test(plan)) {
-      const done = (plan.match(/^- \[x\] /gm) || []).length;
-      const pending = (plan.match(/^- \[ \] /gm) || []).length;
-      return { done, total: done + pending, issues };
-    }
-    // section mode: ## or ### numbered headers (with optional ~~ strikethrough)
+    // count both formats — plans can mix headers + checkboxes (subtask expansion)
     let total = 0;
     let done = 0;
+    const cbDone = (plan.match(/^- \[x\] /gm) || []).length;
+    const cbOpen = (plan.match(/^- \[ \] /gm) || []).length;
+    done += cbDone;
+    total += cbDone + cbOpen;
     for (const line of plan.split("\n")) {
       if (TASK_HEADER.test(line)) {
         total++;
