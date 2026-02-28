@@ -486,4 +486,35 @@ describe("plan corruption detection", () => {
     expect(totalAfter).toBe(0); // unnumbered headers don't match
     expect(totalAfter < totalBefore).toBe(true);
   });
+
+  test("detects completed count shrinkage (strikethrough removed)", () => {
+    const before = "## ~~1. Done~~\n\n## ~~2. Also done~~\n\n## 3. Pending";
+    const after = "## 1. Done\n\n## 2. Also done\n\n## 3. Pending"; // ~~ stripped
+    const beforeCounts = countTasksInContent(before);
+    const afterCounts = countTasksInContent(after);
+    expect(beforeCounts).toEqual({ done: 2, total: 3 });
+    expect(afterCounts).toEqual({ done: 0, total: 3 }); // total same, done shrank
+    expect(afterCounts.total < beforeCounts.total).toBe(false); // total-only check misses this
+    expect(afterCounts.done < beforeCounts.done).toBe(true); // done check catches it
+  });
+
+  test("detects completed count shrinkage (checkbox unchecked)", () => {
+    const before = "- [x] Task A\n- [x] Task B\n- [ ] Task C";
+    const after = "- [ ] Task A\n- [ ] Task B\n- [ ] Task C"; // all unchecked
+    const beforeCounts = countTasksInContent(before);
+    const afterCounts = countTasksInContent(after);
+    expect(beforeCounts).toEqual({ done: 2, total: 3 });
+    expect(afterCounts).toEqual({ done: 0, total: 3 });
+    expect(afterCounts.total < beforeCounts.total).toBe(false);
+    expect(afterCounts.done < beforeCounts.done).toBe(true);
+  });
+
+  test("no false positive when total stable and done increases", () => {
+    const before = "## 1. Task A\n\n## 2. Task B";
+    const after = "## ~~1. Task A~~\n\n## 2. Task B";
+    const beforeCounts = countTasksInContent(before);
+    const afterCounts = countTasksInContent(after);
+    expect(afterCounts.total < beforeCounts.total).toBe(false);
+    expect(afterCounts.done < beforeCounts.done).toBe(false);
+  });
 });

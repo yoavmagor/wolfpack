@@ -494,7 +494,7 @@ async function main() {
 
     // snapshot plan state before iteration for corruption detection
     const planSnapshot = readPlan();
-    const { total: totalBefore } = countTasksInContent(planSnapshot);
+    const { total: totalBefore, done: doneBefore } = countTasksInContent(planSnapshot);
 
     const prompt = buildPrompt(task);
     appendFileSync(LOG_FILE, `\n=== 🥋 Wax On ${i}/${maxIterations} — ${new Date().toString()} ===\n`);
@@ -507,17 +507,21 @@ async function main() {
 
     // plan corruption detection: runs BEFORE exit code check because
     // the typical corruption case is the agent dying mid-write to the plan file
-    const { total: totalAfter } = countTasksInContent(readPlan());
-    if (totalAfter < totalBefore) {
-      appendFileSync(LOG_FILE, `\n=== ⚠️ Plan corruption detected: task count shrank from ${totalBefore} to ${totalAfter} — attempting recovery ===\n`);
-      const recoveryPrompt = buildRecoveryPrompt(planSnapshot, totalBefore, totalAfter);
-      await runIteration(recoveryPrompt);
-      const { total: totalRecovered } = countTasksInContent(readPlan());
-      if (totalRecovered < totalBefore) {
-        appendFileSync(LOG_FILE, `\n=== ⚠️ Recovery failed (${totalRecovered} tasks) — restoring from backup ===\n`);
+    const afterCounts = countTasksInContent(readPlan());
+    if (afterCounts.total < totalBefore || afterCounts.done < doneBefore) {
+      const reason = afterCounts.total < totalBefore
+        ? `task count shrank from ${totalBefore} to ${afterCounts.total}`
+        : `completed count shrank from ${doneBefore} to ${afterCounts.done}`;
+      appendFileSync(LOG_FILE, `\n=== ⚠️ Plan corruption detected: ${reason} — attempting recovery ===\n`);
+      const recoveryPrompt = buildRecoveryPrompt(planSnapshot, totalBefore, afterCounts.total);
+      const { exitCode: recoveryExit } = await runIteration(recoveryPrompt);
+      appendFileSync(LOG_FILE, `\n=== Recovery agent exited (code ${recoveryExit}) ===\n`);
+      const recoveredCounts = countTasksInContent(readPlan());
+      if (recoveredCounts.total < totalBefore || recoveredCounts.done < doneBefore) {
+        appendFileSync(LOG_FILE, `\n=== ⚠️ Recovery failed (${recoveredCounts.total} tasks, ${recoveredCounts.done} done) — restoring from backup ===\n`);
         writeFileSync(PLAN_PATH, planSnapshot);
       } else {
-        appendFileSync(LOG_FILE, `\n=== ✅ Plan recovered (${totalRecovered} tasks) ===\n`);
+        appendFileSync(LOG_FILE, `\n=== ✅ Plan recovered (${recoveredCounts.total} tasks, ${recoveredCounts.done} done) ===\n`);
       }
       try { unlinkSync(ITER_FILE); } catch {}
       continue;
