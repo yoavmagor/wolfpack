@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { countTasksInContent } from "../../src/wolfpack-context.js";
 
 // ── Plan-parsing functions from ralph-macchio.ts and serve.ts ──
 // These are module-private, replicated here as pure functions for testing.
@@ -393,5 +394,96 @@ describe("countPlanTasks (edge cases)", () => {
 
   test("returns zero for plain text only", () => {
     expect(countPlanTasks("no headers here\njust text")).toEqual({ done: 0, total: 0 });
+  });
+});
+
+// ── countTasksInContent (shared, exported from wolfpack-context.ts) ──
+
+describe("countTasksInContent", () => {
+  test("counts checkbox tasks", () => {
+    const plan = "- [x] done\n- [ ] pending\n- [ ] also pending";
+    expect(countTasksInContent(plan)).toEqual({ done: 1, total: 3 });
+  });
+
+  test("counts section header tasks", () => {
+    const plan = "## ~~1. Done~~\nstuff\n\n## 2. Pending\nmore";
+    expect(countTasksInContent(plan)).toEqual({ done: 1, total: 2 });
+  });
+
+  test("counts mixed checkboxes and section headers", () => {
+    const plan = "## ~~1. Done task~~\nstuff\n\n## 2. Open task\nmore\n\n- [x] checked\n- [ ] unchecked";
+    expect(countTasksInContent(plan)).toEqual({ done: 2, total: 4 });
+  });
+
+  test("returns zero for empty content", () => {
+    expect(countTasksInContent("")).toEqual({ done: 0, total: 0 });
+  });
+
+  test("returns zero for no tasks", () => {
+    expect(countTasksInContent("# Title\n\nJust prose.")).toEqual({ done: 0, total: 0 });
+  });
+});
+
+// ── plan corruption detection scenario ──
+
+describe("plan corruption detection", () => {
+  test("detects task count shrinkage (section headers removed)", () => {
+    const before = "## 1. Task A\nstuff\n\n## 2. Task B\nmore\n\n## 3. Task C\nend";
+    const after = "## 1. Task A\nstuff\n\n## Some Rewritten Header\nmore\n\n## 3. Task C\nend";
+    const totalBefore = countTasksInContent(before).total;
+    const totalAfter = countTasksInContent(after).total;
+    expect(totalBefore).toBe(3);
+    expect(totalAfter).toBe(2); // "Some Rewritten Header" doesn't match TASK_HEADER
+    expect(totalAfter < totalBefore).toBe(true);
+  });
+
+  test("detects task count shrinkage (checkboxes deleted)", () => {
+    const before = "- [ ] Task A\n- [ ] Task B\n- [ ] Task C";
+    const after = "- [ ] Task A\n- [ ] Task C"; // Task B deleted
+    const totalBefore = countTasksInContent(before).total;
+    const totalAfter = countTasksInContent(after).total;
+    expect(totalBefore).toBe(3);
+    expect(totalAfter).toBe(2);
+    expect(totalAfter < totalBefore).toBe(true);
+  });
+
+  test("no false positive when task is marked done (section)", () => {
+    const before = "## 1. Task A\nstuff\n\n## 2. Task B\nmore";
+    const after = "## ~~1. Task A~~\nstuff\n\n## 2. Task B\nmore";
+    const totalBefore = countTasksInContent(before).total;
+    const totalAfter = countTasksInContent(after).total;
+    expect(totalBefore).toBe(2);
+    expect(totalAfter).toBe(2); // marking done doesn't change total
+    expect(totalAfter < totalBefore).toBe(false);
+  });
+
+  test("no false positive when task is marked done (checkbox)", () => {
+    const before = "- [ ] Task A\n- [ ] Task B";
+    const after = "- [x] Task A\n- [ ] Task B";
+    const totalBefore = countTasksInContent(before).total;
+    const totalAfter = countTasksInContent(after).total;
+    expect(totalBefore).toBe(2);
+    expect(totalAfter).toBe(2);
+    expect(totalAfter < totalBefore).toBe(false);
+  });
+
+  test("no false positive when subtasks are added", () => {
+    const before = "## 1. Big task\nstuff\n\n## 2. Other\nmore";
+    const after = "## 1. Big task\nstuff\n\n## 2. Other\nmore\n\n- [ ] Sub A\n- [ ] Sub B";
+    const totalBefore = countTasksInContent(before).total;
+    const totalAfter = countTasksInContent(after).total;
+    expect(totalBefore).toBe(2);
+    expect(totalAfter).toBe(4); // 2 headers + 2 checkboxes
+    expect(totalAfter < totalBefore).toBe(false);
+  });
+
+  test("detects agent rewriting headers to unparseable format", () => {
+    const before = "## 1. Setup auth\n\n## 2. Add tests\n\n## 3. Deploy";
+    const after = "## Setup auth\n\n## Add tests\n\n## Deploy"; // numbers stripped
+    const totalBefore = countTasksInContent(before).total;
+    const totalAfter = countTasksInContent(after).total;
+    expect(totalBefore).toBe(3);
+    expect(totalAfter).toBe(0); // unnumbered headers don't match
+    expect(totalAfter < totalBefore).toBe(true);
   });
 });
