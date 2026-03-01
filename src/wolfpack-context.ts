@@ -40,6 +40,26 @@ const AMBIGUOUS_HEADERS = [
 ];
 
 /**
+ * Count tasks in plan content — supports both section headers and checkboxes.
+ * Pure function (no file I/O) for use in ralph-macchio.ts and ralph.ts.
+ */
+export function countTasksInContent(content: string): { done: number; total: number } {
+  let total = 0;
+  let done = 0;
+  const cbDone = (content.match(/^- \[x\] /gm) || []).length;
+  const cbOpen = (content.match(/^- \[ \] /gm) || []).length;
+  done += cbDone;
+  total += cbDone + cbOpen;
+  for (const line of content.split("\n")) {
+    if (TASK_HEADER.test(line)) {
+      total++;
+      if (line.includes("~~")) done++;
+    }
+  }
+  return { done, total };
+}
+
+/**
  * Validate plan file structure — checks for parseable tasks and ambiguous headers.
  * Reuses TASK_HEADER regex and checkbox pattern from countPlanTasks logic.
  */

@@ -14,7 +14,7 @@ import { execFileSync, spawn as nodeSpawn } from "node:child_process";
 import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { RALPH_AGENT_CONTEXT, TASK_HEADER, validatePlanFormat } from "./wolfpack-context.js";
+import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanFormat } from "./wolfpack-context.js";
 
 const { values: args } = parseArgs({
   args: process.argv.slice(2),
@@ -195,6 +195,33 @@ Rules:
   return runIteration(prompt);
 }
 
+/** Build a recovery prompt when the plan file gets corrupted (task count shrinks). */
+function buildRecoveryPrompt(originalContent: string, totalBefore: number, totalAfter: number): string {
+  return `CRITICAL: The plan file ${PLAN_FILE} was corrupted during the last iteration.
+The total task count shrank from ${totalBefore} to ${totalAfter}. Tasks were lost or reformatted into unparseable formats.
+
+The plan file MUST use this format:
+- Section headers: \`## N. Title\` (e.g. \`## 1. Add auth\`), subtasks: \`## Na. Title\` (e.g. \`## 1a. Tests\`)
+- Completed tasks: wrap title in \`~~\` (e.g. \`## ~~1. Done~~\`)
+- OR checkbox format: \`- [ ] task\` / \`- [x] done\`
+
+Here is the ORIGINAL plan content before corruption:
+\`\`\`
+${originalContent}
+\`\`\`
+
+INSTRUCTIONS:
+1. Read the current ${PLAN_FILE}
+2. Compare it against the original content above
+3. Restore ALL missing tasks — use the original as the source of truth
+4. Preserve any tasks that were legitimately marked as completed (~~strikethrough~~ or [x])
+5. Write the fixed plan back to ${PLAN_FILE}
+6. Do NOT add, remove, or reorder tasks beyond what the original had
+7. Do NOT modify any other files or make commits
+
+BEGIN.`;
+}
+
 /** Build the per-iteration prompt. RALPH_AGENT_CONTEXT is prepended so the agent
  *  knows subtask protocol and task conventions (see wolfpack-context.ts). */
 function buildPrompt(taskDesc: string): string {
@@ -227,7 +254,7 @@ RULES:
 - ONLY work on ONE task per iteration.
 - If a task has sub-tasks, complete one sub-task.
 - If you decide the task needs breakdown, output a <subtasks> block with one task per line, and DO NOT modify any files or make a commit in that iteration. Follow the Task Granularity rules from the context above.
-- Do NOT modify ${PLAN_FILE} — the task runner manages plan file updates automatically. Editing it will corrupt the task format and break the automation.
+- Do NOT remove or renumber tasks in the plan file. You may add subtasks, but do NOT delete existing headers or checkboxes — the task runner tracks completion by counting them.
 - Be thorough but focused.
 
 BEGIN.`;
@@ -362,18 +389,9 @@ function logSummary(tasksCompleted: number, subtasksAdded: number): void {
   const mins = Math.floor(elapsed / 60);
   const secs = elapsed % 60;
 
-  // task counts from plan file (count both formats — plans can mix headers + checkboxes)
+  // task counts from plan file
   const plan = readPlan();
-  let done = 0, total = 0;
-  const cbDone = (plan.match(/^- \[x\] /gm) || []).length;
-  const cbOpen = (plan.match(/^- \[ \] /gm) || []).length;
-  done += cbDone; total += cbDone + cbOpen;
-  for (const line of plan.split("\n")) {
-    if (TASK_HEADER.test(line)) {
-      total++;
-      if (line.includes("~~")) done++;
-    }
-  }
+  const { done, total } = countTasksInContent(plan);
 
   // files changed via git (committed since start + uncommitted)
   let filesChanged: string[] = [];
@@ -474,6 +492,10 @@ async function main() {
       continue;
     }
 
+    // snapshot plan state before iteration for corruption detection
+    const planSnapshot = readPlan();
+    const { total: totalBefore, done: doneBefore } = countTasksInContent(planSnapshot);
+
     const prompt = buildPrompt(task);
     appendFileSync(LOG_FILE, `\n=== 🥋 Wax On ${i}/${maxIterations} — ${new Date().toString()} ===\n`);
     appendFileSync(LOG_FILE, `task: ${task}\n\n`);
@@ -482,6 +504,28 @@ async function main() {
 
     // write iter file for inspection
     writeFileSync(ITER_FILE, output);
+
+    // plan corruption detection: runs BEFORE exit code check because
+    // the typical corruption case is the agent dying mid-write to the plan file
+    const afterCounts = countTasksInContent(readPlan());
+    if (afterCounts.total < totalBefore || afterCounts.done < doneBefore) {
+      const reason = afterCounts.total < totalBefore
+        ? `task count shrank from ${totalBefore} to ${afterCounts.total}`
+        : `completed count shrank from ${doneBefore} to ${afterCounts.done}`;
+      appendFileSync(LOG_FILE, `\n=== ⚠️ Plan corruption detected: ${reason} — attempting recovery ===\n`);
+      const recoveryPrompt = buildRecoveryPrompt(planSnapshot, totalBefore, afterCounts.total);
+      const { exitCode: recoveryExit } = await runIteration(recoveryPrompt);
+      appendFileSync(LOG_FILE, `\n=== Recovery agent exited (code ${recoveryExit}) ===\n`);
+      const recoveredCounts = countTasksInContent(readPlan());
+      if (recoveredCounts.total < totalBefore || recoveredCounts.done < doneBefore) {
+        appendFileSync(LOG_FILE, `\n=== ⚠️ Recovery failed (${recoveredCounts.total} tasks, ${recoveredCounts.done} done) — restoring from backup ===\n`);
+        writeFileSync(PLAN_PATH, planSnapshot);
+      } else {
+        appendFileSync(LOG_FILE, `\n=== ✅ Plan recovered (${recoveredCounts.total} tasks, ${recoveredCounts.done} done) ===\n`);
+      }
+      try { unlinkSync(ITER_FILE); } catch {}
+      continue;
+    }
 
     if (exitCode !== 0) {
       appendFileSync(LOG_FILE, `\n=== ⚠️  Iteration ${i} FAILED (exit code ${exitCode}) — ${new Date().toString()} ===\n\n`);

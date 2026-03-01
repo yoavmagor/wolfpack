@@ -9,7 +9,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
-import { TASK_HEADER, validatePlanFormat } from "../wolfpack-context.js";
+import { TASK_HEADER, countTasksInContent, validatePlanFormat } from "../wolfpack-context.js";
 import { DEV_DIR } from "./tmux.js";
 
 export interface RalphStatus {
@@ -50,20 +50,7 @@ export function countPlanTasks(planPath: string): { done: number; total: number;
   try {
     const plan = readFileSync(planPath, "utf-8");
     const { issues } = validatePlanFormat(plan);
-
-    // count both formats — plans can mix headers + checkboxes (subtask expansion)
-    let total = 0;
-    let done = 0;
-    const cbDone = (plan.match(/^- \[x\] /gm) || []).length;
-    const cbOpen = (plan.match(/^- \[ \] /gm) || []).length;
-    done += cbDone;
-    total += cbDone + cbOpen;
-    for (const line of plan.split("\n")) {
-      if (TASK_HEADER.test(line)) {
-        total++;
-        if (line.includes("~~")) done++;
-      }
-    }
+    const { done, total } = countTasksInContent(plan);
     return { done, total, issues };
   } catch {
     return { done: 0, total: 0, issues: [] };
