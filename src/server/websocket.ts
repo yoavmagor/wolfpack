@@ -265,6 +265,9 @@ export function handlePtyWs(ws: WebSocket, session: string): void {
     await exec(TMUX, ["new-session", "-d", "-t", session, "-s", ptySession], { timeout: 3000 }).catch(() => {});
     await exec(TMUX, ["set-option", "-t", ptySession, "status", "off"], { timeout: 2000 }).catch(() => {});
     await exec(TMUX, ["set-option", "-t", ptySession, "mouse", "on"], { timeout: 2000 }).catch(() => {});
+    // Claude Code sets window-size=manual on sessions to protect its TUI.
+    // Override on both sessions so resize-window actually works.
+    await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 }).catch(() => {});
     await exec(TMUX, ["set-option", "-t", ptySession, "window-size", "latest"], { timeout: 2000 }).catch(() => {});
 
     if (!entry.alive) return;
@@ -302,6 +305,8 @@ export function handlePtyWs(ws: WebSocket, session: string): void {
     setTimeout(async () => {
       if (!entry.alive || !entry.proc) return;
       try {
+        // Re-force latest in case Claude Code re-applied manual during spawn
+        await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 });
         await exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 });
       } catch {}
       try {
