@@ -14,8 +14,12 @@
       content="black-translucent"
     />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg viewBox='0 0 32 32' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='32' height='32' rx='7' fill='%230e0e0e'/%3E%3Cpath d='M7 24 L12 5 L16 16 L20 5 L25 24 L20 19 L16 26 L12 19 Z' fill='%2300ff41'/%3E%3Ccircle cx='13' cy='17.5' r='1.5' fill='%230e0e0e'/%3E%3Ccircle cx='19' cy='17.5' r='1.5' fill='%230e0e0e'/%3E%3C/svg%3E" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="icon" type="image/svg+xml" href="/wolfpack-icon.svg" />
+    <link rel="apple-touch-icon" href="/wolfpack-icon.svg" />
+    <meta property="og:title" content="Wolfpack" />
+    <meta property="og:description" content="Mobile command center for AI agent sessions" />
+    <meta property="og:image" content="/wolfpack-icon.svg" />
+    <meta property="og:type" content="website" />
     <title>Wolfpack</title>
     <style>
       * {
@@ -1316,6 +1320,17 @@
           radial-gradient(circle at 1px 1px, rgba(0,255,65,0.025) 1px, transparent 0);
         background-size: 20px 20px;
       }
+      body::after {
+        content: '';
+        position: fixed;
+        top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        width: 200px; height: 200px;
+        background: url("/wolfpack-icon.svg") no-repeat center/contain;
+        opacity: 0.02;
+        pointer-events: none;
+        z-index: 0;
+      }
 
       /* ── Custom scrollbar ── */
       * { scrollbar-width: thin; scrollbar-color: #1e1e1e transparent; }
@@ -1349,7 +1364,7 @@
         height: 135px;
         margin: 80px auto 20px;
         opacity: 0.03;
-        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 32 36' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M5 20 L10 3 L14.5 16.5' fill='%2300ff41' fill-opacity='1' stroke='%2300ff41' stroke-width='0.8'/%3E%3Cpath d='M17.5 16.5 L22 3 L27 20' fill='%2300ff41' fill-opacity='1' stroke='%2300ff41' stroke-width='0.8'/%3E%3Cpath d='M5 20 L14.5 16.5 L16 15 L17.5 16.5 L27 20 L24 30 L18 34 L16 35.5 L14 34 L8 30 Z' fill='%2300ff41' fill-opacity='0.5' stroke='%2300ff41' stroke-width='0.8'/%3E%3Cpath d='M7 20.5 L14.5 17.5 L16 16 L17.5 17.5 L25 20.5' stroke='%2300ff41' stroke-width='1.2' fill='none'/%3E%3Cpath d='M9.5 23 L14 21.5 L14.5 25 L10 26 Z' fill='%2300ff41'/%3E%3Cpath d='M17.5 25 L18 21.5 L22.5 23 L22 26 Z' fill='%2300ff41'/%3E%3Cpath d='M15 30 L16 28 L17 30 L16 31 Z' fill='%2300ff41' fill-opacity='0.6'/%3E%3C/svg%3E");
+        background-image: url("/wolfpack-icon.svg");
         background-repeat: no-repeat;
         background-size: contain;
         background-position: center;
@@ -2245,6 +2260,7 @@
       </div>
       <div class="header-center" id="header-center">
         <div style="display:flex;align-items:center;gap:8px">
+          <img src="/wolfpack-icon.svg" alt="" style="width:18px;height:18px;filter:drop-shadow(0 0 4px rgba(0,255,65,0.3))">
           <h1 id="header-title">wolfpack</h1>
         </div>
       </div>
@@ -2256,6 +2272,7 @@
     </header>
     <div id="desktop-sidebar">
       <div class="sidebar-header">
+        <img src="/wolfpack-icon.svg" alt="" style="width:18px;height:18px;filter:drop-shadow(0 0 4px rgba(0,255,65,0.3))">
         <h1>WOLFPACK</h1>
         <div class="sidebar-controls">
           <button id="sidebar-settings-btn" title="Settings">&#9881;</button>
@@ -2276,7 +2293,10 @@
     <!-- Sessions view -->
     <div id="sessions-view" class="view visible">
       <div id="expanded-toolbar">
-        <h1 class="expanded-title">WOLFPACK</h1>
+        <div style="display:flex;align-items:center;gap:8px">
+          <img src="/wolfpack-icon.svg" alt="" style="width:18px;height:18px;filter:drop-shadow(0 0 4px rgba(0,255,65,0.3))">
+          <h1 class="expanded-title">WOLFPACK</h1>
+        </div>
         <div class="expanded-controls">
           <button id="expanded-settings-btn" title="Settings" onclick="showSettings()">&#9881;</button>
           <button id="expanded-collapse-btn" title="Collapse view" onclick="document.getElementById('sidebar-expand-btn').click()">&#x26F6;</button>
@@ -2399,7 +2419,8 @@
             <button onclick="wpMetrics.reset(); renderDebugPanel()" style="margin-top:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;padding:4px 10px;color:#666;font-size:10px;font-family:inherit;cursor:pointer;width:100%">Reset</button>
           </div>
         </div>
-        <div class="settings-section">
+        <div class="settings-section" style="text-align:center;padding:16px 6px">
+          <img src="/wolfpack-icon.svg" alt="wolfpack" style="width:48px;height:48px;opacity:0.15;margin-bottom:8px">
           <div class="settings-label">About</div>
           <div id="settings-version" style="font-size:10px;color:#555;padding:2px 0"></div>
         </div>
@@ -2690,7 +2711,7 @@
         el.innerHTML = quickCmds.map((c, i) =>
           `<button class="cmd-chip" onclick="sendQuickCmd(${i})">${esc(c.label)}</button>`
         ).join("");
-        el.classList.add("visible");
+        el.classList.toggle("visible", kbAccessoryOpen);
       }
 
       async function sendQuickCmd(index) {
@@ -4282,13 +4303,13 @@
         if (state === "reconnecting") {
           statusEl.style.display = "block";
           statusEl.style.background = "#8a5a00";
-          statusEl.textContent = "reconnecting\u2026";
+          statusEl.innerHTML = '<img src="/wolfpack-icon.svg" style="width:12px;height:12px;vertical-align:middle;margin-right:4px;filter:brightness(10)">reconnecting\u2026';
           return;
         }
         if (state === "offline") {
           statusEl.style.display = "block";
           statusEl.style.background = "#cc3333";
-          statusEl.innerHTML = 'connection lost \u2014 <button type="button" id="conn-retry-btn" style="margin-left:6px;padding:2px 6px;border:1px solid #fff;border-radius:3px;background:transparent;color:#fff;font:inherit;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer">Reconnect</button>';
+          statusEl.innerHTML = '<img src="/wolfpack-icon.svg" style="width:12px;height:12px;vertical-align:middle;margin-right:4px;filter:brightness(10)">connection lost \u2014 <button type="button" id="conn-retry-btn" style="margin-left:6px;padding:2px 6px;border:1px solid #fff;border-radius:3px;background:transparent;color:#fff;font:inherit;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer">Reconnect</button>';
           const retryBtn = document.getElementById("conn-retry-btn");
           if (retryBtn) retryBtn.onclick = retryConnection;
           return;
@@ -5120,10 +5141,12 @@
 
       function toggleKbAccessory() {
         const acc = document.getElementById("kb-accessory");
+        const cmd = document.getElementById("cmd-palette");
         const tog = document.getElementById("kb-toggle");
         if (!acc) return;
         kbAccessoryOpen = !kbAccessoryOpen;
         acc.classList.toggle("visible", kbAccessoryOpen);
+        if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", kbAccessoryOpen);
         if (tog) tog.classList.toggle("active", kbAccessoryOpen);
         haptic([10]);
       }
