@@ -72,7 +72,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
   function schedulePoll() {
     if (!alive) return;
     if (pollTimer) clearTimeout(pollTimer);
-    pollTimer = setTimeout(sendUpdate, 100);
+    pollTimer = setTimeout(sendUpdate, 50);
   }
 
   schedulePoll();
