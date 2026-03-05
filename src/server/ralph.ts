@@ -9,7 +9,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
-import { TASK_HEADER, countTasksInContent, validatePlanFormat } from "../wolfpack-context.js";
+import { countTasksInContent, validatePlanFormat } from "../wolfpack-context.js";
 import { DEV_DIR } from "./tmux.js";
 
 export interface RalphStatus {

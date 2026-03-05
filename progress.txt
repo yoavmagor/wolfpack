@@ -48,3 +48,7 @@
 - When grid goes to 1 cell → `exitGridMode()` auto-transitions to single-terminal full-screen
 - `exitGridMode()` cleans up all grid state, restores remaining session as single terminal
 - `switchSession()` exits grid mode before switching
+
+## Cleanup Pass
+- Removed unused `TASK_HEADER` import from `src/server/ralph.ts` (was left over after extracting counting logic to `countTasksInContent`)
+- Fixed PLAN.md status: marked sub-tasks 3a-3e as completed (they were done but unchecked)
