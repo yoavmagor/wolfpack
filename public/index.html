@@ -965,6 +965,11 @@
       }
       .machine-remove-btn:active { color: #ff4444; }
 
+      /* Ralph hidden mode */
+      body.ralph-hidden .machine-ralph-btn,
+      body.ralph-hidden .ralph-card,
+      body.ralph-hidden .sidebar-ralph-card { display: none !important; }
+
       /* Ralph loop styles */
       .ralph-card {
         background: #111;
@@ -2414,6 +2419,7 @@
 
     <!-- Settings view -->
     <div id="settings-view" class="view">
+      <button id="settings-back-btn" onclick="backToSessions()" style="display:none;background:none;border:1px solid #2a2a2a;border-radius:6px;padding:6px 14px;color:#888;font-size:12px;font-family:inherit;cursor:pointer;margin-bottom:12px;transition:border-color 0.15s,color 0.15s">← Back</button>
       <div class="list">
         <div class="settings-section">
           <div class="settings-label">Machines</div>
@@ -2470,6 +2476,15 @@
           <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
             <input type="checkbox" id="setting-holdToSend" onchange="toggleSetting('holdToSend', this.checked)"> Hold-to-send (large msgs)
           </label>
+        </div>
+        <div class="settings-section">
+          <div class="settings-label">Ralph Loop</div>
+          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px;color:#888">
+            <input type="checkbox" id="setting-ralphEnabled" onchange="toggleSetting('ralphEnabled', this.checked)"> Enable Ralph Loop
+          </label>
+          <div style="padding:4px 0;font-size:11px;color:#555;line-height:1.5">
+            Ralph is an autonomous agent loop that works through a plan file task-by-task. It spawns AI agents (Claude, Codex, Gemini) as detached processes, each completing one task before handing off to the next. Progress is tracked via strikethrough headers or checkboxes in your plan file. Enable this to show Ralph controls throughout the UI.
+          </div>
         </div>
         <div class="settings-section">
           <div class="settings-label">Quick Commands</div>
@@ -2620,7 +2635,7 @@
 
     <script>
       // ── Settings (persisted to localStorage) ──
-      const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:300, debugPanel:false};
+      const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:300, debugPanel:false, ralphEnabled:false};
       const wpSettings = Object.assign({}, wpDefaults, JSON.parse(localStorage.getItem("wp-effects") || "{}"));
       function toggleSetting(key, val) {
         wpSettings[key] = val;
@@ -2642,6 +2657,9 @@
         }
         if (key === "termWrap") {
           document.body.classList.toggle("term-wrap", val);
+        }
+        if (key === "ralphEnabled") {
+          document.body.classList.toggle("ralph-hidden", !val);
         }
         if (key === "termFont") {
           document.body.classList.toggle("term-font-alt", val === "alt");
@@ -3230,6 +3248,8 @@
               if (sb) { sb.classList.remove("collapsed"); sidebarCollapsed = false; }
             }
           }
+          const settingsBackBtn = document.getElementById("settings-back-btn");
+          if (settingsBackBtn) settingsBackBtn.style.display = effectiveName === "settings" ? "" : "none";
           if (effectiveName === "settings") {
             renderQuickCmdSettings();
           } else if (effectiveName === "ralph-detail") {
@@ -3689,6 +3709,7 @@
       }
 
       function showRalphStart(machineUrl) {
+        if (!wpSettings.ralphEnabled) return;
         ralphStartMachine = machineUrl || "";
         restartingRalph = false;
         showView("ralph-start");
@@ -3809,7 +3830,7 @@
       }
 
       function fetchMachine(machineUrl, machineMeta) {
-        const ralphFetch = api("/ralph", undefined, machineUrl || undefined).catch(() => ({ loops: [] }));
+        const ralphFetch = wpSettings.ralphEnabled ? api("/ralph", undefined, machineUrl || undefined).catch(() => ({ loops: [] })) : Promise.resolve({ loops: [] });
         return Promise.all([api("/sessions", undefined, machineUrl || undefined), api("/info", undefined, machineUrl || undefined), ralphFetch])
           .then(([d, info, ralph]) => ({
             machine: { ...machineMeta, url: machineUrl, version: info.version || "", name: info.name || machineMeta.name },
@@ -5338,7 +5359,7 @@
         if (e.key !== "Escape") return;
         if (currentView === "agent") { e.preventDefault(); showView("projects"); }
         else if (currentView === "projects") { e.preventDefault(); showView(viewBeforePicker); loadSessions(); }
-        else if (currentView === "ralph-start" || currentView === "ralph-detail") { e.preventDefault(); backToSessions(); }
+        else if (currentView === "ralph-start" || currentView === "ralph-detail" || currentView === "settings") { e.preventDefault(); backToSessions(); }
       });
 
       document
