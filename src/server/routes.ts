@@ -22,6 +22,7 @@ import { promisify } from "node:util";
 import {
   CMD_REGEX,
   isValidProjectName,
+  isValidSessionName,
   clampCols,
   clampRows,
 } from "../validation.js";
@@ -220,20 +221,41 @@ export const routes: Record<
     json(res, { projects });
   },
 
+  "GET /api/next-session-name": async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const project = url.searchParams.get("project");
+    if (!project || !isValidProjectName(project)) {
+      return json(res, { error: "invalid project" }, 400);
+    }
+    const name = await uniqueSessionName(project);
+    json(res, { name });
+  },
+
   "POST /api/create": async (req, res) => {
     const body = await parseBody<{
       project?: string;
       newProject?: string;
       cmd?: string;
+      sessionName?: string;
     }>(req, res);
     if (!body) return;
-    const { project, newProject, cmd } = body;
+    const { project, newProject, cmd, sessionName } = body;
     const folderName = newProject?.trim() || project?.trim();
     if (!folderName || !isValidProjectName(folderName)) {
       return json(res, { error: "invalid project name" }, 400);
     }
     if (cmd && cmd !== "shell" && !CMD_REGEX.test(cmd)) {
       return json(res, { error: "invalid characters in command" }, 400);
+    }
+    const customName = sessionName?.trim();
+    if (customName) {
+      if (!isValidSessionName(customName)) {
+        return json(res, { error: "invalid session name (letters, numbers, hyphens, underscores only)" }, 400);
+      }
+      const existing = await tmuxList();
+      if (existing.includes(customName)) {
+        return json(res, { error: "session name already taken" }, 409);
+      }
     }
     const projectDir = join(DEV_DIR, folderName);
     if (newProject) {
@@ -245,9 +267,9 @@ export const routes: Record<
     } catch {
       return json(res, { error: "project directory not found" }, 404);
     }
-    const sessionName = await uniqueSessionName(folderName);
-    await tmuxNewSession(sessionName, projectDir, cmd, loadSettings);
-    json(res, { ok: true, session: sessionName });
+    const finalName = customName || await uniqueSessionName(folderName);
+    await tmuxNewSession(finalName, projectDir, cmd, loadSettings);
+    json(res, { ok: true, session: finalName });
   },
 
   "GET /api/settings": async (_req, res) => {

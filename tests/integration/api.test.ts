@@ -63,6 +63,10 @@ function isValidProjectName(name: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(name) && name !== "." && name !== "..";
 }
 
+function isValidSessionName(name: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(name) && name.length > 0 && name.length <= 100;
+}
+
 const ALLOWED_KEYS = [
   "Enter", "Tab", "Escape", "Up", "Down", "Left", "Right",
   "BTab", "y", "n", "C-c", "C-d", "C-z",
@@ -167,21 +171,42 @@ const routes: Record<
     json(res, { ok: true });
   },
 
+  "GET /api/next-session-name": async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const project = url.searchParams.get("project");
+    if (!project || !isValidProjectName(project)) {
+      return json(res, { error: "invalid project" }, 400);
+    }
+    const name = await uniqueSessionName(project);
+    json(res, { name });
+  },
+
   "POST /api/create": async (req, res) => {
     const body = await parseBody<{
       project?: string;
       newProject?: string;
       cmd?: string;
+      sessionName?: string;
     }>(req, res);
     if (!body) return;
-    const { project, newProject, cmd } = body;
+    const { project, newProject, cmd, sessionName } = body;
     const folderName = newProject?.trim() || project?.trim();
     if (!folderName || !isValidProjectName(folderName)) {
       return json(res, { error: "invalid project name" }, 400);
     }
-    const sessionName = await uniqueSessionName(folderName);
-    await tmuxNewSession(sessionName, `/tmp/dev/${folderName}`, cmd);
-    json(res, { ok: true, session: sessionName });
+    const customName = sessionName?.trim();
+    if (customName) {
+      if (!isValidSessionName(customName)) {
+        return json(res, { error: "invalid session name (letters, numbers, hyphens, underscores only)" }, 400);
+      }
+      const existing = await tmuxList();
+      if (existing.includes(customName)) {
+        return json(res, { error: "session name already taken" }, 409);
+      }
+    }
+    const finalName = customName || await uniqueSessionName(folderName);
+    await tmuxNewSession(finalName, `/tmp/dev/${folderName}`, cmd);
+    json(res, { ok: true, session: finalName });
   },
 
   "POST /api/key": async (req, res) => {
@@ -546,6 +571,68 @@ describe("POST /api/create", () => {
       "/tmp/dev/my-app",
       "claude",
     );
+  });
+
+  test("uses custom sessionName when provided", async () => {
+    tmuxNewSession.mockClear();
+    const res = await post("/api/create", {
+      project: "my-app",
+      sessionName: "auth-refactor",
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.session).toBe("auth-refactor");
+    expect(tmuxNewSession).toHaveBeenCalledWith(
+      "auth-refactor",
+      "/tmp/dev/my-app",
+      undefined,
+    );
+  });
+
+  test("rejects invalid session name characters", async () => {
+    const res = await post("/api/create", {
+      project: "my-app",
+      sessionName: "foo.bar",
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("invalid session name");
+  });
+
+  test("rejects taken session name with 409", async () => {
+    const res = await post("/api/create", {
+      project: "my-app",
+      sessionName: "wolf-1",
+    });
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.error).toBe("session name already taken");
+  });
+});
+
+describe("GET /api/next-session-name", () => {
+  test("returns project name when not taken", async () => {
+    const res = await fetch(`${base}/api/next-session-name?project=my-app`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.name).toBe("my-app");
+  });
+
+  test("returns suffixed name when taken", async () => {
+    const res = await fetch(`${base}/api/next-session-name?project=wolf-1`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.name).toBe("wolf-1-2");
+  });
+
+  test("rejects invalid project name", async () => {
+    const res = await fetch(`${base}/api/next-session-name?project=../etc`);
+    expect(res.status).toBe(400);
+  });
+
+  test("rejects missing project param", async () => {
+    const res = await fetch(`${base}/api/next-session-name`);
+    expect(res.status).toBe(400);
   });
 });
 
