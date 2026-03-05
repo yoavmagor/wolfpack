@@ -5384,6 +5384,44 @@
         else if (currentView === "ralph-start" || currentView === "ralph-detail" || currentView === "settings") { e.preventDefault(); backToSessions(); }
       });
 
+      // ── Desktop keyboard shortcuts (capture phase, before xterm) ──
+      document.addEventListener("keydown", (e) => {
+        if (!isDesktop()) return;
+        const mod = e.metaKey || e.ctrlKey;
+        if (!mod) return;
+
+        // Cmd+[ / Cmd+] — previous/next session in sidebar
+        if (e.key === "[" || e.key === "]") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!allSessions.length) return;
+          const curIdx = allSessions.findIndex(s => s.name === currentSession && (s.machineUrl || "") === currentMachine);
+          if (curIdx === -1) return;
+          const next = e.key === "]"
+            ? (curIdx + 1) % allSessions.length
+            : (curIdx - 1 + allSessions.length) % allSessions.length;
+          const s = allSessions[next];
+          openSession(s.name, s.machineUrl || undefined);
+          return;
+        }
+
+        // Cmd+T — new session (project picker)
+        if (e.key === "t") {
+          e.preventDefault();
+          e.stopPropagation();
+          showProjectPicker();
+          return;
+        }
+
+        // Cmd+K — clear terminal
+        if (e.key === "k") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (desktopTerm) desktopTerm.clear();
+          return;
+        }
+      }, true);
+
       document
         .getElementById("new-project-name")
         .addEventListener("keydown", (e) => {

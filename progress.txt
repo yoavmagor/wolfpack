@@ -1,0 +1,16 @@
+# Progress Log
+
+## Active Session Card Glow (Task 1)
+- Enhanced `.sidebar-sessions .card.sidebar-active` with green glow shadow (12px + 4px), `scale(1.02)`, green border, gradient bg
+- Added `.sidebar-sessions .card.sidebar-grid` class for in-grid-but-not-focused sessions (lighter glow, no scale)
+- Added inactive card dimming: `opacity: 0.6` for cards without `.sidebar-active` or `.sidebar-grid`, with hover restore to 0.85
+- All CSS-only changes in `public/index.html`
+
+## Keyboard Shortcuts (Task 2)
+- Added desktop keyboard shortcut handler in capture phase (fires before xterm.js)
+- `Cmd/Ctrl+[` / `Cmd/Ctrl+]` — previous/next session in sidebar (wraps around)
+- `Cmd/Ctrl+T` — open project picker (new session)
+- `Cmd/Ctrl+K` — clear terminal (xterm.js clear)
+- All shortcuts guarded by `isDesktop()` check
+- `preventDefault` + `stopPropagation` to suppress browser defaults (Cmd+[ = back)
+- Cmd+Arrow deferred to task 3d (grid focus navigation)
