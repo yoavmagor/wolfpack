@@ -14,3 +14,37 @@
 - All shortcuts guarded by `isDesktop()` check
 - `preventDefault` + `stopPropagation` to suppress browser defaults (Cmd+[ = back)
 - Cmd+Arrow deferred to task 3d (grid focus navigation)
+
+## Multi-Terminal Grid View — Task 3a: Data Model + Grid Layout
+- Added grid state: `gridSessions[]`, `gridFocusIndex`, `MAX_GRID_CELLS` (6)
+- CSS grid layouts for 2-6 cells: `grid-2` through `grid-6` classes on `#desktop-grid-container`
+  - 2: side-by-side, 3: 2+1, 4: 2x2, 5: 3+2 (centered), 6: 3x2
+- Grid cell DOM: `.grid-cell` with session label, close button (×), focus highlight (green border)
+- Close button: visible on hover, removes session from grid (does NOT kill tmux session)
+
+## Multi-Terminal Grid View — Task 3b: Sidebar Grid Button + Highlight
+- Added `⊞` grid toggle button to sidebar cards (visible on hover, desktop only)
+- `.grid-btn.in-grid` stays visible + green when session is in grid
+- `sidebarCardHtml()` now applies `.sidebar-grid` class for in-grid sessions
+- `toggleGrid()` function adds/removes sessions from grid via sidebar button
+- Clicking a sidebar card while grid is active: focuses if in grid, exits grid if not
+
+## Multi-Terminal Grid View — Task 3c: PTY Management Per Cell
+- Each grid cell owns: Terminal instance, WebSocket (`/ws/pty`), FitAddon, SearchAddon
+- `renderGridCells()` creates xterm.js per cell, mounts to grid-cell DOM
+- `connectGridCellWs()` connects each cell's WS with reconnect logic (reuses existing constants)
+- `scheduleGridCellReconnect()` mirrors single-terminal reconnect (backoff, budget, jitter)
+- Only focused cell accepts stdin (`disableStdin` toggled per focus)
+- Window resize → `fitAllGridCells()` refits all terminals
+
+## Multi-Terminal Grid View — Task 3d: Focus + Keyboard Nav
+- `setGridFocus(idx)` updates `disableStdin`/`cursorBlink`, cell border highlights, sidebar active class
+- `Cmd+[` / `Cmd+]` cycles through grid cells when grid is active
+- `Cmd+Arrow` (left/right/up/down) directional grid navigation based on column layout
+- `Cmd+K` clears focused grid cell's terminal
+
+## Multi-Terminal Grid View — Task 3e: Grid Cell Close + Exit Grid
+- `removeFromGrid(idx)` disposes xterm+WS, removes from `gridSessions[]`
+- When grid goes to 1 cell → `exitGridMode()` auto-transitions to single-terminal full-screen
+- `exitGridMode()` cleans up all grid state, restores remaining session as single terminal
+- `switchSession()` exits grid mode before switching
