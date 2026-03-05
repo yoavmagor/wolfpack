@@ -19,6 +19,63 @@ function isValidPlanFile(name: string): boolean {
 /** Mirrors serve.ts BRANCH_REGEX (inline in ralph start handler) */
 const BRANCH_REGEX = /^[a-zA-Z0-9._\-/]+$/;
 
+/** Mirrors validation.ts isValidSessionName() — no dots or colons (tmux restriction) */
+function isValidSessionName(name: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(name) && name.length > 0 && name.length <= 100;
+}
+
+// ── isValidSessionName tests ──
+
+describe("isValidSessionName", () => {
+  test("accepts simple name", () => {
+    expect(isValidSessionName("my-session")).toBe(true);
+  });
+
+  test("accepts underscores", () => {
+    expect(isValidSessionName("my_session")).toBe(true);
+  });
+
+  test("accepts numbers", () => {
+    expect(isValidSessionName("wolfpack-2")).toBe(true);
+  });
+
+  test("accepts uppercase", () => {
+    expect(isValidSessionName("MySession")).toBe(true);
+  });
+
+  test("rejects dots (tmux restriction)", () => {
+    expect(isValidSessionName("foo.bar")).toBe(false);
+  });
+
+  test("rejects colons (tmux restriction)", () => {
+    expect(isValidSessionName("foo:bar")).toBe(false);
+  });
+
+  test("rejects spaces", () => {
+    expect(isValidSessionName("my session")).toBe(false);
+  });
+
+  test("rejects empty string", () => {
+    expect(isValidSessionName("")).toBe(false);
+  });
+
+  test("rejects slashes", () => {
+    expect(isValidSessionName("foo/bar")).toBe(false);
+  });
+
+  test("rejects shell injection", () => {
+    expect(isValidSessionName("foo;rm -rf /")).toBe(false);
+  });
+
+  test("rejects names over 100 chars", () => {
+    expect(isValidSessionName("a".repeat(101))).toBe(false);
+  });
+
+  test("accepts names at 100 chars", () => {
+    expect(isValidSessionName("a".repeat(100))).toBe(true);
+  });
+});
+
 // ── isValidProjectName tests ──
 
 describe("isValidProjectName", () => {

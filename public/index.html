@@ -277,6 +277,65 @@
         .card-preview { -webkit-line-clamp: 1; }
         .dot { width: 7px; height: 7px; }
       }
+
+      /* ── Session name field ── */
+      .session-name-block {
+        padding: 10px 6px 14px;
+        border-bottom: 1px solid #1a1a1a;
+        margin-bottom: 6px;
+      }
+      .session-name-label {
+        font-size: 9px;
+        color: #555;
+        text-transform: uppercase;
+        letter-spacing: 2.5px;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .session-name-label::before {
+        content: '>';
+        color: #00ff41;
+        text-shadow: 0 0 6px rgba(0,255,65,0.4);
+        font-size: 10px;
+      }
+      .session-name-input {
+        width: 100%;
+        background: #0e0e0e;
+        border: 1px solid #222;
+        border-radius: 4px;
+        padding: 9px 10px;
+        color: #00ff41;
+        font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        font-size: 13px;
+        letter-spacing: 0.8px;
+        outline: none;
+        caret-color: #00ff41;
+        text-shadow: 0 0 4px rgba(0,255,65,0.15);
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+      .session-name-input::placeholder { color: #2a2a2a; }
+      .session-name-input:focus {
+        border-color: rgba(0,255,65,0.4);
+        box-shadow: 0 0 8px rgba(0,255,65,0.08), inset 0 0 12px rgba(0,255,65,0.03);
+      }
+      .session-name-input.invalid {
+        border-color: rgba(255,60,60,0.5);
+        box-shadow: 0 0 8px rgba(255,60,60,0.08);
+        color: #ff4444;
+        text-shadow: 0 0 4px rgba(255,60,60,0.15);
+      }
+      .session-name-error {
+        font-size: 9px;
+        color: #ff4444;
+        letter-spacing: 1px;
+        margin-top: 4px;
+        text-transform: uppercase;
+        display: none;
+      }
+      .session-name-error.visible { display: block; }
+
       .new-btn {
         background: #1a1a1a;
         border: 1px solid rgba(0, 255, 65, 0.4);
@@ -2159,6 +2218,17 @@
           border-radius: 8px !important;
         }
 
+        /* ── Session name field in agent view ── */
+        .session-name-input {
+          padding: 12px 12px !important;
+          font-size: 14px !important;
+          border-radius: 8px !important;
+        }
+        .session-name-label {
+          font-size: 10px !important;
+          margin-bottom: 8px !important;
+        }
+
         /* ── Custom cmd input in agent view ── */
         #custom-cmd-input {
           padding: 10px 12px !important;
@@ -2325,6 +2395,13 @@
     <!-- Agent picker view -->
     <div id="agent-view" class="view">
       <button class="picker-cancel-btn" onclick="showView('projects')">← Back</button>
+      <div class="session-name-block">
+        <div class="session-name-label">session name</div>
+        <input type="text" class="session-name-input" id="session-name-input"
+          spellcheck="false" autocomplete="off" autocapitalize="off"
+          placeholder="session name...">
+        <div class="session-name-error" id="session-name-error"></div>
+      </div>
       <div id="agent-list" class="list"></div>
       <div style="padding:6px;display:flex;gap:6px">
         <input id="custom-cmd-input" type="text" placeholder="custom command…"
@@ -3969,8 +4046,17 @@
         showView("agent");
         const el = document.getElementById("agent-list");
         el.innerHTML = '<div class="empty">Loading...</div>';
+        const nameInput = document.getElementById("session-name-input");
+        const nameError = document.getElementById("session-name-error");
+        nameInput.value = "";
+        nameInput.classList.remove("invalid");
+        nameError.classList.remove("visible");
         try {
-          const data = await api("/settings", undefined, projectMachine);
+          const [data, nameData] = await Promise.all([
+            api("/settings", undefined, projectMachine),
+            api("/next-session-name?project=" + encodeURIComponent(selectedProject), undefined, projectMachine),
+          ]);
+          nameInput.value = nameData.name || selectedProject;
           const presets = Object.entries(data.presets || {});
           const customCmds = data.settings?.customCmds || [];
           let html = presets.map(([label, cmd]) => `
@@ -3991,6 +4077,24 @@
           el.innerHTML = '<div class="empty">Failed to load agents</div>';
         }
       }
+
+      // Session name input validation
+      (function() {
+        const input = document.getElementById("session-name-input");
+        const error = document.getElementById("session-name-error");
+        input.addEventListener("input", () => {
+          const val = input.value.trim();
+          if (val && !/^[a-zA-Z0-9_-]+$/.test(val)) {
+            input.classList.add("invalid");
+            error.textContent = "letters, numbers, hyphens, underscores only";
+            error.classList.add("visible");
+          } else {
+            input.classList.remove("invalid");
+            error.classList.remove("visible");
+          }
+        });
+        input.addEventListener("focus", () => input.select());
+      })();
 
       async function addCustomCmd() {
         const input = document.getElementById("custom-cmd-input");
@@ -4024,12 +4128,15 @@
       }
 
       async function createSessionWithAgent(cmd) {
+        const nameInput = document.getElementById("session-name-input");
+        const sessionName = (nameInput.value || "").trim();
+        if (sessionName && !/^[a-zA-Z0-9_-]+$/.test(sessionName)) return;
         const machine = projectMachine;
-        showTerminalLoading(selectedProject);
+        showTerminalLoading(sessionName || selectedProject);
         try {
           const body = isNewProject
-            ? { newProject: selectedProject, cmd }
-            : { project: selectedProject, cmd };
+            ? { newProject: selectedProject, cmd, sessionName: sessionName || undefined }
+            : { project: selectedProject, cmd, sessionName: sessionName || undefined };
           const data = await api("/create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },

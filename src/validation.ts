@@ -25,6 +25,10 @@ export function isValidProjectName(name: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(name) && name !== "." && name !== "..";
 }
 
+export function isValidSessionName(name: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(name) && name.length > 0 && name.length <= 100;
+}
+
 export function isValidPlanFile(name: string): boolean {
   return PLAN_FILE_REGEX.test(name) && name !== ".." && name !== ".";
 }
