@@ -1214,12 +1214,14 @@
         display: none;
         flex: 1;
         min-height: 0;
+        height: 0;
         background: #0a0a0a;
         overflow: hidden;
       }
       #desktop-grid-container.active {
         display: grid;
         gap: 2px;
+        height: auto;
       }
       /* Auto-layout classes set by JS */
       #desktop-grid-container.grid-2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
@@ -1240,43 +1242,54 @@
         background: #0a0a0a;
         border: 1px solid #1a1a1a;
         transition: border-color 0.15s ease;
+        min-height: 0;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
       }
       .grid-cell.grid-focused {
         border-color: rgba(0,255,65,0.4);
         box-shadow: inset 0 0 8px rgba(0,255,65,0.08);
       }
       .grid-cell .xterm {
-        height: 100%;
-        padding: 2px;
+        flex: 1;
+        min-height: 0;
+        padding: 0 2px;
+        overflow: hidden;
+      }
+      .grid-cell-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 2px 8px;
+        background: #111;
+        border-bottom: 1px solid #1a1a1a;
+        flex-shrink: 0;
+        height: 20px;
       }
       .grid-cell-label {
-        position: absolute;
-        top: 4px;
-        left: 8px;
         font-size: 9px;
         font-weight: 700;
         letter-spacing: 1px;
         text-transform: uppercase;
         color: rgba(255,255,255,0.3);
-        z-index: 2;
         pointer-events: none;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .grid-cell.grid-focused .grid-cell-label {
         color: rgba(0,255,65,0.5);
       }
       .grid-cell-close {
-        position: absolute;
-        top: 2px;
-        right: 6px;
-        font-size: 14px;
+        font-size: 12px;
         color: rgba(255,255,255,0.2);
         cursor: pointer;
-        z-index: 3;
-        padding: 2px 4px;
+        padding: 0 2px;
         line-height: 1;
         opacity: 0;
         transition: opacity 0.15s, color 0.15s;
+        flex-shrink: 0;
       }
       .grid-cell:hover .grid-cell-close {
         opacity: 1;
@@ -3124,7 +3137,7 @@
           const cell = document.createElement("div");
           cell.className = "grid-cell" + (idx === gridFocusIndex ? " grid-focused" : "");
           cell.dataset.gridIndex = idx;
-          cell.innerHTML = '<div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div>';
+          cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div>';
           cell.addEventListener("click", (e) => {
             if (e.target.classList.contains("grid-cell-close")) return;
             setGridFocus(idx);
@@ -3166,7 +3179,7 @@
             } catch {}
             term.open(cell);
             try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch {}
-            fitAddon.fit();
+            // Don't fit yet — wait for layout to settle. WS connects after final fit.
             // Wire stdin for focused cell
             term.onData((data) => {
               if (gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs) {
@@ -3188,15 +3201,26 @@
             gs.term = term;
             gs.fitAddon = fitAddon;
             gs.searchAddon = searchAddon;
-            // Connect WebSocket
-            connectGridCellWs(gs);
+            gs._needsConnect = true;  // connect after final fit
           } else {
             // Re-attach existing terminal to new cell DOM
-            cell.appendChild(gs.term.element.parentElement || gs.term.element);
-            gs.fitAddon.fit();
+            cell.appendChild(gs.term.element);
           }
         });
         updateGridLayout();
+        // Single delayed fit + connect — only send ONE resize to PTY after layout settles
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            fitAllGridCells();
+            // Now connect any new WebSockets (PTY gets correct size from the start)
+            gridSessions.forEach(gs => {
+              if (gs._needsConnect) {
+                delete gs._needsConnect;
+                connectGridCellWs(gs);
+              }
+            });
+          }, 100);
+        });
       }
 
       function connectGridCellWs(gs) {
@@ -3349,21 +3373,32 @@
           window.removeEventListener("resize", gridResizeHandler);
           gridResizeHandler = null;
         }
+        // Determine which session to restore before destroying
+        const remaining = gridSessions.length >= 1 ? gridSessions[0] : null;
+        const restoreSession = remaining ? remaining.session : currentSession;
+        const restoreMachine = remaining ? (remaining.machine || "") : currentMachine;
         // Destroy all grid sessions
         for (const gs of gridSessions) {
           if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
           if (gs.ws) { try { gs.ws.close(); } catch {} }
           if (gs.term) { try { gs.term.dispose(); } catch {} }
         }
-        const remaining = gridSessions.length === 1 ? gridSessions[0] : null;
-        const restoreSession = remaining ? remaining.session : currentSession;
-        const restoreMachine = remaining ? (remaining.machine || "") : currentMachine;
         gridSessions = [];
         gridFocusIndex = 0;
+        // Fully clean up grid container
         const container = document.getElementById("desktop-grid-container");
         container.className = "";
         container.style.display = "none";
         container.innerHTML = "";
+        // Ensure single-terminal container is reset
+        const dtc = document.getElementById("desktop-terminal-container");
+        dtc.style.display = "none";
+        dtc.innerHTML = "";
+        // Clear desktopTerm reference in case it's stale
+        desktopTerm = null;
+        desktopFitAddon = null;
+        desktopWs = null;
+        desktopSearchAddon = null;
         // Restore single-terminal mode
         if (restoreSession) {
           currentSession = restoreSession;
