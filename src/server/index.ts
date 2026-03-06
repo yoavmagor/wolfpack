@@ -181,8 +181,9 @@ server.on("upgrade", async (req, socket, head) => {
       socket.destroy();
       return;
     }
+    const reset = url.searchParams.get("reset") === "1";
     wss.handleUpgrade(req, socket, head, (ws) => {
-      handlePtyWs(ws, session);
+      handlePtyWs(ws, session, reset);
     });
   } else {
     socket.write("HTTP/1.1 404 Not Found\r\n\r\n");

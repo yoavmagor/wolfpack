@@ -52,10 +52,6 @@ function post(path: string, body: unknown) {
   });
 }
 
-function get(path: string) {
-  return fetch(`${baseUrl}${path}`);
-}
-
 async function rawUpgrade(path: string): Promise<{ status: number; ws?: WebSocket }> {
   return new Promise((resolve) => {
     const ws = new WebSocket(`${baseWsUrl}${path}`);

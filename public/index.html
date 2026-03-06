@@ -3322,6 +3322,13 @@
               const msg = JSON.parse(ev.data);
               if (msg.type === "viewer_conflict") {
                 showGridCellConflictOverlay(gs, ws);
+              } else if (msg.type === "control_granted") {
+                removeGridCellConflictOverlay(gs);
+                if (gs.fitAddon && gs.term) {
+                  try { gs.fitAddon.fit(); } catch {}
+                  ws.send(JSON.stringify({ type: "resize", cols: gs.term.cols, rows: gs.term.rows }));
+                  if (gridSessions[gridFocusIndex] === gs) gs.term.focus();
+                }
               }
             } catch {}
             return;
@@ -3331,13 +3338,15 @@
         ws.onclose = (ev) => {
           if (gs.ws === ws) gs.ws = null;
           removeGridCellConflictOverlay(gs);
-          if (ev.code === 4002) {
-            showGridCellDisplacedOverlay(gs);
-            return;
-          }
+          // Auto-reconnect on displace (4002) — will get viewer_conflict → "Take Control"
           // Only reconnect if still in grid
           if (gridSessions.includes(gs) && !gs.retryBlocked) {
-            scheduleGridCellReconnect(gs);
+            if (ev.code === 4002) {
+              // Immediate reconnect, no overlay
+              connectGridCellWs(gs);
+            } else {
+              scheduleGridCellReconnect(gs);
+            }
           }
         };
         ws.onerror = () => {};
@@ -3381,7 +3390,7 @@
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "take_control" }));
           }
-          overlay.remove();
+          // Don't remove overlay here — wait for control_granted to confirm
         });
         overlay.addEventListener("click", (e) => e.stopPropagation());
         cell.appendChild(overlay);
@@ -4863,6 +4872,13 @@
               const msg = JSON.parse(ev.data);
               if (msg.type === "viewer_conflict") {
                 showDesktopConflictOverlay(ws);
+              } else if (msg.type === "control_granted") {
+                removeDesktopConflictOverlay();
+                if (desktopFitAddon && desktopTerm) {
+                  try { desktopFitAddon.fit(); } catch {}
+                  ws.send(JSON.stringify({ type: "resize", cols: desktopTerm.cols, rows: desktopTerm.rows }));
+                  desktopTerm.focus();
+                }
               }
             } catch {}
             return;
@@ -4938,7 +4954,7 @@
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "take_control" }));
           }
-          removeDesktopConflictOverlay();
+          // Don't remove overlay here — wait for control_granted to confirm
         });
         container.appendChild(overlay);
       }
@@ -5818,8 +5834,8 @@
           }
           if (currentSession && currentView === "terminal") {
             if (useDesktopTerminal) {
-              // Desktop: reset budget and reconnect if WS is dead
-              if (desktopTerm) {
+              // Desktop: reset budget and reconnect if WS is dead (but not during grid view)
+              if (desktopTerm && !isGridActive()) {
                 desktopRetryBlocked = false;
                 desktopReconnectStartedAt = 0;
                 desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;

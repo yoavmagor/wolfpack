@@ -23,7 +23,6 @@ export const activePtySessions = new Map<string, {
   viewer: WebSocket | null;
   pendingViewer: WebSocket | null;
   proc: ReturnType<typeof Bun.spawn>;
-  ptySession: string;
   alive: boolean;
 }>();
 
@@ -156,12 +155,9 @@ export function teardownPty(session: string): void {
     try { entry.proc.terminal!.close(); } catch {}
     try { entry.proc.kill(); } catch {}
   }
-  exec(TMUX, ["kill-session", "-t", entry.ptySession], { timeout: 2000 }).catch(() => {});
 }
 
 export function handlePtyWs(ws: WebSocket, session: string, reset = false): void {
-  const ptySession = `wp_${session}`;
-
   // Force teardown existing PTY so a fresh one is spawned at the caller's dimensions
   if (reset) {
     const stale = activePtySessions.get(session);
@@ -187,17 +183,19 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
       else clearInterval(pingTimer);
     }, 25000);
 
-    ws.on("message", (raw: Buffer | string) => {
+    function pendingMessage(raw: Buffer | string) {
       try {
         const str = String(raw);
-        if (typeof str !== "string" && !(Buffer.isBuffer(raw) && raw[0] === 0x7b)) return;
         const msg = JSON.parse(str);
         if (msg.type === "take_control") {
-          // Close old viewer with displaced code
-          if (existing.viewer) {
-            try { existing.viewer.close(4002, "displaced"); } catch {}
+          // Null out viewer BEFORE closing — prevents old detach handler
+          // from calling teardownPty() which would destroy the NEW entry
+          const oldViewer = existing.viewer;
+          existing.viewer = null;
+          if (oldViewer) {
+            try { oldViewer.close(4002, "displaced"); } catch {}
           }
-          // Tear down old PTY
+          // Tear down old PTY proc (no tmux session to clean up anymore)
           const oldProc = existing.proc;
           existing.alive = false;
           activePtySessions.delete(session);
@@ -205,37 +203,46 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
             try { oldProc.terminal!.close(); } catch {}
             try { oldProc.kill(); } catch {}
           }
-          exec(TMUX, ["kill-session", "-t", existing.ptySession], { timeout: 2000 }).catch(() => {});
+
+          // Remove pending handlers before promoting — prevents duplicate handlers
+          clearInterval(pingTimer);
+          ws.removeListener("message", pendingMessage);
+          ws.removeListener("close", cleanup);
+          ws.removeListener("error", cleanup);
+          existing.pendingViewer = null;
 
           // Promote this viewer — spawn fresh PTY on first resize
-          clearInterval(pingTimer);
-          existing.pendingViewer = null;
-          setupNewPtyEntry(ws, session, ptySession);
+          setupNewPtyEntry(ws, session);
+          // Tell client takeover succeeded so it re-sends resize
+          try { ws.send(JSON.stringify({ type: "control_granted" })); } catch {}
         }
       } catch {}
-    });
+    }
 
     function cleanup() {
       clearInterval(pingTimer);
+      ws.removeListener("message", pendingMessage);
+      ws.removeListener("close", cleanup);
+      ws.removeListener("error", cleanup);
       if (existing.pendingViewer === ws) {
         existing.pendingViewer = null;
       }
     }
+    ws.on("message", pendingMessage);
     ws.on("close", cleanup);
     ws.on("error", cleanup);
     return;
   }
 
   // No active PTY — create new entry
-  setupNewPtyEntry(ws, session, ptySession);
+  setupNewPtyEntry(ws, session);
 }
 
-function setupNewPtyEntry(ws: WebSocket, session: string, ptySession: string): void {
+function setupNewPtyEntry(ws: WebSocket, session: string): void {
   const entry = {
     viewer: ws as WebSocket | null,
     pendingViewer: null as WebSocket | null,
     proc: null as ReturnType<typeof Bun.spawn> | null,
-    ptySession,
     alive: true,
   };
   activePtySessions.set(session, entry as any);
@@ -255,19 +262,13 @@ function setupNewPtyEntry(ws: WebSocket, session: string, ptySession: string): v
       return;
     }
 
-    await exec(TMUX, ["kill-session", "-t", ptySession], { timeout: 2000 }).catch(() => {});
-    await exec(TMUX, ["new-session", "-d", "-t", session, "-s", ptySession], { timeout: 3000 }).catch(() => {});
-    await exec(TMUX, ["set-option", "-t", ptySession, "status", "off"], { timeout: 2000 }).catch(() => {});
-    await exec(TMUX, ["set-option", "-t", ptySession, "mouse", "on"], { timeout: 2000 }).catch(() => {});
-    // Claude Code sets window-size=manual on sessions to protect its TUI.
-    // Override on both sessions so resize-window actually works.
+    // Override window-size so resize-window works
     await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 }).catch(() => {});
-    await exec(TMUX, ["set-option", "-t", ptySession, "window-size", "latest"], { timeout: 2000 }).catch(() => {});
 
     if (!entry.alive) return;
 
     const spawnedAt = Date.now();
-    entry.proc = Bun.spawn([TMUX, "attach-session", "-t", ptySession], {
+    entry.proc = Bun.spawn([TMUX, "attach-session", "-t", session], {
       env: { ...process.env, TERM: "xterm-256color" },
       terminal: {
         cols,
@@ -293,7 +294,6 @@ function setupNewPtyEntry(ws: WebSocket, session: string, ptySession: string): v
             try { entry.pendingViewer.close(code, reason); } catch {}
             entry.pendingViewer = null;
           }
-          exec(TMUX, ["kill-session", "-t", ptySession], { timeout: 2000 }).catch(() => {});
         },
       },
     });
@@ -353,9 +353,10 @@ function setupNewPtyEntry(ws: WebSocket, session: string, ptySession: string): v
 
   function detach() {
     clearInterval(pingTimer);
-    if (entry.viewer === ws) {
+    // Only tear down if OUR entry is still the active one in the map.
+    // A new entry may have replaced it (e.g. grid view reconnect with reset=1).
+    if (entry.alive && entry.viewer === ws && activePtySessions.get(session) === entry) {
       entry.viewer = null;
-      // Immediate teardown — no grace period
       teardownPty(session);
     }
   }
