@@ -361,10 +361,10 @@ describe("WS terminal state machine transitions", () => {
   });
 });
 
-// ── PTY state transitions ──
+// ── PTY state transitions (single-viewer model) ──
 
 describe("WS /ws/pty state transitions", () => {
-  test("entry created on first connect, removed after cleanup", async () => {
+  test("entry created on first connect, torn down on disconnect", async () => {
     const session = "dispatch-session";
     const ptySessions = __getActivePtySessions();
     ptySessions.delete(session);
@@ -382,23 +382,21 @@ describe("WS /ws/pty state transitions", () => {
     expect(ptySessions.has(session)).toBe(true);
     const entry = ptySessions.get(session)!;
     expect(entry.alive).toBe(true);
-    expect(entry.viewers.size).toBe(1);
+    expect(entry.viewer).toBeTruthy();
 
     ws.close();
     await wait(200);
 
-    // Still alive during grace period
-    expect(entry.alive).toBe(true);
-    expect(entry.viewers.size).toBe(0);
+    // Single-viewer model: immediate teardown on disconnect
+    expect(entry.alive).toBe(false);
   });
 
-  test("reconnect within grace period cancels teardown timer", async () => {
-    const session = "reconnect-session";
+  test("second viewer gets conflict, first stays active", async () => {
+    const session = "dispatch-session";
     const ptySessions = __getActivePtySessions();
     ptySessions.delete(session);
     await wait(50);
 
-    // Connect
     const ws1 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
     ws1.binaryType = "arraybuffer";
     await new Promise<void>((resolve, reject) => {
@@ -407,25 +405,33 @@ describe("WS /ws/pty state transitions", () => {
     });
 
     const entry = ptySessions.get(session)!;
+    expect(entry.viewer).toBeTruthy();
+    const originalViewer = entry.viewer;
 
-    // Disconnect → starts teardown timer
-    ws1.close();
-    await wait(200);
-    expect((entry as any).teardownTimer).toBeTruthy();
-
-    // Reconnect within grace → cancels timer, reuses entry
+    // Second viewer connects — should get viewer_conflict
     const ws2 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
     ws2.binaryType = "arraybuffer";
-    await new Promise<void>((resolve, reject) => {
-      ws2.addEventListener("open", () => resolve());
-      ws2.addEventListener("error", () => reject(new Error("reconnect failed")));
+    const conflictPromise = new Promise<boolean>((resolve) => {
+      ws2.addEventListener("message", (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data));
+          if (msg.type === "viewer_conflict") resolve(true);
+        } catch {}
+      });
+      setTimeout(() => resolve(false), 2000);
     });
 
-    expect(ptySessions.get(session)).toBe(entry); // same reference
-    expect((entry as any).teardownTimer).toBeFalsy(); // timer cancelled
-    expect(entry.viewers.size).toBe(1);
+    await new Promise<void>((resolve, reject) => {
+      ws2.addEventListener("open", () => resolve());
+      ws2.addEventListener("error", () => reject(new Error("ws2 connect failed")));
+    });
 
-    ws2.close();
+    expect(await conflictPromise).toBe(true);
+    // Original viewer still active
+    expect(entry.viewer).toBe(originalViewer);
+
+    await closeWs(ws2);
+    await closeWs(ws1);
     await wait(100);
   });
 
@@ -444,57 +450,14 @@ describe("WS /ws/pty state transitions", () => {
         ws.addEventListener("error", () => reject(new Error(`cycle ${i} connect failed`)));
       });
       ws.close();
-      await wait(100);
+      await wait(200);
     }
 
-    // Should still be one entry (reused via grace period), not 5
+    // After last close, entry should be torn down (no grace period in single-viewer model)
     const entry = ptySessions.get(session);
     if (entry) {
-      expect(entry.alive).toBe(true);
-      expect(entry.viewers.size).toBe(0);
+      expect(entry.alive).toBe(false);
     }
-  });
-
-  test("PTY viewer count tracks correctly through add/remove", async () => {
-    const session = "dispatch-session";
-    const ptySessions = __getActivePtySessions();
-    ptySessions.delete(session);
-    await wait(50);
-
-    const sockets: WebSocket[] = [];
-
-    // Add 3 viewers
-    for (let i = 0; i < 3; i++) {
-      const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
-      ws.binaryType = "arraybuffer";
-      await new Promise<void>((resolve, reject) => {
-        ws.addEventListener("open", () => resolve());
-        ws.addEventListener("error", () => reject(new Error(`viewer ${i} failed`)));
-      });
-      sockets.push(ws);
-    }
-
-    const entry = ptySessions.get(session)!;
-    expect(entry.viewers.size).toBe(3);
-
-    // Remove 1 viewer — no teardown
-    sockets[0].close();
-    await wait(100);
-    expect(entry.viewers.size).toBe(2);
-    expect(entry.alive).toBe(true);
-    expect((entry as any).teardownTimer).toBeFalsy();
-
-    // Remove second
-    sockets[1].close();
-    await wait(100);
-    expect(entry.viewers.size).toBe(1);
-    expect(entry.alive).toBe(true);
-
-    // Remove last — triggers grace period
-    sockets[2].close();
-    await wait(200);
-    expect(entry.viewers.size).toBe(0);
-    expect((entry as any).teardownTimer).toBeTruthy();
   });
 });
 

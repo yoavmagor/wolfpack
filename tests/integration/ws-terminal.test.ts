@@ -361,10 +361,10 @@ describe("WS /ws/terminal session disappear & reconnect", () => {
   });
 });
 
-// ── PTY: grace period teardown ──
+// ── PTY: single-viewer teardown ──
 
-describe("WS /ws/pty teardown grace period", () => {
-  test("PTY entry survives brief viewer disconnect (not torn down immediately)", async () => {
+describe("WS /ws/pty single-viewer teardown", () => {
+  test("PTY entry torn down immediately on viewer disconnect", async () => {
     const ws1 = new WebSocket(`${baseWsUrl}/ws/pty?session=test-session`);
     ws1.binaryType = "arraybuffer";
 
@@ -375,163 +375,18 @@ describe("WS /ws/pty teardown grace period", () => {
 
     const ptySessions = __getActivePtySessions();
     expect(ptySessions.has("test-session")).toBe(true);
-    const entryBefore = ptySessions.get("test-session")!;
-    expect(entryBefore.alive).toBe(true);
-
-    // Disconnect the only viewer
-    ws1.close();
-    await wait(200);
-
-    // Entry should still be alive during 15s grace period
-    expect(ptySessions.has("test-session")).toBe(true);
-    expect(ptySessions.get("test-session")!.alive).toBe(true);
-
-    // Reconnect within grace period — reuses same entry
-    const ws2 = new WebSocket(`${baseWsUrl}/ws/pty?session=test-session`);
-    ws2.binaryType = "arraybuffer";
-
-    await new Promise<void>((resolve, reject) => {
-      ws2.addEventListener("open", () => resolve());
-      ws2.addEventListener("error", () => reject(new Error("ws/pty reconnect failed")));
-    });
-
-    const entryAfter = ptySessions.get("test-session");
-    expect(entryAfter).toBe(entryBefore); // same reference — not recreated
-    expect(entryAfter!.alive).toBe(true);
-
-    ws2.close();
-    await wait(100);
-  });
-
-  test("PTY entry torn down after grace period expires with no viewers", async () => {
-    // Use a unique session so we don't collide with other tests
-    const session = "another-session";
-    const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
-    ws.binaryType = "arraybuffer";
-
-    await new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve());
-      ws.addEventListener("error", () => reject(new Error("connect failed")));
-    });
-
-    const ptySessions = __getActivePtySessions();
-    expect(ptySessions.has(session)).toBe(true);
-    expect(ptySessions.get(session)!.alive).toBe(true);
-
-    // Disconnect — starts grace timer
-    ws.close();
-    await wait(200);
-
-    // Still alive during grace period
-    expect(ptySessions.has(session)).toBe(true);
-    expect(ptySessions.get(session)!.alive).toBe(true);
-
-    // Wait past the 15s grace period (plus buffer)
-    await wait(16_000);
-
-    // Now the entry should be torn down
-    const entry = ptySessions.get(session);
-    if (entry) {
-      // Map entry might still exist but should be dead
-      expect(entry.alive).toBe(false);
-    } else {
-      // Or removed entirely — also valid
-      expect(ptySessions.has(session)).toBe(false);
-    }
-  }, 20_000); // 20s timeout for this test
-});
-
-// ── PTY: multi-viewer lifecycle ──
-
-describe("WS /ws/pty multi-viewer", () => {
-  test("multiple viewers share same PTY entry", async () => {
-    const session = "test-session";
-    const ptySessions = __getActivePtySessions();
-
-    // Clear any stale entry from previous tests
-    ptySessions.delete(session);
-    await wait(50);
-
-    const ws1 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
-    ws1.binaryType = "arraybuffer";
-    await new Promise<void>((resolve, reject) => {
-      ws1.addEventListener("open", () => resolve());
-      ws1.addEventListener("error", () => reject(new Error("v1 connect failed")));
-    });
-
-    const entry1 = ptySessions.get(session);
-    expect(entry1).toBeDefined();
-    expect(entry1!.viewers.size).toBe(1);
-
-    // Second viewer joins
-    const ws2 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
-    ws2.binaryType = "arraybuffer";
-    await new Promise<void>((resolve, reject) => {
-      ws2.addEventListener("open", () => resolve());
-      ws2.addEventListener("error", () => reject(new Error("v2 connect failed")));
-    });
-
-    // Same entry, 2 viewers
-    expect(ptySessions.get(session)).toBe(entry1);
-    expect(entry1!.viewers.size).toBe(2);
-
-    // Third viewer
-    const ws3 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
-    ws3.binaryType = "arraybuffer";
-    await new Promise<void>((resolve, reject) => {
-      ws3.addEventListener("open", () => resolve());
-      ws3.addEventListener("error", () => reject(new Error("v3 connect failed")));
-    });
-
-    expect(entry1!.viewers.size).toBe(3);
-
-    // Disconnect all
-    ws1.close();
-    ws2.close();
-    ws3.close();
-    await wait(200);
-  });
-
-  test("partial viewer disconnect doesn't trigger teardown", async () => {
-    const session = "test-session";
-    const ptySessions = __getActivePtySessions();
-    ptySessions.delete(session);
-    await wait(50);
-
-    const ws1 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
-    ws1.binaryType = "arraybuffer";
-    await new Promise<void>((resolve, reject) => {
-      ws1.addEventListener("open", () => resolve());
-      ws1.addEventListener("error", () => reject(new Error("v1 failed")));
-    });
-
-    const ws2 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
-    ws2.binaryType = "arraybuffer";
-    await new Promise<void>((resolve, reject) => {
-      ws2.addEventListener("open", () => resolve());
-      ws2.addEventListener("error", () => reject(new Error("v2 failed")));
-    });
-
-    const entry = ptySessions.get(session)!;
-    expect(entry.viewers.size).toBe(2);
+    const entry = ptySessions.get("test-session")!;
     expect(entry.alive).toBe(true);
+    expect(entry.viewer).toBeTruthy();
 
-    // Disconnect one viewer — should NOT start teardown
+    // Disconnect — immediate teardown (no grace period)
     ws1.close();
     await wait(200);
 
-    // Entry still alive, one viewer remaining
-    expect(entry.alive).toBe(true);
-    expect(entry.viewers.size).toBe(1);
-
-    // No teardown timer should be pending (still has a viewer)
-    expect((entry as any).teardownTimer).toBeFalsy();
-
-    ws2.close();
-    await wait(200);
+    expect(entry.alive).toBe(false);
   });
 
-  test("last viewer disconnect starts grace period, not immediate teardown", async () => {
+  test("reconnect after teardown creates fresh entry", async () => {
     const session = "another-session";
     const ptySessions = __getActivePtySessions();
     ptySessions.delete(session);
@@ -544,77 +399,152 @@ describe("WS /ws/pty multi-viewer", () => {
       ws1.addEventListener("error", () => reject(new Error("connect failed")));
     });
 
+    const entry1 = ptySessions.get(session)!;
+
+    // Disconnect — immediate teardown
+    ws1.close();
+    await wait(200);
+    expect(entry1.alive).toBe(false);
+
+    // Reconnect — creates fresh entry (not reused)
     const ws2 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
     ws2.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      ws2.addEventListener("open", () => resolve());
+      ws2.addEventListener("error", () => reject(new Error("reconnect failed")));
+    });
+
+    const entry2 = ptySessions.get(session);
+    expect(entry2).toBeDefined();
+    expect(entry2!.alive).toBe(true);
+    // Fresh entry — not the same reference as torn-down entry
+    expect(entry2).not.toBe(entry1);
+
+    ws2.close();
+    await wait(200);
+  });
+});
+
+// ── PTY: viewer conflict protocol ──
+
+describe("WS /ws/pty viewer conflict", () => {
+  test("second viewer gets viewer_conflict message", async () => {
+    const session = "test-session";
+    const ptySessions = __getActivePtySessions();
+    ptySessions.delete(session);
+    await wait(50);
+
+    const ws1 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws1.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      ws1.addEventListener("open", () => resolve());
+      ws1.addEventListener("error", () => reject(new Error("v1 connect failed")));
+    });
+
+    const entry = ptySessions.get(session);
+    expect(entry).toBeDefined();
+    expect(entry!.viewer).toBeTruthy();
+    const originalViewer = entry!.viewer;
+
+    // Second viewer connects — should get conflict
+    const ws2 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws2.binaryType = "arraybuffer";
+    const conflictPromise = new Promise<boolean>((resolve) => {
+      ws2.addEventListener("message", (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data));
+          if (msg.type === "viewer_conflict") resolve(true);
+        } catch {}
+      });
+      setTimeout(() => resolve(false), 2000);
+    });
+
     await new Promise<void>((resolve, reject) => {
       ws2.addEventListener("open", () => resolve());
       ws2.addEventListener("error", () => reject(new Error("v2 connect failed")));
     });
 
-    const entry = ptySessions.get(session)!;
-    expect(entry.viewers.size).toBe(2);
+    expect(await conflictPromise).toBe(true);
+    // Original viewer remains
+    expect(ptySessions.get(session)!.viewer).toBe(originalViewer);
 
-    // Disconnect both — triggers grace period
-    ws1.close();
-    ws2.close();
-    await wait(300);
+    await closeWs(ws2);
+    await closeWs(ws1);
+    await wait(200);
+  });
 
-    // Should be alive (grace period, not immediate teardown)
-    expect(entry.alive).toBe(true);
-    expect(entry.viewers.size).toBe(0);
-    // teardownTimer should be set
-    expect((entry as any).teardownTimer).toBeTruthy();
+  test("take_control displaces original viewer", async () => {
+    const session = "test-session";
+    const ptySessions = __getActivePtySessions();
+    ptySessions.delete(session);
+    await wait(50);
 
-    // Reconnect cancels the timer
-    const ws3 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
-    ws3.binaryType = "arraybuffer";
+    const ws1 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws1.binaryType = "arraybuffer";
+    const ws1ClosePromise = new Promise<CloseEvent>((r) => ws1.addEventListener("close", r));
     await new Promise<void>((resolve, reject) => {
-      ws3.addEventListener("open", () => resolve());
-      ws3.addEventListener("error", () => reject(new Error("reconnect failed")));
+      ws1.addEventListener("open", () => resolve());
+      ws1.addEventListener("error", () => reject(new Error("v1 failed")));
     });
 
-    expect(ptySessions.get(session)).toBe(entry); // same entry reused
-    expect((entry as any).teardownTimer).toBeFalsy(); // timer cleared
+    // Second viewer connects, waits for conflict, then takes control
+    const ws2 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws2.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      ws2.addEventListener("open", () => resolve());
+      ws2.addEventListener("error", () => reject(new Error("v2 failed")));
+    });
 
-    ws3.close();
-    await wait(100);
+    // Wait for conflict message
+    await new Promise<void>((resolve) => {
+      ws2.addEventListener("message", (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data));
+          if (msg.type === "viewer_conflict") resolve();
+        } catch {}
+      });
+    });
+
+    // Take control
+    ws2.send(JSON.stringify({ type: "take_control" }));
+
+    // Original viewer should be displaced (close code 4002)
+    const ev = await Promise.race([
+      ws1ClosePromise,
+      wait(3000).then(() => { throw new Error("timeout waiting for ws1 close"); }),
+    ]) as CloseEvent;
+    expect(ev.code).toBe(4002);
+
+    await closeWs(ws2);
+    await wait(200);
   });
 });
 
 // ── PTY: rapid spawn failure edge cases ──
 
 describe("WS /ws/pty rapid spawn failure edge cases", () => {
-  test("concurrent viewers to dead session all get 4001", async () => {
+  test("first viewer to dead session gets 4001, second gets conflict", async () => {
     const ptySessions = __getActivePtySessions();
     ptySessions.delete("test-session");
     await wait(50);
 
-    // Open all connections first, then send resize to trigger spawn
-    const sockets: WebSocket[] = [];
-    const closePromises: Promise<CloseEvent>[] = [];
+    // First viewer connects and triggers spawn
+    const ws1 = new WebSocket(`${baseWsUrl}/ws/pty?session=test-session`);
+    ws1.binaryType = "arraybuffer";
+    const close1 = new Promise<CloseEvent>((r) => ws1.addEventListener("close", r));
+    await new Promise<void>((resolve, reject) => {
+      ws1.addEventListener("open", () => resolve());
+      ws1.addEventListener("error", () => reject(new Error("connect failed")));
+    });
 
-    for (let i = 0; i < 3; i++) {
-      const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=test-session`);
-      ws.binaryType = "arraybuffer";
-      closePromises.push(new Promise<CloseEvent>((r) => ws.addEventListener("close", r)));
-      await new Promise<void>((resolve, reject) => {
-        ws.addEventListener("open", () => resolve());
-        ws.addEventListener("error", () => reject(new Error(`connect ${i} failed`)));
-      });
-      sockets.push(ws);
-    }
+    // Trigger spawn — will fail (no real tmux)
+    ws1.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
 
-    // All connected — trigger spawn from first viewer (others are already joined)
-    sockets[0].send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
-
-    const events = await Promise.race([
-      Promise.all(closePromises),
-      wait(8000).then(() => { throw new Error("timeout waiting for close"); }),
-    ]) as CloseEvent[];
-
-    for (const ev of events) {
-      expect(ev.code).toBe(4001);
-    }
+    const ev = await Promise.race([
+      close1,
+      wait(5000).then(() => { throw new Error("timeout waiting for close"); }),
+    ]) as CloseEvent;
+    expect(ev.code).toBe(4001);
   });
 
   test("spawn failure cleans up PTY entry", async () => {
@@ -651,6 +581,10 @@ describe("WS /ws/pty rapid spawn failure edge cases", () => {
   });
 
   test("viewer that disconnects before spawn completes is handled gracefully", async () => {
+    const ptySessions = __getActivePtySessions();
+    ptySessions.delete("test-session");
+    await wait(50);
+
     const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=test-session`);
     ws.binaryType = "arraybuffer";
 
@@ -663,12 +597,10 @@ describe("WS /ws/pty rapid spawn failure edge cases", () => {
     ws.close();
     await wait(300);
 
-    // Should not leave orphaned entries permanently (grace period will clean up)
-    // Entry might still exist in grace period — that's fine, it's alive but empty
-    const ptySessions = __getActivePtySessions();
+    // Single-viewer: immediate teardown on disconnect
     const entry = ptySessions.get("test-session");
     if (entry) {
-      expect(entry.viewers.size).toBe(0);
+      expect(entry.alive).toBe(false);
     }
   });
 });

@@ -16,3 +16,10 @@
 - `setConnState()` extended with `"displaced"` state for the 4002 close code
 - CSS: `.viewer-conflict-overlay` with orange theme, positioned absolute over terminal/grid cell
 - All 452 unit tests pass
+
+## Task 3: Remove dead multi-viewer test code
+- Source code (`websocket.ts`, `public/index.html`) already refactored in Tasks 1-2 — no multi-viewer code remaining
+- Rewrote `ws-dispatch.test.ts` PTY tests: replaced `entry.viewers.size` assertions with `entry.viewer` checks, replaced grace period test with conflict protocol test
+- Rewrote `ws-terminal.test.ts`: replaced multi-viewer lifecycle + grace period tests with single-viewer teardown + conflict protocol tests
+- Rewrote `prompt-reconnect.test.ts`: replaced grace period state transition tests with immediate teardown assertions
+- 720 tests pass (unit + integration + snapshot), 0 failures
