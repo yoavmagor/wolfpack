@@ -1921,6 +1921,9 @@
           font-size: 11px !important;
           letter-spacing: 1.5px !important;
         }
+        .sidebar-sessions .card-status {
+          margin-top: 1px;
+        }
         .sidebar-sessions .card-preview {
           -webkit-line-clamp: 1 !important;
           font-size: 10px !important;
@@ -6400,7 +6403,8 @@
           <div class="dot ${ui.dot}" title="${ui.title}"></div>
           <div class="card-info">
             <div class="card-name">${esc(s.name)}</div>
-            <div class="card-preview"><span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span> ${esc(lastLine)}</div>
+            <div class="card-status"><span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
+            <div class="card-preview">${esc(lastLine)}</div>
           </div>
           ${gridBtn}
           <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event${machineUrl ? ", '" + escAttr(machineUrl) + "'" : ''})">&times;</button>
