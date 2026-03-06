@@ -8,6 +8,7 @@ CLAUDE.md
 *.gif
 !docs/*.gif
 *.png
+!docs/*.png
 *.jpeg
 *.jpg
 *.svg
