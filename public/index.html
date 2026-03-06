@@ -1209,6 +1209,100 @@
         padding: 4px;
       }
 
+      /* ── Multi-terminal grid ── */
+      #desktop-grid-container {
+        display: none;
+        flex: 1;
+        min-height: 0;
+        height: 0;
+        background: #0a0a0a;
+        overflow: hidden;
+      }
+      #desktop-grid-container.active {
+        display: grid;
+        gap: 2px;
+        height: auto;
+      }
+      /* Auto-layout classes set by JS */
+      #desktop-grid-container.grid-2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+      #desktop-grid-container.grid-3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+      #desktop-grid-container.grid-3 .grid-cell:last-child { grid-column: 1 / -1; }
+      #desktop-grid-container.grid-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+      #desktop-grid-container.grid-5 { grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr; grid-template-rows: 1fr 1fr; }
+      #desktop-grid-container.grid-5 .grid-cell:nth-child(1) { grid-column: 1 / 3; }
+      #desktop-grid-container.grid-5 .grid-cell:nth-child(2) { grid-column: 3 / 5; }
+      #desktop-grid-container.grid-5 .grid-cell:nth-child(3) { grid-column: 5 / 7; }
+      #desktop-grid-container.grid-5 .grid-cell:nth-child(4) { grid-column: 1 / 4; }
+      #desktop-grid-container.grid-5 .grid-cell:nth-child(5) { grid-column: 4 / 7; }
+      #desktop-grid-container.grid-6 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+      .grid-cell {
+        position: relative;
+        overflow: hidden;
+        background: #0a0a0a;
+        border: 1px solid #1a1a1a;
+        transition: border-color 0.15s ease;
+        min-height: 0;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .grid-cell.grid-focused {
+        border-color: rgba(0,255,65,0.6);
+        box-shadow: inset 0 0 12px rgba(0,255,65,0.1), 0 0 8px rgba(0,255,65,0.15);
+      }
+      .grid-cell .xterm {
+        flex: 1;
+        min-height: 0;
+        padding: 0 2px;
+        overflow: hidden;
+      }
+      .grid-cell-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 4px 8px;
+        background: #111;
+        border-bottom: 1px solid #1a1a1a;
+        flex-shrink: 0;
+        height: 26px;
+      }
+      .grid-cell-label {
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: rgba(255,255,255,0.3);
+        pointer-events: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .grid-cell.grid-focused .grid-cell-label {
+        color: rgba(0,255,65,0.7);
+      }
+      .grid-cell.grid-focused .grid-cell-header {
+        border-bottom-color: rgba(0,255,65,0.2);
+      }
+      .grid-cell-close {
+        font-size: 18px;
+        color: rgba(255,100,100,0.6);
+        cursor: pointer;
+        padding: 2px 8px;
+        line-height: 1;
+        opacity: 0.8;
+        transition: opacity 0.15s, color 0.15s, background 0.15s;
+        flex-shrink: 0;
+        border-radius: 3px;
+      }
+      .grid-cell:hover .grid-cell-close {
+        opacity: 1;
+      }
+      .grid-cell-close:hover {
+        color: #ff4444;
+        background: rgba(255,60,60,0.15);
+      }
+
       /* ── Session drawer ── */
       #session-chip {
         display: none;
@@ -1827,6 +1921,9 @@
           font-size: 11px !important;
           letter-spacing: 1.5px !important;
         }
+        .sidebar-sessions .card-status {
+          margin-top: 1px;
+        }
         .sidebar-sessions .card-preview {
           -webkit-line-clamp: 1 !important;
           font-size: 10px !important;
@@ -1835,18 +1932,78 @@
           width: 7px !important;
           height: 7px !important;
         }
-        .sidebar-sessions .kill-btn {
-          opacity: 0;
-          transition: opacity 0.15s;
+        .sidebar-sessions .kill-btn,
+        .sidebar-sessions .grid-btn {
+          opacity: 0.7;
+          transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 4px;
+          color: #888;
+          font-size: 12px;
+          font-weight: 700;
+          font-family: inherit;
+          cursor: pointer;
+          padding: 2px 7px;
+          flex-shrink: 0;
+          letter-spacing: 0.5px;
+          line-height: 1.4;
         }
-        .sidebar-sessions .card:hover .kill-btn {
+        .sidebar-sessions .card:hover .kill-btn,
+        .sidebar-sessions .card:hover .grid-btn {
           opacity: 1;
+        }
+        .sidebar-sessions .kill-btn {
+          color: #cc3333;
+          border-color: rgba(200,50,50,0.2);
+        }
+        .sidebar-sessions .kill-btn:hover {
+          background: rgba(255,60,60,0.12);
+          border-color: rgba(255,60,60,0.4);
+        }
+        .sidebar-sessions .grid-btn:hover {
+          color: #00ff41;
+          border-color: rgba(0,255,65,0.4);
+          background: rgba(0,255,65,0.08);
+        }
+        .sidebar-sessions .grid-btn.in-grid {
+          opacity: 1;
+          color: #00ff41;
+          border-color: rgba(0,255,65,0.5);
+          background: rgba(0,255,65,0.1);
+        }
+        .sidebar-sessions .grid-btn.in-grid:hover {
+          background: rgba(255,60,60,0.1);
+          border-color: rgba(255,60,60,0.4);
+          color: #ff4444;
         }
 
         /* Active session highlight in sidebar */
         .sidebar-sessions .card.sidebar-active {
-          border-left-color: #00ff41 !important;
-          background: linear-gradient(90deg, rgba(0,255,65,0.06) 0%, transparent 60%) !important;
+          border: 1px solid rgba(0,255,65,0.35) !important;
+          border-left: 2px solid #00ff41 !important;
+          background: linear-gradient(90deg, rgba(0,255,65,0.08) 0%, rgba(0,255,65,0.02) 40%, transparent 100%) !important;
+          box-shadow: 0 0 12px rgba(0,255,65,0.15), 0 0 4px rgba(0,255,65,0.1) !important;
+          transform: scale(1.02);
+          z-index: 1;
+          position: relative;
+        }
+
+        /* In-grid but not focused session */
+        .sidebar-sessions .card.sidebar-grid {
+          border: 1px solid rgba(0,255,65,0.15) !important;
+          border-left: 2px solid rgba(0,255,65,0.5) !important;
+          background: linear-gradient(90deg, rgba(0,255,65,0.04) 0%, transparent 50%) !important;
+          box-shadow: 0 0 8px rgba(0,255,65,0.08) !important;
+        }
+
+        /* Dim inactive sessions */
+        .sidebar-sessions .card:not(.sidebar-active):not(.sidebar-grid) {
+          opacity: 0.6;
+          transition: opacity 0.15s ease;
+        }
+        .sidebar-sessions .card:not(.sidebar-active):not(.sidebar-grid):hover {
+          opacity: 0.85;
         }
 
         /* Sidebar machine headers */
@@ -2548,6 +2705,7 @@
       <div id="terminal"></div>
       <button id="jump-to-live" onclick="jumpToLive()">&#9660; Live</button>
       <div id="desktop-terminal-container"></div>
+      <div id="desktop-grid-container"></div>
       <div id="cmd-palette"></div>
       <div id="kb-accessory">
         <button class="kb-key kb-special" data-key="Enter">Enter</button>
@@ -2963,6 +3121,350 @@
       let desktopWs = null;
       let desktopResizeHandler = null;
       let useDesktopTerminal = false;
+
+      // ── Multi-terminal grid state ──
+      let gridSessions = [];        // [{session, machine, term, ws, fitAddon, searchAddon, reconnectTimer, reconnectDelay, reconnectStartedAt, retryBlocked}]
+      let gridFocusIndex = 0;       // which cell is interactive
+      const MAX_GRID_CELLS = 6;
+
+      function isGridActive() { return gridSessions.length >= 2; }
+
+      function gridLayoutClass(count) {
+        if (count >= 2 && count <= 6) return "grid-" + count;
+        return "grid-2";
+      }
+
+      function updateGridLayout() {
+        const container = document.getElementById("desktop-grid-container");
+        if (!isGridActive()) {
+          container.className = "";
+          container.style.display = "";
+          return;
+        }
+        // Remove old grid-N classes, add current; clear any inline style override
+        container.className = "active " + gridLayoutClass(gridSessions.length);
+        container.style.display = "";
+        // Ensure single-terminal container is hidden
+        document.getElementById("desktop-terminal-container").style.display = "none";
+        // Hide mobile elements
+        document.getElementById("terminal").style.display = "none";
+        document.getElementById("input-bar").style.display = "none";
+        document.getElementById("cmd-palette").style.display = "none";
+        document.getElementById("kb-accessory").classList.remove("visible");
+      }
+
+      function renderGridCells() {
+        const container = document.getElementById("desktop-grid-container");
+        container.innerHTML = "";
+        // Install resize handler if not yet
+        if (!gridResizeHandler) {
+          gridResizeHandler = () => { if (isGridActive()) fitAllGridCells(); };
+          window.addEventListener("resize", gridResizeHandler);
+        }
+        gridSessions.forEach((gs, idx) => {
+          const cell = document.createElement("div");
+          cell.className = "grid-cell" + (idx === gridFocusIndex ? " grid-focused" : "");
+          cell.dataset.gridIndex = idx;
+          cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div>';
+          cell.addEventListener("click", (e) => {
+            if (e.target.classList.contains("grid-cell-close")) return;
+            setGridFocus(idx);
+          });
+          cell.querySelector(".grid-cell-close").addEventListener("click", (e) => {
+            e.stopPropagation();
+            removeFromGrid(idx);
+          });
+          container.appendChild(cell);
+          // Mount xterm if not yet mounted
+          if (!gs.term) {
+            const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+            const termFontFamily = wpSettings.termFont === "alt"
+              ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
+              : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
+            const term = new Terminal({
+              cursorBlink: idx === gridFocusIndex,
+              disableStdin: idx !== gridFocusIndex,
+              fontSize: Math.max(tp.fontSize - 2, 10),
+              lineHeight: tp.lineHeight,
+              fontFamily: termFontFamily,
+              theme: {
+                background: "#0a0a0a",
+                foreground: "#e0e0e0",
+                cursor: "#e0e0e0",
+                selectionBackground: "rgba(255,255,255,0.2)",
+              },
+              scrollback: 3000,
+              allowProposedApi: true,
+            });
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            const searchAddon = new SearchAddon.SearchAddon();
+            term.loadAddon(searchAddon);
+            try {
+              const unicodeAddon = new Unicode11Addon.Unicode11Addon();
+              term.loadAddon(unicodeAddon);
+              term.unicode.activeVersion = '11';
+            } catch {}
+            term.open(cell);
+            try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch {}
+            // Don't fit yet — wait for layout to settle. WS connects after final fit.
+            // Wire stdin for focused cell
+            term.onData((data) => {
+              if (gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs) {
+                gs.ws.send(new TextEncoder().encode(data));
+              }
+            });
+            term.onBinary((data) => {
+              if (gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs) {
+                const buf = new Uint8Array(data.length);
+                for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
+                gs.ws.send(buf);
+              }
+            });
+            term.onResize(({ cols, rows }) => {
+              if (gs.ws && gs.ws.readyState === WebSocket.OPEN) {
+                gs.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+              }
+            });
+            gs.term = term;
+            gs.fitAddon = fitAddon;
+            gs.searchAddon = searchAddon;
+            gs._needsConnect = true;  // connect after final fit
+          } else {
+            // Re-attach existing terminal to new cell DOM
+            cell.appendChild(gs.term.element);
+          }
+        });
+        updateGridLayout();
+        // Single delayed fit + connect — only send ONE resize to PTY after layout settles
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            fitAllGridCells();
+            // Now connect any new WebSockets (PTY gets correct size from the start)
+            gridSessions.forEach(gs => {
+              if (gs._needsConnect) {
+                delete gs._needsConnect;
+                connectGridCellWs(gs);
+              }
+            });
+          }, 100);
+        });
+      }
+
+      function connectGridCellWs(gs) {
+        if (gs.ws && gs.ws.readyState <= WebSocket.OPEN) return;
+        let wsUrl;
+        if (gs.machine) {
+          const remote = new URL(gs.machine);
+          const proto = remote.protocol === "https:" ? "wss:" : "ws:";
+          wsUrl = proto + "//" + remote.host + "/ws/pty?session=" + encodeURIComponent(gs.session);
+        } else {
+          const proto = location.protocol === "https:" ? "wss:" : "ws:";
+          wsUrl = proto + "//" + location.host + "/ws/pty?session=" + encodeURIComponent(gs.session);
+        }
+        const ws = new WebSocket(wsUrl);
+        ws.binaryType = "arraybuffer";
+        gs.ws = ws;
+        ws.onopen = () => {
+          gs.reconnectDelay = RECONNECT_BASE_DELAY_MS;
+          gs.reconnectStartedAt = 0;
+          gs.retryBlocked = false;
+          if (gs.fitAddon && gs.term) {
+            try { gs.fitAddon.fit(); } catch {}
+            ws.send(JSON.stringify({ type: "resize", cols: gs.term.cols, rows: gs.term.rows }));
+          }
+        };
+        ws.onmessage = (ev) => {
+          if (gs.term) gs.term.write(new Uint8Array(ev.data));
+        };
+        ws.onclose = () => {
+          if (gs.ws === ws) gs.ws = null;
+          // Only reconnect if still in grid
+          if (gridSessions.includes(gs) && !gs.retryBlocked) {
+            scheduleGridCellReconnect(gs);
+          }
+        };
+        ws.onerror = () => {};
+      }
+
+      function scheduleGridCellReconnect(gs) {
+        if (gs.reconnectTimer) return;
+        if (gs.retryBlocked) return;
+        if (!gridSessions.includes(gs)) return;
+        const now = Date.now();
+        if (!gs.reconnectStartedAt) gs.reconnectStartedAt = now;
+        const elapsed = now - gs.reconnectStartedAt;
+        if (elapsed >= RECONNECT_BUDGET_MS) { gs.retryBlocked = true; return; }
+        const jitterMs = Math.floor(Math.random() * 200);
+        const delayMs = Math.min((gs.reconnectDelay || RECONNECT_BASE_DELAY_MS) + jitterMs, RECONNECT_MAX_DELAY_MS);
+        gs.reconnectTimer = setTimeout(() => {
+          gs.reconnectTimer = null;
+          if (gridSessions.includes(gs) && (!gs.ws || gs.ws.readyState === WebSocket.CLOSED)) {
+            connectGridCellWs(gs);
+          }
+        }, delayMs);
+        gs.reconnectDelay = Math.min(Math.floor((gs.reconnectDelay || RECONNECT_BASE_DELAY_MS) * 1.8), RECONNECT_MAX_DELAY_MS);
+      }
+
+      function setGridFocus(idx) {
+        if (idx < 0 || idx >= gridSessions.length) return;
+        const prev = gridFocusIndex;
+        gridFocusIndex = idx;
+        // Update xterm stdin/cursor for old + new focus
+        gridSessions.forEach((gs, i) => {
+          if (!gs.term) return;
+          const focused = i === idx;
+          gs.term.options.disableStdin = !focused;
+          gs.term.options.cursorBlink = focused;
+        });
+        // Update cell border highlights
+        const cells = document.querySelectorAll("#desktop-grid-container .grid-cell");
+        cells.forEach((cell, i) => {
+          cell.classList.toggle("grid-focused", i === idx);
+        });
+        // Sync sidebar highlights
+        const focusedGs = gridSessions[idx];
+        if (focusedGs) {
+          currentSession = focusedGs.session;
+          currentMachine = focusedGs.machine || "";
+          renderSidebar();
+          // Focus the terminal
+          focusedGs.term?.focus();
+        }
+      }
+
+      function addToGrid(session, machine) {
+        if (!isDesktop()) return;
+        if (gridSessions.length >= MAX_GRID_CELLS) return;
+        // Already in grid?
+        if (gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
+        const gs = {
+          session,
+          machine: machine || "",
+          term: null,
+          ws: null,
+          fitAddon: null,
+          searchAddon: null,
+          reconnectTimer: null,
+          reconnectDelay: RECONNECT_BASE_DELAY_MS,
+          reconnectStartedAt: 0,
+          retryBlocked: false,
+        };
+        gridSessions.push(gs);
+        // If transitioning from single to grid, add current session too
+        if (gridSessions.length === 1 && currentSession) {
+          const alreadyAdded = session === currentSession && (machine || "") === currentMachine;
+          if (!alreadyAdded) {
+            gridSessions.unshift({
+              session: currentSession,
+              machine: currentMachine,
+              term: null, ws: null, fitAddon: null, searchAddon: null,
+              reconnectTimer: null, reconnectDelay: RECONNECT_BASE_DELAY_MS,
+              reconnectStartedAt: 0, retryBlocked: false,
+            });
+          }
+        }
+        if (isGridActive()) {
+          // Destroy single-terminal mode
+          destroyDesktopTerminal();
+          gridFocusIndex = gridSessions.length - 1;
+          renderGridCells();
+          fitAllGridCells();
+          renderSidebar();
+        } else {
+          // Only 1 session queued — no current session to pair with.
+          // Fall back to just opening it as a single terminal.
+          gridSessions = [];
+          openSession(session, machine || undefined);
+        }
+      }
+
+      function removeFromGrid(idx) {
+        if (idx < 0 || idx >= gridSessions.length) return;
+        const gs = gridSessions[idx];
+        // Cleanup
+        if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
+        if (gs.ws) { try { gs.ws.close(); } catch {} }
+        if (gs.term) { try { gs.term.dispose(); } catch {} }
+        gridSessions.splice(idx, 1);
+        // Adjust focus
+        if (gridFocusIndex >= gridSessions.length) gridFocusIndex = Math.max(0, gridSessions.length - 1);
+        if (gridSessions.length <= 1) {
+          // Exit grid mode → single terminal
+          exitGridMode();
+        } else {
+          renderGridCells();
+          fitAllGridCells();
+          setGridFocus(gridFocusIndex);
+        }
+        renderSidebar();
+      }
+
+      function exitGridMode() {
+        // Remove grid resize handler
+        if (gridResizeHandler) {
+          window.removeEventListener("resize", gridResizeHandler);
+          gridResizeHandler = null;
+        }
+        // Determine which session to restore before destroying
+        const remaining = gridSessions.length >= 1 ? gridSessions[0] : null;
+        const restoreSession = remaining ? remaining.session : currentSession;
+        const restoreMachine = remaining ? (remaining.machine || "") : currentMachine;
+        // Destroy all grid sessions
+        for (const gs of gridSessions) {
+          if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
+          if (gs.ws) { try { gs.ws.close(); } catch {} }
+          if (gs.term) { try { gs.term.dispose(); } catch {} }
+        }
+        gridSessions = [];
+        gridFocusIndex = 0;
+        // Fully clean up grid container
+        const container = document.getElementById("desktop-grid-container");
+        container.className = "";
+        container.style.display = "";
+        container.innerHTML = "";
+        // Ensure single-terminal container is reset
+        const dtc = document.getElementById("desktop-terminal-container");
+        dtc.style.display = "none";
+        dtc.innerHTML = "";
+        // Clear desktopTerm reference in case it's stale
+        desktopTerm = null;
+        desktopFitAddon = null;
+        desktopWs = null;
+        desktopSearchAddon = null;
+        // Restore single-terminal mode
+        if (restoreSession) {
+          currentSession = restoreSession;
+          currentMachine = restoreMachine;
+          useDesktopTerminal = true;
+          initDesktopTerminal();
+          renderSidebar();
+        }
+      }
+
+      function fitAllGridCells() {
+        for (const gs of gridSessions) {
+          if (gs.fitAddon) {
+            try { gs.fitAddon.fit(); } catch {}
+          }
+        }
+      }
+
+      let gridResizeHandler = null;
+
+      function isSessionInGrid(session, machine) {
+        return gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""));
+      }
+
+      function toggleGrid(session, machine, event) {
+        if (event) { event.stopPropagation(); event.preventDefault(); }
+        if (isSessionInGrid(session, machine)) {
+          const idx = gridSessions.findIndex(gs => gs.session === session && (gs.machine || "") === (machine || ""));
+          if (idx !== -1) removeFromGrid(idx);
+        } else {
+          addToGrid(session, machine);
+        }
+      }
 
       function isDesktop() {
         return window.innerWidth > 768;
@@ -3936,6 +4438,16 @@
             const sb = document.getElementById("desktop-sidebar");
             if (sb) { sb.classList.remove("collapsed"); sidebarCollapsed = false; }
           }
+        }
+        // On desktop with grid active, clicking a card focuses or exits grid
+        if (isDesktop() && isGridActive()) {
+          const gridIdx = gridSessions.findIndex(gs => gs.session === name && (gs.machine || "") === (machineUrl || ""));
+          if (gridIdx !== -1) {
+            setGridFocus(gridIdx);
+            return;
+          }
+          // Not in grid — exit grid mode and open normally
+          exitGridMode();
         }
         // On desktop, if already in terminal view, do a session switch
         if (isDesktop() && currentView === "terminal" && currentSession) {
@@ -5026,6 +5538,8 @@
           return;
         }
         closeDrawer(true);
+        // Exit grid mode if active
+        if (isGridActive()) exitGridMode();
         // Suspend current mode (cache terminal state)
         if (useDesktopTerminal) {
           destroyDesktopTerminal();
@@ -5361,6 +5875,69 @@
         else if (currentView === "projects") { e.preventDefault(); showView(viewBeforePicker); loadSessions(); }
         else if (currentView === "ralph-start" || currentView === "ralph-detail" || currentView === "settings") { e.preventDefault(); backToSessions(); }
       });
+
+      // ── Desktop keyboard shortcuts (capture phase, before xterm) ──
+      document.addEventListener("keydown", (e) => {
+        if (!isDesktop()) return;
+        const mod = e.metaKey || e.ctrlKey;
+        if (!mod) return;
+
+        // Cmd+ArrowUp / Cmd+ArrowDown — previous/next session (grid focus or sidebar)
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (isGridActive()) {
+            const count = gridSessions.length;
+            const next = e.key === "ArrowDown"
+              ? (gridFocusIndex + 1) % count
+              : (gridFocusIndex - 1 + count) % count;
+            setGridFocus(next);
+            return;
+          }
+          if (!allSessions.length) return;
+          let curIdx = allSessions.findIndex(s => s.name === currentSession && (s.machineUrl || "") === currentMachine);
+          if (curIdx === -1) curIdx = e.key === "ArrowDown" ? -1 : allSessions.length;
+          const next = e.key === "ArrowDown"
+            ? (curIdx + 1) % allSessions.length
+            : (curIdx - 1 + allSessions.length) % allSessions.length;
+          const s = allSessions[next];
+          openSession(s.name, s.machineUrl || undefined);
+          return;
+        }
+
+        // Cmd+T — new session (project picker)
+        if (e.key === "t") {
+          e.preventDefault();
+          e.stopPropagation();
+          showProjectPicker();
+          return;
+        }
+
+        // Cmd+K — clear terminal (focused grid cell or single terminal)
+        if (e.key === "k") {
+          e.preventDefault();
+          e.stopPropagation();
+          if (isGridActive()) {
+            const gs = gridSessions[gridFocusIndex];
+            if (gs && gs.term) gs.term.clear();
+          } else if (desktopTerm) {
+            desktopTerm.clear();
+          }
+          return;
+        }
+
+        // Cmd+ArrowLeft/Right — grid cell navigation (left/right within row)
+        if (isGridActive() && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+          e.preventDefault();
+          e.stopPropagation();
+          const count = gridSessions.length;
+          let newIdx = gridFocusIndex;
+          if (e.key === "ArrowLeft") newIdx = Math.max(0, gridFocusIndex - 1);
+          else if (e.key === "ArrowRight") newIdx = Math.min(count - 1, gridFocusIndex + 1);
+          if (newIdx !== gridFocusIndex) setGridFocus(newIdx);
+          return;
+        }
+      }, true);
 
       document
         .getElementById("new-project-name")
@@ -5808,16 +6385,23 @@
         const lastLine = s.lastLine || "";
         const ui = triageUi(s.triage);
         const isActive = s.name === currentSession && machineUrl === currentMachine;
-        const activeClass = isActive ? " sidebar-active" : "";
+        const inGrid = isSessionInGrid(s.name, machineUrl);
+        const activeClass = isActive ? " sidebar-active" : (inGrid ? " sidebar-grid" : "");
         const onclick = machineUrl
           ? `openSession('${escAttr(s.name)}', '${escAttr(machineUrl)}')`
           : `openSession('${escAttr(s.name)}')`;
+        const gridBtnOnclick = machineUrl
+          ? `toggleGrid('${escAttr(s.name)}', '${escAttr(machineUrl)}', event)`
+          : `toggleGrid('${escAttr(s.name)}', '', event)`;
+        const gridBtn = `<button class="grid-btn${inGrid ? ' in-grid' : ''}" onclick="${gridBtnOnclick}" title="${inGrid ? 'Remove from grid' : 'Add to grid'}">${inGrid ? '⊠' : '+'}</button>`;
         return `<div class="card ${ui.card}${activeClass}" onclick="${onclick}">
           <div class="dot ${ui.dot}" title="${ui.title}"></div>
           <div class="card-info">
-            <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
+            <div class="card-name">${esc(s.name)}</div>
+            <div class="card-status"><span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
             <div class="card-preview">${esc(lastLine)}</div>
           </div>
+          ${gridBtn}
           <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event${machineUrl ? ", '" + escAttr(machineUrl) + "'" : ''})">&times;</button>
         </div>`;
       }

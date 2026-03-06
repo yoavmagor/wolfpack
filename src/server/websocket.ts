@@ -216,6 +216,10 @@ export function handlePtyWs(ws: WebSocket, session: string): void {
               existing.proc.terminal!.resize(Math.max(20, cols - 1), rows);
             } catch {}
             existing.proc.terminal!.resize(cols, rows);
+            // Also force tmux resize — Claude Code may have re-applied window-size=manual
+            exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 })
+              .then(() => exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 }))
+              .catch(() => {});
           }
         } else if (existing.proc) {
           if (Buffer.isBuffer(raw) && raw.length > 16384) return;
@@ -336,6 +340,9 @@ export function handlePtyWs(ws: WebSocket, session: string): void {
             spawnPty(cols, rows);
           } else {
             entry.proc.terminal!.resize(cols, rows);
+            exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 })
+              .then(() => exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 }))
+              .catch(() => {});
           }
         }
       } else if (entry.proc) {
