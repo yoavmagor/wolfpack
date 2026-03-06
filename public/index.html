@@ -5895,8 +5895,8 @@
             return;
           }
           if (!allSessions.length) return;
-          const curIdx = allSessions.findIndex(s => s.name === currentSession && (s.machineUrl || "") === currentMachine);
-          if (curIdx === -1) return;
+          let curIdx = allSessions.findIndex(s => s.name === currentSession && (s.machineUrl || "") === currentMachine);
+          if (curIdx === -1) curIdx = e.key === "ArrowDown" ? -1 : allSessions.length;
           const next = e.key === "ArrowDown"
             ? (curIdx + 1) % allSessions.length
             : (curIdx - 1 + allSessions.length) % allSessions.length;
