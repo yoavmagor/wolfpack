@@ -1927,28 +1927,39 @@
         .sidebar-sessions .kill-btn,
         .sidebar-sessions .grid-btn {
           opacity: 0;
-          transition: opacity 0.15s;
+          transition: opacity 0.15s, background 0.15s, color 0.15s;
+          background: none;
+          border: 1px solid transparent;
+          border-radius: 4px;
+          color: #555;
+          font-size: 11px;
+          font-weight: 700;
+          font-family: inherit;
+          cursor: pointer;
+          padding: 1px 5px;
+          flex-shrink: 0;
+          letter-spacing: 0.5px;
+          line-height: 1.4;
         }
         .sidebar-sessions .card:hover .kill-btn,
         .sidebar-sessions .card:hover .grid-btn {
           opacity: 1;
         }
-        .sidebar-sessions .grid-btn {
-          background: none;
-          border: none;
-          color: #555;
-          font-size: 14px;
-          cursor: pointer;
-          padding: 2px 4px;
-          flex-shrink: 0;
-          transition: color 0.15s;
-        }
         .sidebar-sessions .grid-btn:hover {
           color: #00ff41;
+          border-color: rgba(0,255,65,0.4);
+          background: rgba(0,255,65,0.06);
         }
         .sidebar-sessions .grid-btn.in-grid {
           opacity: 1;
           color: #00ff41;
+          border-color: rgba(0,255,65,0.5);
+          background: rgba(0,255,65,0.1);
+        }
+        .sidebar-sessions .grid-btn.in-grid:hover {
+          background: rgba(255,60,60,0.1);
+          border-color: rgba(255,60,60,0.4);
+          color: #ff4444;
         }
 
         /* Active session highlight in sidebar */
@@ -6365,7 +6376,7 @@
         const gridBtnOnclick = machineUrl
           ? `toggleGrid('${escAttr(s.name)}', '${escAttr(machineUrl)}', event)`
           : `toggleGrid('${escAttr(s.name)}', '', event)`;
-        const gridBtn = `<button class="grid-btn${inGrid ? ' in-grid' : ''}" onclick="${gridBtnOnclick}" title="${inGrid ? 'Remove from grid' : 'Add to grid'}">&#8862;</button>`;
+        const gridBtn = `<button class="grid-btn${inGrid ? ' in-grid' : ''}" onclick="${gridBtnOnclick}" title="${inGrid ? 'Remove from grid' : 'Add to grid'}">${inGrid ? '⊠' : '+'}</button>`;
         return `<div class="card ${ui.card}${activeClass}" onclick="${onclick}">
           <div class="dot ${ui.dot}" title="${ui.title}"></div>
           <div class="card-info">
