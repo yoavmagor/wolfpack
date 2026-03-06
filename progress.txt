@@ -23,3 +23,10 @@
 - Rewrote `ws-terminal.test.ts`: replaced multi-viewer lifecycle + grace period tests with single-viewer teardown + conflict protocol tests
 - Rewrote `prompt-reconnect.test.ts`: replaced grace period state transition tests with immediate teardown assertions
 - 720 tests pass (unit + integration + snapshot), 0 failures
+
+## Task 4: Update tests for single-viewer PTY model
+- Added to `ws-terminal.test.ts`:
+  - "displaced viewer reconnect prevention" describe block: verifies 4002 close code + "displaced" reason on take_control, tests third pending viewer displaces second pending viewer
+  - "mobile terminal concurrent with PTY viewer" describe block: mobile terminal connects while PTY active, mobile resize skipped for PTY-owned sessions, closing mobile does NOT tear down PTY
+- Existing tests already covered: viewer_conflict on second connect, take_control with 4002, immediate teardown on disconnect
+- 31 ws-terminal tests pass, 25 ws-dispatch tests pass, 0 failures

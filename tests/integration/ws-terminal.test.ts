@@ -604,3 +604,218 @@ describe("WS /ws/pty rapid spawn failure edge cases", () => {
     }
   });
 });
+
+// ── PTY: displaced viewer should NOT reconnect ──
+
+describe("WS /ws/pty displaced viewer reconnect prevention", () => {
+  test("displaced viewer receives close code 4002 (not 1000 or 4001)", async () => {
+    const session = "test-session";
+    const ptySessions = __getActivePtySessions();
+    ptySessions.delete(session);
+    await wait(50);
+
+    // First viewer connects
+    const ws1 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws1.binaryType = "arraybuffer";
+    const ws1ClosePromise = new Promise<CloseEvent>((r) => ws1.addEventListener("close", r));
+    await new Promise<void>((resolve, reject) => {
+      ws1.addEventListener("open", () => resolve());
+      ws1.addEventListener("error", () => reject(new Error("v1 failed")));
+    });
+
+    // Second viewer connects, gets conflict, takes control
+    const ws2 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws2.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      ws2.addEventListener("open", () => resolve());
+      ws2.addEventListener("error", () => reject(new Error("v2 failed")));
+    });
+
+    await new Promise<void>((resolve) => {
+      ws2.addEventListener("message", (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data));
+          if (msg.type === "viewer_conflict") resolve();
+        } catch {}
+      });
+    });
+
+    ws2.send(JSON.stringify({ type: "take_control" }));
+
+    const ev = await Promise.race([
+      ws1ClosePromise,
+      wait(3000).then(() => { throw new Error("timeout"); }),
+    ]) as CloseEvent;
+
+    // 4002 = displaced — client must NOT auto-reconnect
+    // (1000 = normal, 4001 = session gone — both have different reconnect semantics)
+    expect(ev.code).toBe(4002);
+    expect(ev.reason).toBe("displaced");
+
+    await closeWs(ws2);
+    await wait(200);
+  });
+
+  test("third pending viewer displaces second pending viewer with 4002", async () => {
+    const session = "test-session";
+    const ptySessions = __getActivePtySessions();
+    ptySessions.delete(session);
+    await wait(50);
+
+    // First viewer (active)
+    const ws1 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws1.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      ws1.addEventListener("open", () => resolve());
+      ws1.addEventListener("error", () => reject(new Error("v1 failed")));
+    });
+
+    // Second viewer (pending) — gets conflict
+    const ws2 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws2.binaryType = "arraybuffer";
+    const ws2ClosePromise = new Promise<CloseEvent>((r) => ws2.addEventListener("close", r));
+    await new Promise<void>((resolve, reject) => {
+      ws2.addEventListener("open", () => resolve());
+      ws2.addEventListener("error", () => reject(new Error("v2 failed")));
+    });
+    await new Promise<void>((resolve) => {
+      ws2.addEventListener("message", (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data));
+          if (msg.type === "viewer_conflict") resolve();
+        } catch {}
+      });
+    });
+
+    // Third viewer connects — should displace second pending viewer
+    const ws3 = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws3.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      ws3.addEventListener("open", () => resolve());
+      ws3.addEventListener("error", () => reject(new Error("v3 failed")));
+    });
+
+    // Second viewer should be closed with 4002 (displaced by third)
+    const ev = await Promise.race([
+      ws2ClosePromise,
+      wait(3000).then(() => { throw new Error("timeout waiting for ws2 close"); }),
+    ]) as CloseEvent;
+    expect(ev.code).toBe(4002);
+
+    await closeWs(ws3);
+    await closeWs(ws1);
+    await wait(200);
+  });
+});
+
+// ── Mobile terminal concurrent with PTY viewer ──
+
+describe("WS /ws/terminal concurrent with /ws/pty", () => {
+  test("mobile terminal works while PTY viewer is active", async () => {
+    const session = "test-session";
+    const ptySessions = __getActivePtySessions();
+    ptySessions.delete(session);
+    await wait(50);
+
+    // PTY viewer connects (desktop)
+    const wsPty = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    wsPty.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      wsPty.addEventListener("open", () => resolve());
+      wsPty.addEventListener("error", () => reject(new Error("pty connect failed")));
+    });
+
+    expect(ptySessions.has(session)).toBe(true);
+
+    // Mobile terminal connects concurrently — should succeed
+    const { status, ws: wsMobile } = await rawUpgrade(`/ws/terminal?session=${session}`);
+    expect(status).toBe(101);
+    expect(wsMobile).toBeDefined();
+    expect(wsMobile!.readyState).toBe(WebSocket.OPEN);
+
+    // Mobile can send messages without affecting PTY viewer
+    wsMobile!.send(JSON.stringify({ type: "key", key: "Enter" }));
+    wsMobile!.send(JSON.stringify({ type: "input", data: "hello" }));
+    await wait(200);
+
+    // Both connections still alive
+    expect(wsMobile!.readyState).toBe(WebSocket.OPEN);
+    expect(wsPty.readyState).toBe(WebSocket.OPEN);
+
+    // PTY entry still has its viewer
+    const entry = ptySessions.get(session);
+    expect(entry).toBeDefined();
+    expect(entry!.alive).toBe(true);
+    expect(entry!.viewer).toBeTruthy();
+
+    await closeWs(wsMobile!);
+    await closeWs(wsPty);
+    await wait(200);
+  });
+
+  test("mobile terminal resize does NOT resize PTY-owned session", async () => {
+    const session = "test-session";
+    const ptySessions = __getActivePtySessions();
+    ptySessions.delete(session);
+    await wait(50);
+
+    // PTY viewer active
+    const wsPty = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    wsPty.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      wsPty.addEventListener("open", () => resolve());
+      wsPty.addEventListener("error", () => reject(new Error("pty connect failed")));
+    });
+
+    expect(ptySessions.has(session)).toBe(true);
+
+    // Mobile connects
+    const { ws: wsMobile } = await rawUpgrade(`/ws/terminal?session=${session}`);
+    expect(wsMobile).toBeDefined();
+
+    // Mobile sends resize — should be skipped because activePtySessions has this session
+    // (the terminal handler checks activePtySessions.has(session) before calling tmuxResize)
+    wsMobile!.send(JSON.stringify({ type: "resize", cols: 40, rows: 10 }));
+    await wait(200);
+
+    // Both connections survive — no crash from the guarded resize
+    expect(wsMobile!.readyState).toBe(WebSocket.OPEN);
+    expect(wsPty.readyState).toBe(WebSocket.OPEN);
+
+    await closeWs(wsMobile!);
+    await closeWs(wsPty);
+    await wait(200);
+  });
+
+  test("closing mobile terminal does NOT tear down PTY", async () => {
+    const session = "test-session";
+    const ptySessions = __getActivePtySessions();
+    ptySessions.delete(session);
+    await wait(50);
+
+    // PTY viewer active
+    const wsPty = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    wsPty.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      wsPty.addEventListener("open", () => resolve());
+      wsPty.addEventListener("error", () => reject(new Error("pty connect failed")));
+    });
+
+    // Mobile connects
+    const { ws: wsMobile } = await rawUpgrade(`/ws/terminal?session=${session}`);
+    expect(wsMobile).toBeDefined();
+
+    // Close mobile — PTY should survive
+    await closeWs(wsMobile!);
+    await wait(200);
+
+    const entry = ptySessions.get(session);
+    expect(entry).toBeDefined();
+    expect(entry!.alive).toBe(true);
+    expect(entry!.viewer).toBeTruthy();
+    expect(wsPty.readyState).toBe(WebSocket.OPEN);
+
+    await closeWs(wsPty);
+    await wait(200);
+  });
+});
