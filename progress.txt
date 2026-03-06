@@ -1,0 +1,18 @@
+# Progress Log
+
+## Task 1: Simplify server PTY model to single viewer
+- Replaced `viewers: Set<WebSocket>` with `viewer: WebSocket | null` + `pendingViewer: WebSocket | null`
+- Removed 15s teardown grace timer — PTY killed immediately on viewer disconnect
+- Removed `cols-1`/`cols` resize hack (double-resize workaround)
+- New viewer to occupied session gets `{type: "viewer_conflict"}`, held as pending
+- `{type: "take_control"}` from pending: closes old viewer (code 4002 "displaced"), tears down old PTY, promotes new viewer, spawns fresh PTY on first resize
+- Extracted `setupNewPtyEntry()` helper to avoid duplication between new-session and take-control paths
+- All 452 unit tests pass
+
+## Task 2: Client handling for viewer conflict + takeover
+- Desktop single-terminal: `ws.onmessage` now parses JSON text frames for `viewer_conflict` → shows overlay on `#desktop-terminal-container` with "Take Control" button
+- Desktop single-terminal: `ws.onclose` code `4002` → shows "taken over by another viewer" status with manual reconnect button (no auto-reconnect)
+- Grid view: same logic per cell — `showGridCellConflictOverlay()` and `showGridCellDisplacedOverlay()` create per-cell overlays
+- `setConnState()` extended with `"displaced"` state for the 4002 close code
+- CSS: `.viewer-conflict-overlay` with orange theme, positioned absolute over terminal/grid cell
+- All 452 unit tests pass
