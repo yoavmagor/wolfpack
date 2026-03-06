@@ -1248,8 +1248,8 @@
         flex-direction: column;
       }
       .grid-cell.grid-focused {
-        border-color: rgba(0,255,65,0.4);
-        box-shadow: inset 0 0 8px rgba(0,255,65,0.08);
+        border-color: rgba(0,255,65,0.6);
+        box-shadow: inset 0 0 12px rgba(0,255,65,0.1), 0 0 8px rgba(0,255,65,0.15);
       }
       .grid-cell .xterm {
         flex: 1;
@@ -1261,11 +1261,11 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 2px 8px;
+        padding: 4px 8px;
         background: #111;
         border-bottom: 1px solid #1a1a1a;
         flex-shrink: 0;
-        height: 20px;
+        height: 26px;
       }
       .grid-cell-label {
         font-size: 9px;
@@ -1279,23 +1279,28 @@
         text-overflow: ellipsis;
       }
       .grid-cell.grid-focused .grid-cell-label {
-        color: rgba(0,255,65,0.5);
+        color: rgba(0,255,65,0.7);
+      }
+      .grid-cell.grid-focused .grid-cell-header {
+        border-bottom-color: rgba(0,255,65,0.2);
       }
       .grid-cell-close {
-        font-size: 12px;
-        color: rgba(255,255,255,0.2);
+        font-size: 18px;
+        color: rgba(255,100,100,0.6);
         cursor: pointer;
-        padding: 0 2px;
+        padding: 2px 8px;
         line-height: 1;
-        opacity: 0;
-        transition: opacity 0.15s, color 0.15s;
+        opacity: 0.8;
+        transition: opacity 0.15s, color 0.15s, background 0.15s;
         flex-shrink: 0;
+        border-radius: 3px;
       }
       .grid-cell:hover .grid-cell-close {
         opacity: 1;
       }
       .grid-cell-close:hover {
         color: #ff4444;
+        background: rgba(255,60,60,0.15);
       }
 
       /* ── Session drawer ── */
@@ -1926,17 +1931,17 @@
         }
         .sidebar-sessions .kill-btn,
         .sidebar-sessions .grid-btn {
-          opacity: 0.55;
-          transition: opacity 0.15s, background 0.15s, color 0.15s;
-          background: none;
-          border: 1px solid transparent;
+          opacity: 0.7;
+          transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.1);
           border-radius: 4px;
-          color: #666;
-          font-size: 11px;
+          color: #888;
+          font-size: 12px;
           font-weight: 700;
           font-family: inherit;
           cursor: pointer;
-          padding: 1px 5px;
+          padding: 2px 7px;
           flex-shrink: 0;
           letter-spacing: 0.5px;
           line-height: 1.4;
@@ -1947,11 +1952,16 @@
         }
         .sidebar-sessions .kill-btn {
           color: #cc3333;
+          border-color: rgba(200,50,50,0.2);
+        }
+        .sidebar-sessions .kill-btn:hover {
+          background: rgba(255,60,60,0.12);
+          border-color: rgba(255,60,60,0.4);
         }
         .sidebar-sessions .grid-btn:hover {
           color: #00ff41;
           border-color: rgba(0,255,65,0.4);
-          background: rgba(0,255,65,0.06);
+          background: rgba(0,255,65,0.08);
         }
         .sidebar-sessions .grid-btn.in-grid {
           opacity: 1;
