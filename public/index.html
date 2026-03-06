@@ -1926,12 +1926,12 @@
         }
         .sidebar-sessions .kill-btn,
         .sidebar-sessions .grid-btn {
-          opacity: 0;
+          opacity: 0.55;
           transition: opacity 0.15s, background 0.15s, color 0.15s;
           background: none;
           border: 1px solid transparent;
           border-radius: 4px;
-          color: #555;
+          color: #666;
           font-size: 11px;
           font-weight: 700;
           font-family: inherit;
@@ -1944,6 +1944,9 @@
         .sidebar-sessions .card:hover .kill-btn,
         .sidebar-sessions .card:hover .grid-btn {
           opacity: 1;
+        }
+        .sidebar-sessions .kill-btn {
+          color: #cc3333;
         }
         .sidebar-sessions .grid-btn:hover {
           color: #00ff41;
@@ -3122,11 +3125,12 @@
         const container = document.getElementById("desktop-grid-container");
         if (!isGridActive()) {
           container.className = "";
-          container.style.display = "none";
+          container.style.display = "";
           return;
         }
-        // Remove old grid-N classes, add current
+        // Remove old grid-N classes, add current; clear any inline style override
         container.className = "active " + gridLayoutClass(gridSessions.length);
+        container.style.display = "";
         // Ensure single-terminal container is hidden
         document.getElementById("desktop-terminal-container").style.display = "none";
         // Hide mobile elements
@@ -3354,6 +3358,11 @@
           renderGridCells();
           fitAllGridCells();
           renderSidebar();
+        } else {
+          // Only 1 session queued — no current session to pair with.
+          // Fall back to just opening it as a single terminal.
+          gridSessions = [];
+          openSession(session, machine || undefined);
         }
       }
 
@@ -3399,7 +3408,7 @@
         // Fully clean up grid container
         const container = document.getElementById("desktop-grid-container");
         container.className = "";
-        container.style.display = "none";
+        container.style.display = "";
         container.innerHTML = "";
         // Ensure single-terminal container is reset
         const dtc = document.getElementById("desktop-terminal-container");
