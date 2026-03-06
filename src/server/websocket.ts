@@ -19,18 +19,16 @@ import { isAllowedSession } from "./http.js";
 
 // ── PTY session tracking ──
 
-const PTY_TEARDOWN_GRACE_MS = 15_000;
-
 export const activePtySessions = new Map<string, {
-  viewers: Set<WebSocket>;
+  viewer: WebSocket | null;
+  pendingViewer: WebSocket | null;
   proc: ReturnType<typeof Bun.spawn>;
   ptySession: string;
   alive: boolean;
-  teardownTimer?: ReturnType<typeof setTimeout> | null;
 }>();
 
 /** Test hook: expose activePtySessions for assertions */
-export function __getActivePtySessions(): Map<string, { viewers: Set<any>; alive: boolean }> {
+export function __getActivePtySessions(): Map<string, { viewer: any; alive: boolean }> {
   if (!process.env.WOLFPACK_TEST) throw new Error("__getActivePtySessions() is only available in test mode (WOLFPACK_TEST=1)");
   return activePtySessions as any;
 }
@@ -141,25 +139,19 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
 
 // ── PTY WS handler (desktop — xterm.js direct) ──
 
-function schedulePtyTeardown(session: string): void {
-  const entry = activePtySessions.get(session);
-  if (!entry || !entry.alive) return;
-  if (entry.teardownTimer) return;
-  entry.teardownTimer = setTimeout(() => {
-    entry.teardownTimer = null;
-    if (entry.viewers.size === 0) teardownPty(session);
-  }, PTY_TEARDOWN_GRACE_MS);
-}
-
 export function teardownPty(session: string): void {
   const entry = activePtySessions.get(session);
   if (!entry) return;
-  if (entry.teardownTimer) {
-    clearTimeout(entry.teardownTimer);
-    entry.teardownTimer = null;
-  }
   entry.alive = false;
   activePtySessions.delete(session);
+  if (entry.viewer) {
+    try { entry.viewer.close(1000, "pty teardown"); } catch {}
+    entry.viewer = null;
+  }
+  if (entry.pendingViewer) {
+    try { entry.pendingViewer.close(1000, "pty teardown"); } catch {}
+    entry.pendingViewer = null;
+  }
   if (entry.proc) {
     try { entry.proc.terminal!.close(); } catch {}
     try { entry.proc.kill(); } catch {}
@@ -167,83 +159,81 @@ export function teardownPty(session: string): void {
   exec(TMUX, ["kill-session", "-t", entry.ptySession], { timeout: 2000 }).catch(() => {});
 }
 
-export function handlePtyWs(ws: WebSocket, session: string): void {
+export function handlePtyWs(ws: WebSocket, session: string, reset = false): void {
   const ptySession = `wp_${session}`;
+
+  // Force teardown existing PTY so a fresh one is spawned at the caller's dimensions
+  if (reset) {
+    const stale = activePtySessions.get(session);
+    if (stale && stale.alive) {
+      teardownPty(session);
+    }
+  }
+
   const existing = activePtySessions.get(session);
 
   if (existing && existing.alive) {
-    if (existing.teardownTimer) {
-      clearTimeout(existing.teardownTimer);
-      existing.teardownTimer = null;
+    // Session occupied — send conflict, hold connection open as pending
+    ws.send(JSON.stringify({ type: "viewer_conflict" }));
+
+    // If there's already a pending viewer, close it
+    if (existing.pendingViewer) {
+      try { existing.pendingViewer.close(4002, "displaced"); } catch {}
     }
-    if (!existing.proc) {
-      existing.viewers.add(ws);
-      const pingTimer = setInterval(() => {
-        if (ws.readyState === 1) { try { ws.ping(); } catch {} }
-        else clearInterval(pingTimer);
-      }, 25000);
-      function detach() {
-        clearInterval(pingTimer);
-        existing.viewers.delete(ws);
-        if (existing.viewers.size === 0) schedulePtyTeardown(session);
-      }
-      ws.on("close", detach);
-      ws.on("error", detach);
-      return;
-    }
-    existing.viewers.add(ws);
+    existing.pendingViewer = ws;
+
     const pingTimer = setInterval(() => {
       if (ws.readyState === 1) { try { ws.ping(); } catch {} }
       else clearInterval(pingTimer);
     }, 25000);
 
-    let rlTokens = 60;
-    let rlLast = Date.now();
     ws.on("message", (raw: Buffer | string) => {
-      if (!existing.alive) return;
-      const now = Date.now();
-      rlTokens = Math.min(60, rlTokens + ((now - rlLast) / 1000) * 60);
-      rlLast = now;
-      if (rlTokens < 1) return;
-      rlTokens--;
       try {
-        if (typeof raw === "string" || (Buffer.isBuffer(raw) && raw[0] === 0x7b)) {
-          const msg = JSON.parse(String(raw));
-          if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
-            const cols = clampCols(msg.cols);
-            const rows = clampRows(msg.rows);
-            try {
-              existing.proc.terminal!.resize(Math.max(20, cols - 1), rows);
-            } catch {}
-            existing.proc.terminal!.resize(cols, rows);
-            // Also force tmux resize — Claude Code may have re-applied window-size=manual
-            exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 })
-              .then(() => exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 }))
-              .catch(() => {});
+        const str = String(raw);
+        if (typeof str !== "string" && !(Buffer.isBuffer(raw) && raw[0] === 0x7b)) return;
+        const msg = JSON.parse(str);
+        if (msg.type === "take_control") {
+          // Close old viewer with displaced code
+          if (existing.viewer) {
+            try { existing.viewer.close(4002, "displaced"); } catch {}
           }
-        } else if (existing.proc) {
-          if (Buffer.isBuffer(raw) && raw.length > 16384) return;
-          existing.proc.terminal!.write(raw as Buffer);
+          // Tear down old PTY
+          const oldProc = existing.proc;
+          existing.alive = false;
+          activePtySessions.delete(session);
+          if (oldProc) {
+            try { oldProc.terminal!.close(); } catch {}
+            try { oldProc.kill(); } catch {}
+          }
+          exec(TMUX, ["kill-session", "-t", existing.ptySession], { timeout: 2000 }).catch(() => {});
+
+          // Promote this viewer — spawn fresh PTY on first resize
+          clearInterval(pingTimer);
+          existing.pendingViewer = null;
+          setupNewPtyEntry(ws, session, ptySession);
         }
-      } catch (err: any) {
-        if (err instanceof SyntaxError) return;
-        console.error(`PTY WS error [${session}]:`, err?.message || err);
-      }
+      } catch {}
     });
 
-    function detach() {
+    function cleanup() {
       clearInterval(pingTimer);
-      existing.viewers.delete(ws);
-      if (existing.viewers.size === 0) schedulePtyTeardown(session);
+      if (existing.pendingViewer === ws) {
+        existing.pendingViewer = null;
+      }
     }
-    ws.on("close", detach);
-    ws.on("error", detach);
+    ws.on("close", cleanup);
+    ws.on("error", cleanup);
     return;
   }
 
-  // First viewer — create new PTY entry
+  // No active PTY — create new entry
+  setupNewPtyEntry(ws, session, ptySession);
+}
+
+function setupNewPtyEntry(ws: WebSocket, session: string, ptySession: string): void {
   const entry = {
-    viewers: new Set<WebSocket>([ws]),
+    viewer: ws as WebSocket | null,
+    pendingViewer: null as WebSocket | null,
     proc: null as ReturnType<typeof Bun.spawn> | null,
     ptySession,
     alive: true,
@@ -258,10 +248,10 @@ export function handlePtyWs(ws: WebSocket, session: string): void {
     } catch {
       entry.alive = false;
       activePtySessions.delete(session);
-      for (const viewer of entry.viewers) {
-        try { viewer.close(4001, "session unavailable"); } catch {}
+      if (entry.viewer) {
+        try { entry.viewer.close(4001, "session unavailable"); } catch {}
+        entry.viewer = null;
       }
-      entry.viewers.clear();
       return;
     }
 
@@ -284,10 +274,8 @@ export function handlePtyWs(ws: WebSocket, session: string): void {
         rows,
         data(_terminal: unknown, data: Buffer) {
           if (!entry.alive) return;
-          for (const viewer of entry.viewers) {
-            if (viewer.readyState === 1) {
-              try { viewer.send(data); } catch {}
-            }
+          if (entry.viewer && entry.viewer.readyState === 1) {
+            try { entry.viewer.send(data); } catch {}
           }
         },
         exit(_terminal: unknown, _code: number, _signal?: number) {
@@ -297,10 +285,14 @@ export function handlePtyWs(ws: WebSocket, session: string): void {
           const rapid = Date.now() - spawnedAt < 3000;
           const code = rapid ? 4001 : 1000;
           const reason = rapid ? "session unavailable" : "pty exited";
-          for (const viewer of entry.viewers) {
-            try { viewer.close(code, reason); } catch {}
+          if (entry.viewer) {
+            try { entry.viewer.close(code, reason); } catch {}
+            entry.viewer = null;
           }
-          entry.viewers.clear();
+          if (entry.pendingViewer) {
+            try { entry.pendingViewer.close(code, reason); } catch {}
+            entry.pendingViewer = null;
+          }
           exec(TMUX, ["kill-session", "-t", ptySession], { timeout: 2000 }).catch(() => {});
         },
       },
@@ -314,7 +306,6 @@ export function handlePtyWs(ws: WebSocket, session: string): void {
         await exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 });
       } catch {}
       try {
-        entry.proc.terminal!.resize(Math.max(20, cols - 1), rows);
         entry.proc.terminal!.resize(cols, rows);
       } catch {}
     }, 100);
@@ -362,8 +353,11 @@ export function handlePtyWs(ws: WebSocket, session: string): void {
 
   function detach() {
     clearInterval(pingTimer);
-    entry.viewers.delete(ws);
-    if (entry.viewers.size === 0) schedulePtyTeardown(session);
+    if (entry.viewer === ws) {
+      entry.viewer = null;
+      // Immediate teardown — no grace period
+      teardownPty(session);
+    }
   }
   ws.on("close", detach);
   ws.on("error", detach);
