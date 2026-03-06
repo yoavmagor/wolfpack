@@ -6399,8 +6399,8 @@
         return `<div class="card ${ui.card}${activeClass}" onclick="${onclick}">
           <div class="dot ${ui.dot}" title="${ui.title}"></div>
           <div class="card-info">
-            <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
-            <div class="card-preview">${esc(lastLine)}</div>
+            <div class="card-name">${esc(s.name)}</div>
+            <div class="card-preview"><span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span> ${esc(lastLine)}</div>
           </div>
           ${gridBtn}
           <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event${machineUrl ? ", '" + escAttr(machineUrl) + "'" : ''})">&times;</button>
