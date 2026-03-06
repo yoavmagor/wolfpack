@@ -17,7 +17,7 @@
      -.  ..     -++++***#**++*#*--:---===:
      -.:--==+=--=*++*+**********+==------++-
      .:----=++*++##########******+=====--=+#=-.
-       .::-----=++*#%%%%%%#***###*+===--==+*=++=:.
+       .::-----=+*#%%%%%%#***###*+===--==+*=++=:.
          ...::::-=+*#%%############*+-----===+****+=:.
           :--=-====+******++****##***-.::--++*######**
          .++-+++++***********#*+*#***=.:---=+**=--=+==
@@ -38,11 +38,23 @@ Mobile & desktop command center for AI coding agents. Control tmux-based session
 
 Install on your phone's home screen for a native app experience — scan the QR code after setup and tap **"Add to Home Screen"**.
 
+### Desktop
+
 <p align="center">
-  <img src="docs/desktop-demo.gif" width="700" alt="Desktop — sessions, terminal, and settings views" />
+  <img src="docs/desktop-sessions.png" width="700" alt="Desktop — multi-machine session overview" />
 </p>
 <p align="center">
-  <img src="docs/mobile-demo.gif" width="300" alt="Mobile — sessions, terminal, and settings views" />
+  <img src="docs/desktop-terminal.png" width="700" alt="Desktop — terminal with collapsible sidebar" />
+</p>
+<p align="center">
+  <img src="docs/desktop-grid.png" width="700" alt="Desktop — multi-terminal grid view" />
+</p>
+
+### Mobile
+
+<p align="center">
+  <img src="docs/mobile-sessions.png" width="300" alt="Mobile — session list with multi-machine support" />
+  <img src="docs/mobile-terminal.png" width="300" alt="Mobile — live terminal view" />
 </p>
 
 ## Architecture
@@ -118,15 +130,39 @@ On first run, `wolfpack` walks you through:
 
 ## Features
 
-- **Session management** — create, view, and kill tmux agent sessions
-- **Live terminal** — capture-pane polling for real-time terminal view (mobile), xterm.js PTY for desktop
-- **Agent picker** — choose Claude, Codex, Gemini, or custom commands per session
-- **Multi-machine** — one phone connects to multiple Wolfpack servers; sessions grouped by machine
+### Session Management
+- Create, view, and kill tmux agent sessions
+- Agent picker — Claude, Codex, Gemini, or custom commands per session
+- Session triage — running, idle, and needs-input states with color-coded indicators
+- Live terminal output preview on session cards
+
+### Desktop
+- **Multi-terminal grid** — view 2-6 sessions side-by-side in a CSS grid layout. Click `+` on any sidebar card to add it to the grid, `×` to remove. Focused cell highlighted with green glow.
+- **Collapsible sidebar** — pin or auto-hide. Shows all sessions across machines with status badges, output preview, and grid/kill buttons.
+- **xterm.js PTY** — full terminal emulator with direct PTY connection (not capture-pane polling)
+- **Keyboard shortcuts:**
+  - `Cmd/Ctrl + ArrowUp/Down` — cycle between sessions
+  - `Cmd/Ctrl + ArrowLeft/Right` — navigate grid cells
+  - `Cmd/Ctrl + T` — new session (project picker)
+  - `Cmd/Ctrl + K` — clear terminal
+
+### Mobile
+- **Capture-pane polling** — real-time terminal view optimized for mobile
+- **Swipe gestures** — swipe between sessions and views
+- **Haptic feedback** — vibration on key actions
+- **PWA** — install as a standalone app on your phone's home screen
+
+### Multi-Machine
+- One phone connects to multiple Wolfpack servers
+- Sessions grouped by machine with online/offline status
+- Auto-discover Tailscale peers running Wolfpack
+- Cross-machine session management from a single UI
+
+### Other
 - **Notifications** — browser notifications + vibration when sessions need attention
 - **Search** — find text in terminal output with match navigation
-- **PWA** — install as a standalone app on your phone's home screen
 - **Reconnect handling** — auto-recovers on connection drop with status indicator
-- **Auto-resize** — tmux pane resizes to match your screen
+- **Auto-resize** — terminal resizes to match your screen/grid cell
 
 ### Remote Access
 
@@ -137,13 +173,6 @@ On first run, `wolfpack` walks you through:
 5. Tap **"Add to Home Screen"** for the native app experience
 
 Tailscale's encrypted mesh network handles auth and routing — no ports to open, no DNS to configure.
-
-### Multi-Machine
-
-1. Install Wolfpack on each machine (`bunx wolfpack-bridge` or `curl` install)
-2. Ensure all machines and your phone share a Tailscale network
-3. On your phone: **Settings → Add Machine** → scan QR or paste URL
-4. Sessions from all machines appear in a single grouped view
 
 ## Ralph Loop
 
@@ -186,7 +215,7 @@ bun test tests/unit/plan-parsing.test.ts  # single file
 ```
 
 Tests use Bun's built-in runner. Three categories:
-- `tests/unit/` — plan parsing, ralph log parsing, escaping, validation
+- `tests/unit/` — plan parsing, ralph log parsing, escaping, validation, grid logic
 - `tests/snapshot/` — launchd plist and systemd unit generation
 - `tests/integration/` — API routes, ralph loop endpoints
 
