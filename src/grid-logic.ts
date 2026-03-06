@@ -126,9 +126,6 @@ export function gridArrowNav(
     default: cols = 2;
   }
 
-  const row = Math.floor(currentIndex / cols);
-  const col = currentIndex % cols;
-
   let newIndex = currentIndex;
   switch (direction) {
     case "left":

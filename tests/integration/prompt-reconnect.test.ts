@@ -52,10 +52,6 @@ function post(path: string, body: unknown) {
   });
 }
 
-function get(path: string) {
-  return fetch(`${baseUrl}${path}`);
-}
-
 async function rawUpgrade(path: string): Promise<{ status: number; ws?: WebSocket }> {
   return new Promise((resolve) => {
     const ws = new WebSocket(`${baseWsUrl}${path}`);
@@ -312,8 +308,8 @@ describe("Reconnect — PTY /ws/pty close codes", () => {
   });
 });
 
-describe("Reconnect — PTY grace period state transitions", () => {
-  test("viewer disconnect → grace period → reconnect reuses entry", async () => {
+describe("Reconnect — PTY single-viewer state transitions", () => {
+  test("viewer disconnect → immediate teardown → reconnect creates fresh entry", async () => {
     const ptySessions = __getActivePtySessions();
     ptySessions.delete("prompt-sess");
     await wait(50);
@@ -330,14 +326,12 @@ describe("Reconnect — PTY grace period state transitions", () => {
     const entry = ptySessions.get("prompt-sess")!;
     expect(entry.alive).toBe(true);
 
-    // Disconnect — starts grace period
+    // Disconnect — immediate teardown (no grace period)
     ws1.close();
     await wait(200);
+    expect(entry.alive).toBe(false);
 
-    // Still alive during grace
-    expect(entry.alive).toBe(true);
-
-    // Reconnect — reuse same entry
+    // Reconnect — creates fresh entry
     const ws2 = new WebSocket(`${baseWsUrl}/ws/pty?session=prompt-sess`);
     ws2.binaryType = "arraybuffer";
     await new Promise<void>((resolve, reject) => {
@@ -345,12 +339,15 @@ describe("Reconnect — PTY grace period state transitions", () => {
       ws2.addEventListener("error", () => reject(new Error("reconnect failed")));
     });
 
-    expect(ptySessions.get("prompt-sess")).toBe(entry); // same ref
+    const newEntry = ptySessions.get("prompt-sess");
+    expect(newEntry).toBeDefined();
+    expect(newEntry!.alive).toBe(true);
+    expect(newEntry).not.toBe(entry); // fresh entry, not reused
     ws2.close();
-    await wait(100);
+    await wait(200);
   });
 
-  test("viewer disconnect with no reconnect → teardown after grace expires", async () => {
+  test("viewer disconnect tears down immediately (no grace period)", async () => {
     const ptySessions = __getActivePtySessions();
     ptySessions.delete("reconnect-sess");
     await wait(50);
@@ -368,18 +365,8 @@ describe("Reconnect — PTY grace period state transitions", () => {
     ws.close();
     await wait(200);
 
-    // Grace period active — still alive
-    expect(entry.alive).toBe(true);
-
-    // Wait past 15s grace
-    await wait(16_000);
-
-    const afterEntry = ptySessions.get("reconnect-sess");
-    if (afterEntry) {
-      expect(afterEntry.alive).toBe(false);
-    } else {
-      expect(ptySessions.has("reconnect-sess")).toBe(false);
-    }
-  }, 20_000);
+    // Immediate teardown — no need to wait 15s
+    expect(entry.alive).toBe(false);
+  });
 });
 

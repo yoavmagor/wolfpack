@@ -1198,6 +1198,7 @@
       .ralph-launch-btn:active { transform: scale(0.97); background: #8e44ad; box-shadow: 0 0 12px rgba(155, 89, 182, 0.3); }
       #desktop-terminal-container {
         display: none;
+        position: relative;
         flex: 1;
         min-height: 0;
         margin: 0;
@@ -1301,6 +1302,45 @@
       .grid-cell-close:hover {
         color: #ff4444;
         background: rgba(255,60,60,0.15);
+      }
+
+      /* ── Viewer conflict overlay ── */
+      .viewer-conflict-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(0,0,0,0.85);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+        gap: 12px;
+        text-align: center;
+        padding: 16px;
+      }
+      .viewer-conflict-overlay .conflict-msg {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: #ff9944;
+      }
+      .viewer-conflict-overlay .conflict-btn {
+        padding: 6px 16px;
+        border: 1px solid #ff9944;
+        border-radius: 4px;
+        background: transparent;
+        color: #ff9944;
+        font: inherit;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+      }
+      .viewer-conflict-overlay .conflict-btn:hover {
+        background: #ff9944;
+        color: #000;
       }
 
       /* ── Session drawer ── */
@@ -3253,14 +3293,16 @@
 
       function connectGridCellWs(gs) {
         if (gs.ws && gs.ws.readyState <= WebSocket.OPEN) return;
+        const resetSuffix = gs._resetPty ? "&reset=1" : "";
+        delete gs._resetPty;
         let wsUrl;
         if (gs.machine) {
           const remote = new URL(gs.machine);
           const proto = remote.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl = proto + "//" + remote.host + "/ws/pty?session=" + encodeURIComponent(gs.session);
+          wsUrl = proto + "//" + remote.host + "/ws/pty?session=" + encodeURIComponent(gs.session) + resetSuffix;
         } else {
           const proto = location.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl = proto + "//" + location.host + "/ws/pty?session=" + encodeURIComponent(gs.session);
+          wsUrl = proto + "//" + location.host + "/ws/pty?session=" + encodeURIComponent(gs.session) + resetSuffix;
         }
         const ws = new WebSocket(wsUrl);
         ws.binaryType = "arraybuffer";
@@ -3275,13 +3317,36 @@
           }
         };
         ws.onmessage = (ev) => {
+          if (typeof ev.data === "string") {
+            try {
+              const msg = JSON.parse(ev.data);
+              if (msg.type === "viewer_conflict") {
+                showGridCellConflictOverlay(gs, ws);
+              } else if (msg.type === "control_granted") {
+                removeGridCellConflictOverlay(gs);
+                if (gs.fitAddon && gs.term) {
+                  try { gs.fitAddon.fit(); } catch {}
+                  ws.send(JSON.stringify({ type: "resize", cols: gs.term.cols, rows: gs.term.rows }));
+                  if (gridSessions[gridFocusIndex] === gs) gs.term.focus();
+                }
+              }
+            } catch {}
+            return;
+          }
           if (gs.term) gs.term.write(new Uint8Array(ev.data));
         };
-        ws.onclose = () => {
+        ws.onclose = (ev) => {
           if (gs.ws === ws) gs.ws = null;
+          removeGridCellConflictOverlay(gs);
+          // Auto-reconnect on displace (4002) — will get viewer_conflict → "Take Control"
           // Only reconnect if still in grid
           if (gridSessions.includes(gs) && !gs.retryBlocked) {
-            scheduleGridCellReconnect(gs);
+            if (ev.code === 4002) {
+              // Immediate reconnect, no overlay
+              connectGridCellWs(gs);
+            } else {
+              scheduleGridCellReconnect(gs);
+            }
           }
         };
         ws.onerror = () => {};
@@ -3304,6 +3369,57 @@
           }
         }, delayMs);
         gs.reconnectDelay = Math.min(Math.floor((gs.reconnectDelay || RECONNECT_BASE_DELAY_MS) * 1.8), RECONNECT_MAX_DELAY_MS);
+      }
+
+      function getGridCellElement(gs) {
+        const idx = gridSessions.indexOf(gs);
+        if (idx < 0) return null;
+        return document.querySelector('#desktop-grid-container .grid-cell[data-grid-index="' + idx + '"]');
+      }
+
+      function showGridCellConflictOverlay(gs, ws) {
+        const cell = getGridCellElement(gs);
+        if (!cell) return;
+        removeGridCellConflictOverlay(gs);
+        const overlay = document.createElement("div");
+        overlay.className = "viewer-conflict-overlay";
+        overlay.dataset.conflictType = "conflict";
+        overlay.innerHTML = '<div class="conflict-msg">Active on another device</div><button class="conflict-btn" type="button">Take Control</button>';
+        overlay.querySelector(".conflict-btn").addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "take_control" }));
+          }
+          // Don't remove overlay here — wait for control_granted to confirm
+        });
+        overlay.addEventListener("click", (e) => e.stopPropagation());
+        cell.appendChild(overlay);
+      }
+
+      function removeGridCellConflictOverlay(gs) {
+        const cell = getGridCellElement(gs);
+        if (!cell) return;
+        cell.querySelectorAll(".viewer-conflict-overlay").forEach(el => el.remove());
+      }
+
+      function showGridCellDisplacedOverlay(gs) {
+        const cell = getGridCellElement(gs);
+        if (!cell) return;
+        removeGridCellConflictOverlay(gs);
+        const overlay = document.createElement("div");
+        overlay.className = "viewer-conflict-overlay";
+        overlay.dataset.conflictType = "displaced";
+        overlay.innerHTML = '<div class="conflict-msg">Taken over by another viewer</div><button class="conflict-btn" type="button">Reconnect</button>';
+        overlay.querySelector(".conflict-btn").addEventListener("click", (e) => {
+          e.stopPropagation();
+          overlay.remove();
+          gs.retryBlocked = false;
+          gs.reconnectStartedAt = 0;
+          gs.reconnectDelay = RECONNECT_BASE_DELAY_MS;
+          connectGridCellWs(gs);
+        });
+        overlay.addEventListener("click", (e) => e.stopPropagation());
+        cell.appendChild(overlay);
       }
 
       function setGridFocus(idx) {
@@ -3338,6 +3454,9 @@
         if (gridSessions.length >= MAX_GRID_CELLS) return;
         // Already in grid?
         if (gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
+        // Track which session had a full-width PTY (needs reset on grid connect)
+        const singleTermSession = (desktopTerm && currentSession) ? currentSession : null;
+        const singleTermMachine = singleTermSession ? (currentMachine || "") : "";
         const gs = {
           session,
           machine: machine || "",
@@ -3362,6 +3481,14 @@
               reconnectTimer: null, reconnectDelay: RECONNECT_BASE_DELAY_MS,
               reconnectStartedAt: 0, retryBlocked: false,
             });
+          }
+        }
+        // Mark sessions that had a full-width PTY for reset
+        if (singleTermSession) {
+          for (const g of gridSessions) {
+            if (g.session === singleTermSession && (g.machine || "") === singleTermMachine) {
+              g._resetPty = true;
+            }
           }
         }
         if (isGridActive()) {
@@ -4739,6 +4866,23 @@
 
         ws.onmessage = (ev) => {
           wpMetrics.wsMessagesReceived++;
+          // JSON text frames (viewer_conflict, etc.)
+          if (typeof ev.data === "string") {
+            try {
+              const msg = JSON.parse(ev.data);
+              if (msg.type === "viewer_conflict") {
+                showDesktopConflictOverlay(ws);
+              } else if (msg.type === "control_granted") {
+                removeDesktopConflictOverlay();
+                if (desktopFitAddon && desktopTerm) {
+                  try { desktopFitAddon.fit(); } catch {}
+                  ws.send(JSON.stringify({ type: "resize", cols: desktopTerm.cols, rows: desktopTerm.rows }));
+                  desktopTerm.focus();
+                }
+              }
+            } catch {}
+            return;
+          }
           if (desktopTerm) {
             const t0 = performance.now();
             desktopTerm.write(new Uint8Array(ev.data));
@@ -4750,7 +4894,12 @@
         ws.onclose = (ev) => {
           const isCurrent = desktopWs === ws;
           if (isCurrent) desktopWs = null;
+          removeDesktopConflictOverlay();
           if (isCurrent) {
+            if (ev.code === 4002) {
+              setConnState("displaced");
+              return;
+            }
             if (ev.code === 4001) {
               setConnState("session-ended");
               const statusEl = document.getElementById("conn-status");
@@ -4791,6 +4940,28 @@
           }
         }, delayMs);
         desktopReconnectDelay = Math.min(Math.floor(desktopReconnectDelay * 1.8), RECONNECT_MAX_DELAY_MS);
+      }
+
+      function showDesktopConflictOverlay(ws) {
+        const container = document.getElementById("desktop-terminal-container");
+        if (!container) return;
+        removeDesktopConflictOverlay();
+        const overlay = document.createElement("div");
+        overlay.className = "viewer-conflict-overlay";
+        overlay.id = "desktop-conflict-overlay";
+        overlay.innerHTML = '<div class="conflict-msg">Session active on another device</div><button class="conflict-btn" type="button">Take Control</button>';
+        overlay.querySelector(".conflict-btn").addEventListener("click", () => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "take_control" }));
+          }
+          // Don't remove overlay here — wait for control_granted to confirm
+        });
+        container.appendChild(overlay);
+      }
+
+      function removeDesktopConflictOverlay() {
+        const el = document.getElementById("desktop-conflict-overlay");
+        if (el) el.remove();
       }
 
       function initDesktopTerminal(cached) {
@@ -4944,6 +5115,14 @@
           statusEl.style.display = "block";
           statusEl.style.background = "#8a5a00";
           statusEl.innerHTML = '<img src="/wolfpack-icon.svg" style="width:12px;height:12px;vertical-align:middle;margin-right:4px;filter:brightness(10)">reconnecting\u2026';
+          return;
+        }
+        if (state === "displaced") {
+          statusEl.style.display = "block";
+          statusEl.style.background = "#8a5a00";
+          statusEl.innerHTML = '<img src="/wolfpack-icon.svg" style="width:12px;height:12px;vertical-align:middle;margin-right:4px;filter:brightness(10)">taken over by another viewer \u2014 <button type="button" id="conn-retry-btn" style="margin-left:6px;padding:2px 6px;border:1px solid #fff;border-radius:3px;background:transparent;color:#fff;font:inherit;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer">Reconnect</button>';
+          const retryBtn = document.getElementById("conn-retry-btn");
+          if (retryBtn) retryBtn.onclick = retryConnection;
           return;
         }
         if (state === "offline") {
@@ -5655,8 +5834,8 @@
           }
           if (currentSession && currentView === "terminal") {
             if (useDesktopTerminal) {
-              // Desktop: reset budget and reconnect if WS is dead
-              if (desktopTerm) {
+              // Desktop: reset budget and reconnect if WS is dead (but not during grid view)
+              if (desktopTerm && !isGridActive()) {
                 desktopRetryBlocked = false;
                 desktopReconnectStartedAt = 0;
                 desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
