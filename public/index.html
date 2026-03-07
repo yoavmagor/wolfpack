@@ -3149,6 +3149,9 @@
       const SNAPSHOT_KEY_PREFIX = "wp-snap|";
       const SNAPSHOT_MAX_BYTES = 8192;
       const SNAPSHOT_SAVE_INTERVAL = 2000;
+      const DESKTOP_TERMINAL_SCROLLBACK = 6000;
+      const GRID_TERMINAL_SCROLLBACK = 5000;
+      const DESKTOP_INITIAL_PREFILL_TIMEOUT_MS = 1000;
       let mobileWs = null;
       let mobileReconnectTimer = null;
       let mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
@@ -3168,6 +3171,8 @@
       let desktopSearchAddon = null; // SearchAddon instance
       let desktopWs = null;
       let desktopResizeHandler = null;
+      let desktopInitialPrefillPending = false;
+      let desktopInitialPrefillTimer = null;
       let useDesktopTerminal = false;
 
       // ── Multi-terminal grid state ──
@@ -3241,7 +3246,7 @@
                 cursor: "#e0e0e0",
                 selectionBackground: "rgba(255,255,255,0.2)",
               },
-              scrollback: 3000,
+              scrollback: GRID_TERMINAL_SCROLLBACK,
               allowProposedApi: true,
             });
             const fitAddon = new FitAddon.FitAddon();
@@ -4872,6 +4877,21 @@
       let desktopReconnectStartedAt = 0;
       let desktopRetryBlocked = false;
 
+      function finishDesktopInitialPrefill() {
+        if (!desktopInitialPrefillPending) return;
+        desktopInitialPrefillPending = false;
+        if (desktopInitialPrefillTimer) {
+          clearTimeout(desktopInitialPrefillTimer);
+          desktopInitialPrefillTimer = null;
+        }
+        const container = document.getElementById("desktop-terminal-container");
+        if (container) container.style.visibility = "visible";
+        if (desktopTerm) {
+          try { desktopTerm.scrollToBottom(); } catch {}
+          desktopTerm.focus();
+        }
+      }
+
       function connectDesktopWs() {
         if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
         if (desktopRetryBlocked) return;
@@ -4922,9 +4942,21 @@
           }
           if (desktopTerm) {
             const t0 = performance.now();
-            desktopTerm.write(new Uint8Array(ev.data));
-            wpMetrics.recordLatency(performance.now() - t0);
-            scheduleSnapshotSave(null);
+            const data = new Uint8Array(ev.data);
+            const finalizeWrite = () => {
+              wpMetrics.recordLatency(performance.now() - t0);
+              scheduleSnapshotSave(null);
+            };
+            if (desktopInitialPrefillPending) {
+              desktopTerm.write(data, () => {
+                try { desktopTerm.scrollToBottom(); } catch {}
+                finishDesktopInitialPrefill();
+                finalizeWrite();
+              });
+            } else {
+              desktopTerm.write(data);
+              finalizeWrite();
+            }
           }
         };
 
@@ -5005,6 +5037,7 @@
         if (desktopTerm) return;
         const container = document.getElementById("desktop-terminal-container");
         container.style.display = "block";
+        container.style.visibility = "hidden";
         container.innerHTML = "";
         document.getElementById("terminal").style.display = "none";
         document.getElementById("kb-accessory").classList.remove("visible");
@@ -5029,10 +5062,13 @@
             cursor: "#e0e0e0",
             selectionBackground: "rgba(255,255,255,0.2)",
           },
-          scrollback: 5000,
+          scrollback: DESKTOP_TERMINAL_SCROLLBACK,
           allowProposedApi: true,
         });
         desktopTerm = term;
+        desktopInitialPrefillPending = true;
+        if (desktopInitialPrefillTimer) clearTimeout(desktopInitialPrefillTimer);
+        desktopInitialPrefillTimer = setTimeout(finishDesktopInitialPrefill, DESKTOP_INITIAL_PREFILL_TIMEOUT_MS);
 
         const fitAddon = new FitAddon.FitAddon();
         desktopFitAddon = fitAddon;
@@ -5049,8 +5085,11 @@
         term.open(container);
         try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch(e) { console.warn("canvas addon failed:", e); }
         fitAddon.fit();
-        if (cached) term.write(cached);
-        term.focus();
+        if (cached) {
+          term.write(cached, () => {
+            try { term.scrollToBottom(); } catch {}
+          });
+        }
 
         term.attachCustomKeyEventHandler((e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
@@ -5117,6 +5156,11 @@
           clearTimeout(desktopReconnectTimer);
           desktopReconnectTimer = null;
         }
+        if (desktopInitialPrefillTimer) {
+          clearTimeout(desktopInitialPrefillTimer);
+          desktopInitialPrefillTimer = null;
+        }
+        desktopInitialPrefillPending = false;
         desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
         desktopReconnectStartedAt = 0;
         desktopRetryBlocked = false;
@@ -5143,6 +5187,7 @@
         }
         desktopFitAddon = null;
         container.style.display = "none";
+        container.style.visibility = "";
         container.innerHTML = "";
         document.getElementById("terminal").style.display = "";
         document.getElementById("input-bar").style.display = "";

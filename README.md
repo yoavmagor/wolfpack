@@ -104,6 +104,16 @@ Supported platforms: macOS (Apple Silicon, Intel), Linux (x64, arm64).
 - **tmux**
 - **Tailscale** — install from [tailscale.com/download](https://tailscale.com/download), sign in, and make sure both your computer and phone are on the same tailnet
 
+### tmux History
+
+Wolfpack can only hydrate history that tmux still retains. Desktop terminal sessions prefill the latest 5,000 lines on connect, so if you want deeper scrollback, raise tmux's history limit:
+
+```tmux
+set -g history-limit 50000
+```
+
+Reload tmux or restart your sessions after changing it.
+
 ## Usage
 
 ```bash

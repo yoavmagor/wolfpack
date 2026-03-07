@@ -9,6 +9,7 @@ import {
 } from "../validation.js";
 import {
   TMUX,
+  DESKTOP_PREFILL_HISTORY_LINES,
   exec,
   tmuxSend,
   tmuxSendKey,
@@ -271,7 +272,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
     // The live PTY stream only sends the current visible pane.
     try {
       const { stdout } = await exec(TMUX, [
-        "capture-pane", "-t", session, "-p", "-e", "-S", "-2000",
+        "capture-pane", "-t", session, "-p", "-e", "-S", `-${DESKTOP_PREFILL_HISTORY_LINES}`,
       ], { timeout: 3000 });
       if (stdout && entry.viewer && entry.viewer.readyState === 1) {
         try { entry.viewer.send(Buffer.from(stdout)); } catch {}
