@@ -16,6 +16,7 @@ import {
   serviceStop,
   serviceStart,
   serviceStatus,
+  isServiceInstalled,
   isServiceRunning,
   uninstall,
 } from "./service.js";
@@ -30,16 +31,28 @@ export {
 } from "./config.js";
 export { generatePlist, generateSystemdUnit } from "./service.js";
 
+export function planServiceEnsureAction(
+  running: boolean,
+  installed: boolean,
+): "noop" | "start" | "install" {
+  if (running) return "noop";
+  return installed ? "start" : "install";
+}
+
 async function start() {
-  let config = loadConfig();
+  const serviceMode = process.env.WOLFPACK_SERVICE === "1";
+  const config = loadConfig();
   if (!config) {
-    print("  No config found. Running setup first...\n");
+    if (serviceMode) {
+      throw new Error("missing or invalid config. Run 'wolfpack setup' to recreate ~/.wolfpack/config.json.");
+    }
+    print("  No valid config found. Running setup first...\n");
     await setup();
     process.exit(0);
   }
 
   // Service daemon mode — just start the server
-  if (process.env.WOLFPACK_SERVICE === "1") {
+  if (serviceMode) {
     process.env.WOLFPACK_DEV_DIR = config.devDir;
     process.env.WOLFPACK_PORT = String(config.port);
     await import("../server/index.js");
@@ -50,14 +63,19 @@ async function start() {
   const url = remoteUrl(config);
   const wasRunning = isServiceRunning();
   try {
-    serviceInstall();
+    const action = planServiceEnsureAction(wasRunning, isServiceInstalled());
+    if (action === "start") serviceStart();
+    else if (action === "install") serviceInstall();
   } catch (e) {
-    print(red(`  Service install failed: ${e}`));
+    print(red(`  Service startup failed: ${e}`));
     print(dim("  Run 'wolfpack service install' to retry."));
   }
   if (wasRunning && !isServiceRunning()) {
     print(yellow("  Service was running but didn't restart."));
     print(yellow(`  Run ${bold("wolfpack service start")} to restart it.`));
+  } else if (!isServiceRunning()) {
+    print(yellow("  Wolfpack service is not running."));
+    print(yellow(`  Run ${bold("wolfpack service start")} or ${bold("wolfpack service install")} to launch it.`));
   }
 
   print(dim(WOLF));

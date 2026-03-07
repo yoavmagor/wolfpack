@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 // Set WOLFPACK_TEST before importing serve.ts to prevent auto-listen
 process.env.WOLFPACK_TEST = "1";
 
-import { server, __setTmuxList, __getActivePtySessions } from "../../src/server/index.ts";
+const { server, __setTmuxList, __getActivePtySessions } = await import("../../src/server/index.ts");
 
 // ── Test setup ──
 

@@ -325,7 +325,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
   let rlTokens = 60;
   let rlLast = Date.now();
 
-  ws.on("message", (raw: Buffer | string) => {
+  ws.on("message", (raw: Buffer | string, isBinary: boolean) => {
     if (!entry.alive) return;
     const now = Date.now();
     rlTokens = Math.min(60, rlTokens + ((now - rlLast) / 1000) * 60);
@@ -333,7 +333,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
     if (rlTokens < 1) return;
     rlTokens--;
     try {
-      if (typeof raw === "string" || (Buffer.isBuffer(raw) && raw[0] === 0x7b)) {
+      if (!isBinary) {
         const msg = JSON.parse(String(raw));
         if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           const cols = clampCols(msg.cols);

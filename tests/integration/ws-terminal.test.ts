@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 // Set WOLFPACK_TEST before importing serve.ts to prevent auto-listen
 process.env.WOLFPACK_TEST = "1";
 
-import { server, wss, __setTmuxList, __getActivePtySessions } from "../../src/server/index.ts";
+const { server, wss, __setTmuxList, __getActivePtySessions } = await import("../../src/server/index.ts");
 
 // ── Test setup ──
 
@@ -422,6 +422,46 @@ describe("WS /ws/pty single-viewer teardown", () => {
 
     ws2.close();
     await wait(200);
+  });
+});
+
+describe("WS /ws/pty input routing", () => {
+  test("binary stdin beginning with '{' is forwarded to the PTY", async () => {
+    const session = "test-session";
+    const ptySessions = __getActivePtySessions();
+    ptySessions.delete(session);
+    await wait(50);
+
+    const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", () => reject(new Error("ws/pty connect failed")));
+    });
+
+    const entry = ptySessions.get(session) as any;
+    expect(entry).toBeDefined();
+
+    const writes: Buffer[] = [];
+    entry.proc = {
+      terminal: {
+        write(data: Buffer) {
+          writes.push(Buffer.from(data));
+        },
+        resize() {},
+        close() {},
+      },
+      kill() {},
+    };
+
+    ws.send(Uint8Array.from([0x7b, 0x66, 0x6f, 0x6f, 0x7d]));
+    await wait(100);
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0].toString("utf-8")).toBe("{foo}");
+
+    await closeWs(ws);
+    await wait(100);
   });
 });
 

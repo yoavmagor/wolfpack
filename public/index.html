@@ -2834,7 +2834,17 @@
     <script>
       // ── Settings (persisted to localStorage) ──
       const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:300, debugPanel:false, ralphEnabled:false};
-      const wpSettings = Object.assign({}, wpDefaults, JSON.parse(localStorage.getItem("wp-effects") || "{}"));
+      function loadStoredJson(key, fallback) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) return fallback;
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === "object" ? parsed : fallback;
+        } catch {
+          return fallback;
+        }
+      }
+      const wpSettings = Object.assign({}, wpDefaults, loadStoredJson("wp-effects", {}));
       function toggleSetting(key, val) {
         wpSettings[key] = val;
         localStorage.setItem("wp-effects", JSON.stringify(wpSettings));
@@ -3018,7 +3028,9 @@
             body: JSON.stringify({ session: currentSession, text: cmd.cmd }),
           }, currentMachine);
           enterFastPoll();
-        } catch {}
+        } catch {
+          wpMetrics.sendFailCount++;
+        }
       }
 
       function renderQuickCmdSettings() {
@@ -3086,13 +3098,9 @@
         overlay.classList.add("visible");
         try {
           const data = await api("/git-status?session=" + encodeURIComponent(currentSession), {}, currentMachine);
-          if (data.error) {
-            overlay.innerHTML = `<div><pre style="color:#cc3333">${esc(data.error)}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
-          } else {
-            overlay.innerHTML = `<div><pre>${esc(data.status || "(clean)")}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
-          }
+          overlay.innerHTML = `<div><pre>${esc(data.status || "(clean)")}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
         } catch (e) {
-          overlay.innerHTML = `<div><pre style="color:#cc3333">${esc(String(e))}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
+          overlay.innerHTML = `<div><pre style="color:#cc3333">${esc(errorMessage(e))}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
         }
       }
 
@@ -3249,6 +3257,21 @@
             try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch {}
             // Don't fit yet — wait for layout to settle. WS connects after final fit.
             // Wire stdin for focused cell
+            term.attachCustomKeyEventHandler((e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
+                navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+                return false;
+              }
+              if ((e.metaKey || e.ctrlKey) && e.key === "v" && e.type === "keydown") {
+                navigator.clipboard.readText().then(t => {
+                  if (t && gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs) {
+                    gs.ws.send(new TextEncoder().encode(t));
+                  }
+                }).catch(() => {});
+                return false;
+              }
+              return true;
+            });
             term.onData((data) => {
               if (gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs) {
                 gs.ws.send(new TextEncoder().encode(data));
@@ -3754,15 +3777,29 @@
         } catch {}
       })();
 
+      function errorMessage(err) {
+        if (err && typeof err.message === "string" && err.message) return err.message;
+        return String(err || "unknown error");
+      }
+
       async function api(path, opts, machineUrl) {
         const base = machineUrl ? machineUrl + "/api" : "/api";
         const res = await fetch(base + path, opts);
-        if (!res.ok) {
-          const body = await res.text();
-          try { return JSON.parse(body); } catch {}
-          throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+        const body = await res.text();
+        let data = {};
+        if (body) {
+          try { data = JSON.parse(body); } catch {}
         }
-        return res.json();
+        if (!res.ok) {
+          const message = data && typeof data.error === "string"
+            ? data.error
+            : (body ? body.slice(0, 200) : `HTTP ${res.status}`);
+          const err = new Error(message);
+          err.status = res.status;
+          err.data = data;
+          throw err;
+        }
+        return data;
       }
 
       // set by swipe engine so showView() skips animation after gesture already handled it
@@ -4163,7 +4200,7 @@
           }, currentRalphMachine);
           refreshRalphDetail();
         } catch (e) {
-          alert("failed to cancel: " + e.message);
+          alert("failed to cancel: " + errorMessage(e));
         }
       }
 
@@ -4313,17 +4350,16 @@
         }
 
         try {
-          const data = await api("/ralph/start", {
+          await api("/ralph/start", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           }, machine);
-          if (data.error) { alert(data.error); return; }
           currentRalphProject = project;
           restartingRalph = false;
           backToSessions();
         } catch (e) {
-          alert("failed to start: " + e.message);
+          alert("failed to start: " + errorMessage(e));
         }
       }
 
@@ -4361,15 +4397,11 @@
             await new Promise(r => setTimeout(r, 1000));
           }
           const deletePlan = confirm("also delete the plan file?");
-          const result = await api("/ralph/dismiss", {
+          await api("/ralph/dismiss", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ project, deletePlan }),
           }, machineUrl);
-          if (result && result.error) {
-            alert(result.error);
-            return;
-          }
           // Stop poll timer to prevent stale in-flight fetches from overwriting fresh data
           if (sidebarRefreshTimer) { clearInterval(sidebarRefreshTimer); sidebarRefreshTimer = null; }
           lastSessionsHtml = "";
@@ -4377,7 +4409,7 @@
           renderSidebar();
           startSidebarRefresh();
         } catch (e) {
-          alert("failed to dismiss: " + e.message);
+          alert("failed to dismiss: " + errorMessage(e));
         }
       }
 
@@ -4633,16 +4665,22 @@
         const charW = probe.offsetWidth;
         const charH = probe.offsetHeight;
         document.body.removeChild(probe);
-        if (!charW || !charH) return;
+        if (!charW || !charH) return false;
         const cols = Math.floor(term.clientWidth / charW);
         const rows = Math.floor(term.clientHeight / charH);
         if (cols > 0 && rows > 0) {
-          await api("/resize", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session: currentSession, cols, rows }),
-          }, currentMachine);
+          try {
+            await api("/resize", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ session: currentSession, cols, rows }),
+            }, currentMachine);
+            return true;
+          } catch {
+            return false;
+          }
         }
+        return false;
       }
 
       // ── Project picker ──
@@ -4769,7 +4807,7 @@
           input.value = "";
           showAgentPicker();
         } catch (e) {
-          alert("Failed to add command: " + (e.message || "error"));
+          alert("Failed to add command: " + errorMessage(e));
         }
       }
 
@@ -4783,7 +4821,7 @@
           }, projectMachine);
           showAgentPicker();
         } catch (e) {
-          alert("Failed to delete command: " + (e.message || "error"));
+          alert("Failed to delete command: " + errorMessage(e));
         }
       }
 
@@ -4816,13 +4854,12 @@
               startPolling();
             }
           } else {
-            const msg = data.error || "Server returned no session (is wolfpack up to date?)";
-            alert("Failed to create session: " + msg);
+            alert("Failed to create session: Server returned no session (is wolfpack up to date?)");
             showView("sessions");
             loadSessions();
           }
         } catch (e) {
-          alert("Failed to create session: " + (e.message || "network error"));
+          alert("Failed to create session: " + errorMessage(e));
           showView("sessions");
           loadSessions();
         }
@@ -5014,6 +5051,22 @@
         fitAddon.fit();
         if (cached) term.write(cached);
         term.focus();
+
+        term.attachCustomKeyEventHandler((e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
+            navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+            return false;
+          }
+          if ((e.metaKey || e.ctrlKey) && e.key === "v" && e.type === "keydown") {
+            navigator.clipboard.readText().then(t => {
+              if (t && desktopWs && desktopWs.readyState === WebSocket.OPEN) {
+                desktopWs.send(new TextEncoder().encode(t));
+              }
+            }).catch(() => {});
+            return false;
+          }
+          return true;
+        });
 
         term.onData((data) => {
           if (desktopWs && desktopWs.readyState === WebSocket.OPEN) {
@@ -5411,7 +5464,9 @@
         } catch {
           wpMetrics.sendFailCount++;
           input.value = saved;
+          saveDraft();
           autoResizeInput();
+          updatePreview();
         }
       }
 
@@ -5444,11 +5499,16 @@
       async function killSession(name, e, machineUrl) {
         e.stopPropagation();
         if (!confirm(`Kill session "${name}"?`)) return;
-        await api("/kill", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session: name }),
-        }, machineUrl || "");
+        try {
+          await api("/kill", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session: name }),
+          }, machineUrl || "");
+        } catch (e) {
+          alert("Failed to kill session: " + errorMessage(e));
+          return;
+        }
         const wasCurrentSession = name === currentSession && (machineUrl || "") === currentMachine;
         if (wasCurrentSession && currentView === "terminal") {
           if (useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
@@ -6166,11 +6226,6 @@
         statusEl.style.color = "#555";
         try {
           const data = await api("/discover");
-          if (data.error) {
-            statusEl.textContent = data.error;
-            statusEl.style.color = "#cc3333";
-            return;
-          }
           const peers = data.peers || [];
           if (!peers.length) {
             statusEl.textContent = "No wolfpack instances found on tailnet";
@@ -6204,8 +6259,8 @@
           if (!added && !pruned) parts.push("all up to date");
           statusEl.textContent = parts.join(", ");
           statusEl.style.color = "#00ff41";
-        } catch {
-          statusEl.textContent = "Discovery failed";
+        } catch (e) {
+          statusEl.textContent = errorMessage(e);
           statusEl.style.color = "#cc3333";
         }
       }

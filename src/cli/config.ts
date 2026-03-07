@@ -45,9 +45,30 @@ export function ask(question: string): string {
   return buf.subarray(0, n).toString("utf-8").trim();
 }
 
+export function parseConfig(raw: unknown): Config | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const candidate = raw as Record<string, unknown>;
+  const devDir = typeof candidate.devDir === "string" ? candidate.devDir.trim() : "";
+  const port = Math.floor(Number(candidate.port));
+  if (!devDir || !isValidPort(port)) return null;
+  const tailscaleHostname =
+    typeof candidate.tailscaleHostname === "string"
+      ? candidate.tailscaleHostname.trim() || undefined
+      : undefined;
+  return { devDir, port, tailscaleHostname };
+}
+
+export function loadConfigFromText(text: string): Config | null {
+  try {
+    return parseConfig(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
 export function loadConfig(): Config | null {
   try {
-    return JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+    return loadConfigFromText(readFileSync(CONFIG_PATH, "utf-8"));
   } catch {
     return null;
   }
