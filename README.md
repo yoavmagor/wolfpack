@@ -39,10 +39,6 @@ Mobile & desktop command center for AI coding agents. Control tmux-based session
 Install on your phone's home screen for a native app experience — scan the QR code after setup and tap **"Add to Home Screen"**.
 
 ### Desktop
-
-<p align="center">
-  <img src="docs/desktop-sessions.png" width="700" alt="Desktop — multi-machine session overview" />
-</p>
 <p align="center">
   <img src="docs/desktop-terminal.png" width="700" alt="Desktop — terminal with collapsible sidebar" />
 </p>
