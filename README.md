@@ -189,14 +189,6 @@ Stored in `~/.wolfpack/config.json`:
 
 Agent command and settings stored in `~/.wolfpack/bridge-settings.json`.
 
-## Works great with
-
-- [Claude Code](https://claude.ai/code) — Anthropic's CLI coding agent
-- [OpenAI Codex CLI](https://github.com/openai/codex) — OpenAI's coding agent
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli) — Google's coding agent
-- [Aider](https://aider.chat/) — AI pair programming in the terminal
-- Any shell command you run in tmux
-
 ## Contributing
 
 ### Dev Setup
