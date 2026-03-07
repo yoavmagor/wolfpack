@@ -267,6 +267,17 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
 
     if (!entry.alive) return;
 
+    // Pre-fill viewer with tmux scrollback so xterm.js has content to scroll through.
+    // The live PTY stream only sends the current visible pane.
+    try {
+      const { stdout } = await exec(TMUX, [
+        "capture-pane", "-t", session, "-p", "-e", "-S", "-2000",
+      ], { timeout: 3000 });
+      if (stdout && entry.viewer && entry.viewer.readyState === 1) {
+        try { entry.viewer.send(Buffer.from(stdout)); } catch {}
+      }
+    } catch {}
+
     const spawnedAt = Date.now();
     entry.proc = Bun.spawn([TMUX, "attach-session", "-t", session], {
       env: { ...process.env, TERM: "xterm-256color" },
