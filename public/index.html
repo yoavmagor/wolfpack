@@ -3274,6 +3274,164 @@
           cancel,
         };
       }
+      /**
+       * Shared PTY WebSocket client for xterm.js terminals.
+       * Owns: URL construction, socket lifecycle, binary/text frame dispatch,
+       *       initial resize handshake, reconnect backoff, control message parsing.
+       * @param {object} opts
+       * @param {string} opts.session - tmux session name
+       * @param {string} opts.machine - remote machine URL ("" for local)
+       * @param {boolean} [opts.resetPty] - append &reset=1 on first connect
+       * @param {() => {cols:number, rows:number}|null} opts.getTermDimensions
+       * @param {() => void} opts.fitTerminal
+       * @param {(Uint8Array) => void} opts.onBinaryData
+       * @param {() => void} [opts.onOpen]
+       * @param {() => void} [opts.onViewerConflict]
+       * @param {() => void} [opts.onControlGranted]
+       * @param {(number, string) => void} opts.onDisconnected
+       * @param {() => void} [opts.onReconnecting]
+       * @param {() => void} [opts.onReconnectExhausted]
+       * @param {() => boolean} [opts.shouldReconnect]
+       */
+      function createPtySocketClient(opts) {
+        let ws = null;
+        let reconnectTimer = null;
+        let reconnectDelay = RECONNECT_BASE_DELAY_MS;
+        let reconnectStartedAt = 0;
+        let retryBlocked = false;
+        let hasConnected = false;
+        let consumeReset = !!opts.resetPty;
+
+        function buildUrl() {
+          const resetSuffix = consumeReset ? "&reset=1" : "";
+          consumeReset = false;
+          const session = encodeURIComponent(opts.session);
+          if (opts.machine) {
+            const remote = new URL(opts.machine);
+            const proto = remote.protocol === "https:" ? "wss:" : "ws:";
+            return proto + "//" + remote.host + "/ws/pty?session=" + session + resetSuffix;
+          }
+          const proto = location.protocol === "https:" ? "wss:" : "ws:";
+          return proto + "//" + location.host + "/ws/pty?session=" + session + resetSuffix;
+        }
+
+        /** Fit terminal + send resize dimensions over the socket. */
+        function sendFitResize() {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          try { opts.fitTerminal(); } catch {}
+          const dims = opts.getTermDimensions();
+          if (dims) ws.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
+        }
+
+        function connect() {
+          if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+          if (ws && ws.readyState <= WebSocket.OPEN) return;
+
+          const sock = new WebSocket(buildUrl());
+          sock.binaryType = "arraybuffer";
+          ws = sock;
+
+          sock.onopen = () => {
+            const wasReconnect = hasConnected;
+            hasConnected = true;
+            reconnectDelay = RECONNECT_BASE_DELAY_MS;
+            reconnectStartedAt = 0;
+            retryBlocked = false;
+            sendFitResize();
+            if (opts.onOpen) opts.onOpen(wasReconnect);
+          };
+
+          sock.onmessage = (ev) => {
+            if (typeof ev.data === "string") {
+              try {
+                const msg = JSON.parse(ev.data);
+                if (msg.type === "viewer_conflict") {
+                  if (opts.onViewerConflict) opts.onViewerConflict();
+                } else if (msg.type === "control_granted") {
+                  sendFitResize();
+                  if (opts.onControlGranted) opts.onControlGranted();
+                }
+              } catch {}
+              return;
+            }
+            if (opts.onBinaryData) opts.onBinaryData(new Uint8Array(ev.data));
+          };
+
+          sock.onclose = (ev) => {
+            if (ws === sock) ws = null;
+            if (opts.onDisconnected) opts.onDisconnected(ev.code, ev.reason);
+          };
+
+          sock.onerror = () => {};
+        }
+
+        function scheduleReconnect() {
+          if (reconnectTimer) return;
+          if (retryBlocked) return;
+          if (opts.shouldReconnect && !opts.shouldReconnect()) return;
+          const now = Date.now();
+          if (!reconnectStartedAt) reconnectStartedAt = now;
+          const elapsed = now - reconnectStartedAt;
+          const remaining = RECONNECT_BUDGET_MS - elapsed;
+          if (remaining <= 0) {
+            retryBlocked = true;
+            if (opts.onReconnectExhausted) opts.onReconnectExhausted();
+            return;
+          }
+          if (opts.onReconnecting) opts.onReconnecting();
+          const jitterMs = Math.floor(Math.random() * 200);
+          const delayMs = Math.min(reconnectDelay + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            if (opts.shouldReconnect && !opts.shouldReconnect()) return;
+            if (!ws || ws.readyState === WebSocket.CLOSED) connect();
+          }, delayMs);
+          reconnectDelay = Math.min(Math.floor(reconnectDelay * 1.8), RECONNECT_MAX_DELAY_MS);
+        }
+
+        function sendResize(cols, rows) {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "resize", cols, rows }));
+          }
+        }
+
+        function sendTakeControl() {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "take_control" }));
+          }
+        }
+
+        function send(data) {
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+        }
+
+        function close() {
+          if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+          retryBlocked = true;
+          if (ws) { ws.close(); ws = null; }
+        }
+
+        function resetRetry() {
+          retryBlocked = false;
+          reconnectStartedAt = 0;
+          reconnectDelay = RECONNECT_BASE_DELAY_MS;
+        }
+
+        return {
+          connect,
+          scheduleReconnect,
+          sendFitResize,
+          sendResize,
+          sendTakeControl,
+          send,
+          close,
+          resetRetry,
+          get ws() { return ws; },
+          get isOpen() { return !!(ws && ws.readyState === WebSocket.OPEN); },
+          get retryBlocked() { return retryBlocked; },
+        };
+      }
+
       let mobileWs = null;
       let mobileReconnectTimer = null;
       let mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
@@ -3291,7 +3449,7 @@
       let desktopTerm = null;       // xterm.js Terminal instance
       let desktopFitAddon = null;   // FitAddon instance
       let desktopSearchAddon = null; // SearchAddon instance
-      let desktopWs = null;
+      // desktopPtyClient declared near connectDesktopWs
       let desktopResizeHandler = null;
       let desktopHydration = null; // createInitialHydrationController instance
       let useDesktopTerminal = false;
@@ -3357,10 +3515,10 @@
               scrollback: GRID_TERMINAL_SCROLLBACK,
               cursorBlink: idx === gridFocusIndex,
               disableStdin: idx !== gridFocusIndex,
-              sendInput: (data) => gs.ws && gs.ws.readyState === WebSocket.OPEN && gs.ws.send(data),
-              sendMessage: (msg) => gs.ws && gs.ws.readyState === WebSocket.OPEN && gs.ws.send(msg),
-              canAcceptInput: () => gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs,
-              canSendResize: () => !!(gs.ws && gs.ws.readyState === WebSocket.OPEN),
+              sendInput: (data) => gs.ptyClient && gs.ptyClient.send(data),
+              sendMessage: (msg) => gs.ptyClient && gs.ptyClient.send(msg),
+              canAcceptInput: () => !!(gs.ptyClient && gs.ptyClient.isOpen && gridSessions[gridFocusIndex] === gs),
+              canSendResize: () => !!(gs.ptyClient && gs.ptyClient.isOpen),
             });
             term.open(cell);
             if (term.element) term.element.style.visibility = "hidden";
@@ -3394,96 +3552,47 @@
       // finishGridCellInitialPrefill — now delegated to gs.hydration.finish()
 
       function connectGridCellWs(gs) {
-        if (gs.ws && gs.ws.readyState <= WebSocket.OPEN) return;
-        const resetSuffix = gs._resetPty ? "&reset=1" : "";
-        delete gs._resetPty;
-        let wsUrl;
-        if (gs.machine) {
-          const remote = new URL(gs.machine);
-          const proto = remote.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl = proto + "//" + remote.host + "/ws/pty?session=" + encodeURIComponent(gs.session) + resetSuffix;
-        } else {
-          const proto = location.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl = proto + "//" + location.host + "/ws/pty?session=" + encodeURIComponent(gs.session) + resetSuffix;
-        }
-        const ws = new WebSocket(wsUrl);
-        ws.binaryType = "arraybuffer";
-        gs.ws = ws;
+        if (gs.ptyClient && gs.ptyClient.isOpen) return;
+        if (gs.ptyClient) gs.ptyClient.close();
         gs.hydration = createInitialHydrationController({
           getElement: () => gs.term && gs.term.element,
           getTerm: () => gs.term,
           shouldFocus: () => gridSessions[gridFocusIndex] === gs,
         });
         gs.hydration.start();
-        ws.onopen = () => {
-          gs.reconnectDelay = RECONNECT_BASE_DELAY_MS;
-          gs.reconnectStartedAt = 0;
-          gs.retryBlocked = false;
-          if (gs.fitAddon && gs.term) {
-            try { gs.fitAddon.fit(); } catch {}
-            ws.send(JSON.stringify({ type: "resize", cols: gs.term.cols, rows: gs.term.rows }));
-          }
-        };
-        ws.onmessage = (ev) => {
-          if (typeof ev.data === "string") {
-            try {
-              const msg = JSON.parse(ev.data);
-              if (msg.type === "viewer_conflict") {
-                showGridCellConflictOverlay(gs, ws);
-              } else if (msg.type === "control_granted") {
-                removeGridCellConflictOverlay(gs);
-                if (gs.fitAddon && gs.term) {
-                  try { gs.fitAddon.fit(); } catch {}
-                  ws.send(JSON.stringify({ type: "resize", cols: gs.term.cols, rows: gs.term.rows }));
-                  if (gridSessions[gridFocusIndex] === gs) gs.term.focus();
-                }
-              }
-            } catch {}
-            return;
-          }
-          if (gs.term) {
-            const data = new Uint8Array(ev.data);
+        gs.ptyClient = createPtySocketClient({
+          session: gs.session,
+          machine: gs.machine || "",
+          resetPty: gs._resetPty,
+          getTermDimensions: () => gs.term ? { cols: gs.term.cols, rows: gs.term.rows } : null,
+          fitTerminal: () => { if (gs.fitAddon) gs.fitAddon.fit(); },
+          shouldReconnect: () => gridSessions.includes(gs),
+          onBinaryData: (data) => {
+            if (!gs.term) return;
             if (gs.hydration && gs.hydration.pending) {
               gs.term.write(data, () => { if (gs.hydration) gs.hydration.finish(); });
             } else {
               gs.term.write(data);
             }
-          }
-        };
-        ws.onclose = (ev) => {
-          if (gs.ws === ws) gs.ws = null;
-          removeGridCellConflictOverlay(gs);
-          // Auto-reconnect on displace (4002) — will get viewer_conflict → "Take Control"
-          // Only reconnect if still in grid
-          if (gridSessions.includes(gs) && !gs.retryBlocked) {
-            if (ev.code === 4002) {
-              // Immediate reconnect, no overlay
+          },
+          onViewerConflict: () => showGridCellConflictOverlay(gs),
+          onControlGranted: () => {
+            removeGridCellConflictOverlay(gs);
+            if (gridSessions[gridFocusIndex] === gs && gs.term) gs.term.focus();
+          },
+          onDisconnected: (code) => {
+            removeGridCellConflictOverlay(gs);
+            if (!gridSessions.includes(gs)) return;
+            if (code === 4002) {
+              // Immediate reconnect on displace
               connectGridCellWs(gs);
             } else {
-              scheduleGridCellReconnect(gs);
+              gs.ptyClient.scheduleReconnect();
             }
-          }
-        };
-        ws.onerror = () => {};
-      }
-
-      function scheduleGridCellReconnect(gs) {
-        if (gs.reconnectTimer) return;
-        if (gs.retryBlocked) return;
-        if (!gridSessions.includes(gs)) return;
-        const now = Date.now();
-        if (!gs.reconnectStartedAt) gs.reconnectStartedAt = now;
-        const elapsed = now - gs.reconnectStartedAt;
-        if (elapsed >= RECONNECT_BUDGET_MS) { gs.retryBlocked = true; return; }
-        const jitterMs = Math.floor(Math.random() * 200);
-        const delayMs = Math.min((gs.reconnectDelay || RECONNECT_BASE_DELAY_MS) + jitterMs, RECONNECT_MAX_DELAY_MS);
-        gs.reconnectTimer = setTimeout(() => {
-          gs.reconnectTimer = null;
-          if (gridSessions.includes(gs) && (!gs.ws || gs.ws.readyState === WebSocket.CLOSED)) {
-            connectGridCellWs(gs);
-          }
-        }, delayMs);
-        gs.reconnectDelay = Math.min(Math.floor((gs.reconnectDelay || RECONNECT_BASE_DELAY_MS) * 1.8), RECONNECT_MAX_DELAY_MS);
+          },
+        });
+        delete gs._resetPty;
+        gs.ptyClient.connect();
       }
 
       function getGridCellElement(gs) {
@@ -3492,7 +3601,7 @@
         return document.querySelector('#desktop-grid-container .grid-cell[data-grid-index="' + idx + '"]');
       }
 
-      function showGridCellConflictOverlay(gs, ws) {
+      function showGridCellConflictOverlay(gs) {
         const cell = getGridCellElement(gs);
         if (!cell) return;
         removeGridCellConflictOverlay(gs);
@@ -3502,9 +3611,7 @@
         overlay.innerHTML = '<div class="conflict-msg">Active on another device</div><button class="conflict-btn" type="button">Take Control</button>';
         overlay.querySelector(".conflict-btn").addEventListener("click", (e) => {
           e.stopPropagation();
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "take_control" }));
-          }
+          if (gs.ptyClient) gs.ptyClient.sendTakeControl();
           // Don't remove overlay here — wait for control_granted to confirm
         });
         overlay.addEventListener("click", (e) => e.stopPropagation());
@@ -3528,9 +3635,7 @@
         overlay.querySelector(".conflict-btn").addEventListener("click", (e) => {
           e.stopPropagation();
           overlay.remove();
-          gs.retryBlocked = false;
-          gs.reconnectStartedAt = 0;
-          gs.reconnectDelay = RECONNECT_BASE_DELAY_MS;
+          if (gs.ptyClient) gs.ptyClient.resetRetry();
           connectGridCellWs(gs);
         });
         overlay.addEventListener("click", (e) => e.stopPropagation());
@@ -3627,9 +3732,8 @@
         if (idx < 0 || idx >= gridSessions.length) return;
         const gs = gridSessions[idx];
         // Cleanup
-        if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
+        if (gs.ptyClient) gs.ptyClient.close();
         if (gs.hydration) gs.hydration.cancel();
-        if (gs.ws) { try { gs.ws.close(); } catch {} }
         if (gs.term) { try { gs.term.dispose(); } catch {} }
         gridSessions.splice(idx, 1);
         // Adjust focus
@@ -3657,9 +3761,8 @@
         const restoreMachine = remaining ? (remaining.machine || "") : currentMachine;
         // Destroy all grid sessions
         for (const gs of gridSessions) {
-          if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
+          if (gs.ptyClient) gs.ptyClient.close();
           if (gs.hydration) gs.hydration.cancel();
-          if (gs.ws) { try { gs.ws.close(); } catch {} }
           if (gs.term) { try { gs.term.dispose(); } catch {} }
         }
         gridSessions = [];
@@ -3676,7 +3779,7 @@
         // Clear desktopTerm reference in case it's stale
         desktopTerm = null;
         desktopFitAddon = null;
-        desktopWs = null;
+        desktopPtyClient = null;
         desktopSearchAddon = null;
         // Restore single-terminal mode
         if (restoreSession) {
@@ -4963,64 +5066,27 @@
 
       // ── Desktop Terminal (xterm.js + /ws/pty binary WS) ──
 
-      let desktopReconnectTimer = null;
-      let desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
-      let desktopReconnectStartedAt = 0;
-      let desktopRetryBlocked = false;
+      let desktopPtyClient = null;
 
       // finishDesktopInitialPrefill — now delegated to desktopHydration.finish()
 
       function connectDesktopWs() {
-        if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
-        if (desktopRetryBlocked) return;
-        if (desktopWs && desktopWs.readyState <= WebSocket.OPEN) return;
-        let wsUrl;
-        if (currentMachine) {
-          const remote = new URL(currentMachine);
-          const proto = remote.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl = proto + "//" + remote.host + "/ws/pty?session=" + encodeURIComponent(currentSession);
-        } else {
-          const proto = location.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl = proto + "//" + location.host + "/ws/pty?session=" + encodeURIComponent(currentSession);
-        }
-        const ws = new WebSocket(wsUrl);
-        ws.binaryType = "arraybuffer";
-        desktopWs = ws;
-
-        ws.onopen = () => {
-          if (desktopReconnectStartedAt > 0) wpMetrics.reconnectCount++;
-          desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
-          desktopReconnectStartedAt = 0;
-          desktopRetryBlocked = false;
-          setConnState("live");
-          if (desktopFitAddon && desktopTerm) {
-            try { desktopFitAddon.fit(); } catch {}
-            ws.send(JSON.stringify({ type: "resize", cols: desktopTerm.cols, rows: desktopTerm.rows }));
-          }
-        };
-
-        ws.onmessage = (ev) => {
-          wpMetrics.wsMessagesReceived++;
-          // JSON text frames (viewer_conflict, etc.)
-          if (typeof ev.data === "string") {
-            try {
-              const msg = JSON.parse(ev.data);
-              if (msg.type === "viewer_conflict") {
-                showDesktopConflictOverlay(ws);
-              } else if (msg.type === "control_granted") {
-                removeDesktopConflictOverlay();
-                if (desktopFitAddon && desktopTerm) {
-                  try { desktopFitAddon.fit(); } catch {}
-                  ws.send(JSON.stringify({ type: "resize", cols: desktopTerm.cols, rows: desktopTerm.rows }));
-                  desktopTerm.focus();
-                }
-              }
-            } catch {}
-            return;
-          }
-          if (desktopTerm) {
+        if (desktopPtyClient && desktopPtyClient.isOpen) return;
+        if (desktopPtyClient) desktopPtyClient.close();
+        desktopPtyClient = createPtySocketClient({
+          session: currentSession,
+          machine: currentMachine || "",
+          getTermDimensions: () => desktopTerm ? { cols: desktopTerm.cols, rows: desktopTerm.rows } : null,
+          fitTerminal: () => { if (desktopFitAddon) desktopFitAddon.fit(); },
+          shouldReconnect: () => useDesktopTerminal && !!desktopTerm,
+          onOpen: (wasReconnect) => {
+            if (wasReconnect) wpMetrics.reconnectCount++;
+            setConnState("live");
+          },
+          onBinaryData: (data) => {
+            if (!desktopTerm) return;
+            wpMetrics.wsMessagesReceived++;
             const t0 = performance.now();
-            const data = new Uint8Array(ev.data);
             const finalizeWrite = () => {
               wpMetrics.recordLatency(performance.now() - t0);
               scheduleSnapshotSave(null);
@@ -5034,73 +5100,47 @@
               desktopTerm.write(data);
               finalizeWrite();
             }
-          }
-        };
-
-        ws.onclose = (ev) => {
-          const isCurrent = desktopWs === ws;
-          if (isCurrent) desktopWs = null;
-          removeDesktopConflictOverlay();
-          if (isCurrent) {
-            if (ev.code === 4002) {
+          },
+          onViewerConflict: () => showDesktopConflictOverlay(),
+          onControlGranted: () => {
+            removeDesktopConflictOverlay();
+            if (desktopTerm) desktopTerm.focus();
+          },
+          onDisconnected: (code, reason) => {
+            removeDesktopConflictOverlay();
+            if (code === 4002) {
               setConnState("displaced");
               return;
             }
-            if (ev.code === 4001) {
+            if (code === 4001) {
               setConnState("session-ended");
               const statusEl = document.getElementById("conn-status");
               if (statusEl) statusEl.textContent = "session unavailable \u2014 use \u2190 to go back";
               return;
             }
-            if (ev.code === 1000 && ev.reason === "pty exited") {
+            if (code === 1000 && reason === "pty exited") {
               setConnState("session-ended");
               return;
             }
-            scheduleDesktopReconnect();
-          }
-        };
-
-        ws.onerror = () => {};
+            desktopPtyClient.scheduleReconnect();
+          },
+          onReconnecting: () => setConnState("reconnecting"),
+          onReconnectExhausted: () => setConnState("offline"),
+        });
+        desktopPtyClient.connect();
       }
 
-      function scheduleDesktopReconnect() {
-        if (desktopReconnectTimer) return;
-        if (!useDesktopTerminal || !desktopTerm) return;
-        if (desktopRetryBlocked) return;
-        const now = Date.now();
-        if (!desktopReconnectStartedAt) desktopReconnectStartedAt = now;
-        const elapsed = now - desktopReconnectStartedAt;
-        const remaining = RECONNECT_BUDGET_MS - elapsed;
-        if (remaining <= 0) {
-          desktopRetryBlocked = true;
-          setConnState("offline");
-          return;
-        }
-        setConnState("reconnecting");
-        const jitterMs = Math.floor(Math.random() * 200);
-        const delayMs = Math.min(desktopReconnectDelay + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
-        desktopReconnectTimer = setTimeout(() => {
-          desktopReconnectTimer = null;
-          if (useDesktopTerminal && (!desktopWs || desktopWs.readyState === WebSocket.CLOSED)) {
-            connectDesktopWs();
-          }
-        }, delayMs);
-        desktopReconnectDelay = Math.min(Math.floor(desktopReconnectDelay * 1.8), RECONNECT_MAX_DELAY_MS);
-      }
-
-      function showDesktopConflictOverlay(ws) {
+      function showDesktopConflictOverlay() {
         const container = document.getElementById("desktop-terminal-container");
         if (!container) return;
         removeDesktopConflictOverlay();
         const overlay = document.createElement("div");
         overlay.className = "viewer-conflict-overlay";
         overlay.id = "desktop-conflict-overlay";
-        overlay.innerHTML = '<div class="conflict-msg">Session active on another device</div><button class="conflict-btn" type="button">Take Control</button>';
+        overlay.innerHTML = \'<div class="conflict-msg">Session active on another device</div><button class="conflict-btn" type="button">Take Control</button>\';
         overlay.querySelector(".conflict-btn").addEventListener("click", () => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "take_control" }));
-          }
-          // Don't remove overlay here — wait for control_granted to confirm
+          if (desktopPtyClient) desktopPtyClient.sendTakeControl();
+          // Don\'t remove overlay here \u2014 wait for control_granted to confirm
         });
         container.appendChild(overlay);
       }
@@ -5126,9 +5166,9 @@
 
         const { term, fitAddon, searchAddon } = createXtermInstance({
           scrollback: DESKTOP_TERMINAL_SCROLLBACK,
-          sendInput: (data) => desktopWs && desktopWs.readyState === WebSocket.OPEN && desktopWs.send(data),
-          sendMessage: (msg) => desktopWs && desktopWs.readyState === WebSocket.OPEN && desktopWs.send(msg),
-          canAcceptInput: () => !!(desktopWs && desktopWs.readyState === WebSocket.OPEN),
+          sendInput: (data) => desktopPtyClient && desktopPtyClient.send(data),
+          sendMessage: (msg) => desktopPtyClient && desktopPtyClient.send(msg),
+          canAcceptInput: () => !!(desktopPtyClient && desktopPtyClient.isOpen),
         });
         desktopTerm = term;
         desktopFitAddon = fitAddon;
@@ -5174,18 +5214,8 @@
 
       function destroyDesktopTerminal() {
         if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
-        if (desktopReconnectTimer) {
-          clearTimeout(desktopReconnectTimer);
-          desktopReconnectTimer = null;
-        }
+        if (desktopPtyClient) { desktopPtyClient.close(); desktopPtyClient = null; }
         if (desktopHydration) { desktopHydration.cancel(); desktopHydration = null; }
-        desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
-        desktopReconnectStartedAt = 0;
-        desktopRetryBlocked = false;
-        if (desktopWs) {
-          desktopWs.close();
-          desktopWs = null;
-        }
         if (desktopResizeHandler) {
           window.removeEventListener("resize", desktopResizeHandler);
           desktopResizeHandler = null;
@@ -5467,11 +5497,7 @@
 
       function retryDesktopConnection() {
         if (!useDesktopTerminal || !desktopTerm) return;
-        desktopRetryBlocked = false;
-        desktopReconnectStartedAt = 0;
-        desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
-        if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
-        if (desktopWs) { desktopWs.close(); desktopWs = null; }
+        if (desktopPtyClient) { desktopPtyClient.close(); desktopPtyClient = null; }
         setConnState("reconnecting");
         connectDesktopWs();
       }
@@ -5831,10 +5857,8 @@
         }
         if (name === currentSession && machineUrl === currentMachine) {
           // Same session — but reconnect if WS is dead/blocked
-          if (useDesktopTerminal && (!desktopWs || desktopWs.readyState !== WebSocket.OPEN)) {
-            desktopRetryBlocked = false;
-            desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
-            desktopReconnectStartedAt = 0;
+          if (useDesktopTerminal && !(desktopPtyClient && desktopPtyClient.isOpen)) {
+            if (desktopPtyClient) { desktopPtyClient.close(); desktopPtyClient = null; }
             connectDesktopWs();
           }
           return;
@@ -5959,9 +5983,7 @@
             if (useDesktopTerminal) {
               // Desktop: reset budget and reconnect if WS is dead (but not during grid view)
               if (desktopTerm && !isGridActive()) {
-                desktopRetryBlocked = false;
-                desktopReconnectStartedAt = 0;
-                desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
+                if (desktopPtyClient) desktopPtyClient.resetRetry();
                 connectDesktopWs();
               }
             } else {
