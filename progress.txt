@@ -87,3 +87,6 @@
 - Verified no remaining dead code from migration: old vars (`desktopTerm`, `desktopFitAddon`, `desktopSearchAddon`, `desktopPtyClient`, `desktopHydration`, `gs.term`, `gs.fitAddon`, `gs.ws`, etc.) were already removed during Phase 6-7 migration commits
 - Verified all shared controller functions (`createXtermInstance`, `createInitialHydrationController`, `createPtySocketClient`, `createPtyTerminalController`) are actively used
 - All 659 tests pass (5 pre-existing Playwright config failures unrelated)
+- Extracted reconnect backoff logic into `src/reconnect-logic.ts` — pure state machine (no timers/side effects)
+- Added 15 unit tests in `tests/unit/reconnect-logic.test.ts` covering exponential backoff, budget exhaustion, retry blocking, reset, and custom config
+- All 674 tests pass (5 pre-existing Playwright config failures unrelated)
