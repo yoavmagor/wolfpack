@@ -95,3 +95,17 @@
 - API: `createHydrationStateMachine(callbacks, config?)` → `{ status, pending, start(), finish(), cancel() }`
 - Added 22 unit tests in `tests/unit/hydration-logic.test.ts` covering pending transitions, finish-triggers-scroll (opens-at-bottom invariant), timeout fallback, and cancel
 - All 696 tests pass (5 pre-existing Playwright config failures unrelated)
+
+## Integration Tests: reset=1 PTY Reconnect & Take-Control Protocol — DONE
+- Added 8 new integration tests in `tests/integration/ws-terminal.test.ts`
+- **reset=1 reconnect path (5 tests):**
+  - reset=1 tears down existing entry and creates fresh one
+  - reset=1 with no existing entry creates normally
+  - Old detach handler does NOT tear down new entry after reset=1
+  - Multiple sequential reset=1 reconnects work correctly
+  - reset=1 also cleans up pending viewer on old entry
+- **Take-control protocol completeness (3 tests):**
+  - control_granted message is sent after take_control
+  - Pending viewer disconnect without take_control does not affect active viewer
+  - take_control creates fresh PTY entry (old entry replaced)
+- All tests pass (40 tests in file, 0 failures)
