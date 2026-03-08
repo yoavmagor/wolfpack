@@ -3432,6 +3432,181 @@
         };
       }
 
+      /**
+       * createPtyTerminalController — composes xterm, hydration, and WebSocket
+       * helpers into a single PTY terminal lifecycle controller.
+       *
+       * @param {object} opts
+       * @param {string} opts.session - tmux session name
+       * @param {string} [opts.machine=""] - remote machine URL ("" for local)
+       * @param {number} [opts.fontSize] - override font size
+       * @param {number} opts.scrollback - xterm scrollback lines
+       * @param {boolean} [opts.cursorBlink=true]
+       * @param {boolean} [opts.disableStdin=false]
+       * @param {() => boolean} [opts.shouldFocus] - hydration focus decision
+       * @param {number} [opts.hydrationTimeoutMs] - hydration reveal timeout
+       * @param {() => HTMLElement|null} [opts.getHydrationElement] - element to show/hide for hydration (defaults to mount container)
+       * @param {boolean} [opts.resetPty] - append &reset=1 on first connect
+       * @param {() => boolean} [opts.shouldReconnect] - guard for reconnect attempts
+       * @param {() => boolean} [opts.canAcceptInput] - override stdin guard (default: ptyClient.isOpen)
+       * @param {() => boolean} [opts.canSendResize] - override resize guard (default: canAcceptInput)
+       * @param {(Uint8Array) => void} [opts.onOutput] - called after data written to term
+       * @param {(boolean) => void} [opts.onOpen] - WebSocket opened (wasReconnect)
+       * @param {() => void} [opts.onViewerConflict]
+       * @param {() => void} [opts.onControlGranted]
+       * @param {(number, string) => void} [opts.onDisconnected]
+       * @param {() => void} [opts.onReconnecting]
+       * @param {() => void} [opts.onReconnectExhausted]
+       * @returns {{ mount, connect, focus, resize, dispose, scheduleReconnect, sendTakeControl, sendFitResize, send, resetRetry, term, fitAddon, searchAddon, ptyClient, hydration, isConnected, retryBlocked }}
+       */
+      function createPtyTerminalController(opts) {
+        let _container = null;
+        let _term = null;
+        let _fitAddon = null;
+        let _searchAddon = null;
+        let _hydration = null;
+        let _ptyClient = null;
+        let _hydrationStarted = false;
+
+        const _canAcceptInput = opts.canAcceptInput || (() => !!(_ptyClient && _ptyClient.isOpen));
+        const _canSendResize = opts.canSendResize || _canAcceptInput;
+        const _getHydrationElement = opts.getHydrationElement || (() => _container);
+
+        /**
+         * mount(container, { cached }?) — create xterm, open in container, load
+         * CanvasAddon, fit, create hydration controller (not yet started).
+         * Optionally write cached content.
+         */
+        function mount(container, mountOpts) {
+          if (_term) return; // already mounted
+          _container = container;
+
+          const result = createXtermInstance({
+            fontSize: opts.fontSize,
+            scrollback: opts.scrollback,
+            cursorBlink: opts.cursorBlink,
+            disableStdin: opts.disableStdin,
+            sendInput: (data) => _ptyClient && _ptyClient.send(data),
+            sendMessage: (msg) => _ptyClient && _ptyClient.send(msg),
+            canAcceptInput: _canAcceptInput,
+            canSendResize: _canSendResize,
+          });
+          _term = result.term;
+          _fitAddon = result.fitAddon;
+          _searchAddon = result.searchAddon;
+
+          _term.open(container);
+          try { _term.loadAddon(new CanvasAddon.CanvasAddon()); } catch (e) { console.warn("canvas addon failed:", e); }
+
+          // Hide hydration element (revealed by hydration.finish())
+          const hydrationEl = _getHydrationElement();
+          if (hydrationEl) hydrationEl.style.visibility = "hidden";
+
+          // Create hydration controller (started in connect())
+          _hydration = createInitialHydrationController({
+            getElement: _getHydrationElement,
+            getTerm: () => _term,
+            shouldFocus: opts.shouldFocus || (() => true),
+            timeoutMs: opts.hydrationTimeoutMs,
+          });
+
+          _fitAddon.fit();
+
+          if (mountOpts && mountOpts.cached) {
+            _term.write(mountOpts.cached, () => {
+              try { _term.scrollToBottom(); } catch {}
+            });
+          }
+        }
+
+        /**
+         * connect() — start hydration (first time only), create PTY WebSocket
+         * client, and open the connection.
+         */
+        function connect() {
+          if (_ptyClient && _ptyClient.isOpen) return;
+          if (_ptyClient) _ptyClient.close();
+
+          // Start hydration on first connect
+          if (!_hydrationStarted && _hydration) {
+            _hydration.start();
+            _hydrationStarted = true;
+          }
+
+          _ptyClient = createPtySocketClient({
+            session: opts.session,
+            machine: opts.machine || "",
+            resetPty: opts.resetPty,
+            getTermDimensions: () => _term ? { cols: _term.cols, rows: _term.rows } : null,
+            fitTerminal: () => { if (_fitAddon) _fitAddon.fit(); },
+            shouldReconnect: opts.shouldReconnect,
+            onOpen: opts.onOpen,
+            onBinaryData: (data) => {
+              if (!_term) return;
+              if (_hydration && _hydration.pending) {
+                _term.write(data, () => {
+                  if (_hydration) _hydration.finish();
+                  if (opts.onOutput) opts.onOutput(data);
+                });
+              } else {
+                _term.write(data);
+                if (opts.onOutput) opts.onOutput(data);
+              }
+            },
+            onViewerConflict: opts.onViewerConflict,
+            onControlGranted: opts.onControlGranted,
+            onDisconnected: opts.onDisconnected,
+            onReconnecting: opts.onReconnecting,
+            onReconnectExhausted: opts.onReconnectExhausted,
+          });
+          _ptyClient.connect();
+        }
+
+        function focus() {
+          if (_term) _term.focus();
+        }
+
+        function resize() {
+          if (_fitAddon) _fitAddon.fit();
+        }
+
+        /**
+         * dispose() — close socket, cancel hydration, dispose addons and terminal.
+         * Does NOT clean up view-specific DOM (containers, overlays, event listeners).
+         */
+        function dispose() {
+          if (_ptyClient) { _ptyClient.close(); _ptyClient = null; }
+          if (_hydration) { _hydration.cancel(); _hydration = null; }
+          _hydrationStarted = false;
+          if (_searchAddon) { try { _searchAddon.dispose(); } catch {} _searchAddon = null; }
+          if (_term) { try { _term.dispose(); } catch {} _term = null; }
+          _fitAddon = null;
+          _container = null;
+        }
+
+        return {
+          mount,
+          connect,
+          focus,
+          resize,
+          dispose,
+          // Delegation to pty client
+          scheduleReconnect: () => { if (_ptyClient) _ptyClient.scheduleReconnect(); },
+          sendTakeControl: () => { if (_ptyClient) _ptyClient.sendTakeControl(); },
+          sendFitResize: () => { if (_ptyClient) _ptyClient.sendFitResize(); },
+          send: (data) => { if (_ptyClient) _ptyClient.send(data); },
+          resetRetry: () => { if (_ptyClient) _ptyClient.resetRetry(); },
+          // Accessors
+          get term() { return _term; },
+          get fitAddon() { return _fitAddon; },
+          get searchAddon() { return _searchAddon; },
+          get ptyClient() { return _ptyClient; },
+          get hydration() { return _hydration; },
+          get isConnected() { return !!(_ptyClient && _ptyClient.isOpen); },
+          get retryBlocked() { return _ptyClient ? _ptyClient.retryBlocked : false; },
+        };
+      }
+
       let mobileWs = null;
       let mobileReconnectTimer = null;
       let mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
