@@ -3232,6 +3232,48 @@
         return { term, fitAddon, searchAddon };
       }
       const DESKTOP_INITIAL_PREFILL_TIMEOUT_MS = 1000;
+
+      /**
+       * Shared hydration controller for xterm.js terminals.
+       * Owns: pending state, timeout fallback, visibility reveal, scrollToBottom, optional focus.
+       * @param {{ getElement: () => HTMLElement|null, getTerm: () => Terminal|null, shouldFocus: () => boolean, timeoutMs?: number }} opts
+       */
+      function createInitialHydrationController(opts) {
+        let _pending = false;
+        let _timer = null;
+        const timeoutMs = opts.timeoutMs || DESKTOP_INITIAL_PREFILL_TIMEOUT_MS;
+
+        function finish() {
+          if (!_pending) return;
+          _pending = false;
+          if (_timer) { clearTimeout(_timer); _timer = null; }
+          const el = opts.getElement();
+          if (el) el.style.visibility = "visible";
+          const term = opts.getTerm();
+          if (term) {
+            try { term.scrollToBottom(); } catch {}
+            if (opts.shouldFocus()) term.focus();
+          }
+        }
+
+        function start() {
+          _pending = true;
+          if (_timer) clearTimeout(_timer);
+          _timer = setTimeout(finish, timeoutMs);
+        }
+
+        function cancel() {
+          _pending = false;
+          if (_timer) { clearTimeout(_timer); _timer = null; }
+        }
+
+        return {
+          get pending() { return _pending; },
+          start,
+          finish,
+          cancel,
+        };
+      }
       let mobileWs = null;
       let mobileReconnectTimer = null;
       let mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
@@ -3251,8 +3293,7 @@
       let desktopSearchAddon = null; // SearchAddon instance
       let desktopWs = null;
       let desktopResizeHandler = null;
-      let desktopInitialPrefillPending = false;
-      let desktopInitialPrefillTimer = null;
+      let desktopHydration = null; // createInitialHydrationController instance
       let useDesktopTerminal = false;
 
       // ── Multi-terminal grid state ──
@@ -3350,19 +3391,7 @@
         });
       }
 
-      function finishGridCellInitialPrefill(gs) {
-        if (!gs.initialPrefillPending) return;
-        gs.initialPrefillPending = false;
-        if (gs.initialPrefillTimer) {
-          clearTimeout(gs.initialPrefillTimer);
-          gs.initialPrefillTimer = null;
-        }
-        if (gs.term) {
-          if (gs.term.element) gs.term.element.style.visibility = "visible";
-          try { gs.term.scrollToBottom(); } catch {}
-          if (gridSessions[gridFocusIndex] === gs) gs.term.focus();
-        }
-      }
+      // finishGridCellInitialPrefill — now delegated to gs.hydration.finish()
 
       function connectGridCellWs(gs) {
         if (gs.ws && gs.ws.readyState <= WebSocket.OPEN) return;
@@ -3380,9 +3409,12 @@
         const ws = new WebSocket(wsUrl);
         ws.binaryType = "arraybuffer";
         gs.ws = ws;
-        gs.initialPrefillPending = true;
-        if (gs.initialPrefillTimer) clearTimeout(gs.initialPrefillTimer);
-        gs.initialPrefillTimer = setTimeout(() => finishGridCellInitialPrefill(gs), DESKTOP_INITIAL_PREFILL_TIMEOUT_MS);
+        gs.hydration = createInitialHydrationController({
+          getElement: () => gs.term && gs.term.element,
+          getTerm: () => gs.term,
+          shouldFocus: () => gridSessions[gridFocusIndex] === gs,
+        });
+        gs.hydration.start();
         ws.onopen = () => {
           gs.reconnectDelay = RECONNECT_BASE_DELAY_MS;
           gs.reconnectStartedAt = 0;
@@ -3411,8 +3443,8 @@
           }
           if (gs.term) {
             const data = new Uint8Array(ev.data);
-            if (gs.initialPrefillPending) {
-              gs.term.write(data, () => finishGridCellInitialPrefill(gs));
+            if (gs.hydration && gs.hydration.pending) {
+              gs.term.write(data, () => { if (gs.hydration) gs.hydration.finish(); });
             } else {
               gs.term.write(data);
             }
@@ -3551,8 +3583,7 @@
           reconnectDelay: RECONNECT_BASE_DELAY_MS,
           reconnectStartedAt: 0,
           retryBlocked: false,
-          initialPrefillPending: false,
-          initialPrefillTimer: null,
+          hydration: null,
         };
         gridSessions.push(gs);
         // If transitioning from single to grid, add current session too
@@ -3565,7 +3596,7 @@
               term: null, ws: null, fitAddon: null, searchAddon: null,
               reconnectTimer: null, reconnectDelay: RECONNECT_BASE_DELAY_MS,
               reconnectStartedAt: 0, retryBlocked: false,
-              initialPrefillPending: false, initialPrefillTimer: null,
+              hydration: null,
             });
           }
         }
@@ -3597,7 +3628,7 @@
         const gs = gridSessions[idx];
         // Cleanup
         if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
-        if (gs.initialPrefillTimer) clearTimeout(gs.initialPrefillTimer);
+        if (gs.hydration) gs.hydration.cancel();
         if (gs.ws) { try { gs.ws.close(); } catch {} }
         if (gs.term) { try { gs.term.dispose(); } catch {} }
         gridSessions.splice(idx, 1);
@@ -3627,7 +3658,7 @@
         // Destroy all grid sessions
         for (const gs of gridSessions) {
           if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
-          if (gs.initialPrefillTimer) clearTimeout(gs.initialPrefillTimer);
+          if (gs.hydration) gs.hydration.cancel();
           if (gs.ws) { try { gs.ws.close(); } catch {} }
           if (gs.term) { try { gs.term.dispose(); } catch {} }
         }
@@ -4937,20 +4968,7 @@
       let desktopReconnectStartedAt = 0;
       let desktopRetryBlocked = false;
 
-      function finishDesktopInitialPrefill() {
-        if (!desktopInitialPrefillPending) return;
-        desktopInitialPrefillPending = false;
-        if (desktopInitialPrefillTimer) {
-          clearTimeout(desktopInitialPrefillTimer);
-          desktopInitialPrefillTimer = null;
-        }
-        const container = document.getElementById("desktop-terminal-container");
-        if (container) container.style.visibility = "visible";
-        if (desktopTerm) {
-          try { desktopTerm.scrollToBottom(); } catch {}
-          desktopTerm.focus();
-        }
-      }
+      // finishDesktopInitialPrefill — now delegated to desktopHydration.finish()
 
       function connectDesktopWs() {
         if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
@@ -5007,10 +5025,9 @@
               wpMetrics.recordLatency(performance.now() - t0);
               scheduleSnapshotSave(null);
             };
-            if (desktopInitialPrefillPending) {
+            if (desktopHydration && desktopHydration.pending) {
               desktopTerm.write(data, () => {
-                try { desktopTerm.scrollToBottom(); } catch {}
-                finishDesktopInitialPrefill();
+                if (desktopHydration) desktopHydration.finish();
                 finalizeWrite();
               });
             } else {
@@ -5116,9 +5133,12 @@
         desktopTerm = term;
         desktopFitAddon = fitAddon;
         desktopSearchAddon = searchAddon;
-        desktopInitialPrefillPending = true;
-        if (desktopInitialPrefillTimer) clearTimeout(desktopInitialPrefillTimer);
-        desktopInitialPrefillTimer = setTimeout(finishDesktopInitialPrefill, DESKTOP_INITIAL_PREFILL_TIMEOUT_MS);
+        desktopHydration = createInitialHydrationController({
+          getElement: () => document.getElementById("desktop-terminal-container"),
+          getTerm: () => desktopTerm,
+          shouldFocus: () => true,
+        });
+        desktopHydration.start();
 
         term.open(container);
         try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch(e) { console.warn("canvas addon failed:", e); }
@@ -5158,11 +5178,7 @@
           clearTimeout(desktopReconnectTimer);
           desktopReconnectTimer = null;
         }
-        if (desktopInitialPrefillTimer) {
-          clearTimeout(desktopInitialPrefillTimer);
-          desktopInitialPrefillTimer = null;
-        }
-        desktopInitialPrefillPending = false;
+        if (desktopHydration) { desktopHydration.cancel(); desktopHydration = null; }
         desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
         desktopReconnectStartedAt = 0;
         desktopRetryBlocked = false;
