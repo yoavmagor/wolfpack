@@ -90,3 +90,8 @@
 - Extracted reconnect backoff logic into `src/reconnect-logic.ts` — pure state machine (no timers/side effects)
 - Added 15 unit tests in `tests/unit/reconnect-logic.test.ts` covering exponential backoff, budget exhaustion, retry blocking, reset, and custom config
 - All 674 tests pass (5 pre-existing Playwright config failures unrelated)
+- Extracted hydration state machine into `src/hydration-logic.ts` — pure state machine (no DOM/timers, caller provides callbacks)
+- States: idle → pending → finished|cancelled. All transitions are one-way (no re-entry).
+- API: `createHydrationStateMachine(callbacks, config?)` → `{ status, pending, start(), finish(), cancel() }`
+- Added 22 unit tests in `tests/unit/hydration-logic.test.ts` covering pending transitions, finish-triggers-scroll (opens-at-bottom invariant), timeout fallback, and cancel
+- All 696 tests pass (5 pre-existing Playwright config failures unrelated)
