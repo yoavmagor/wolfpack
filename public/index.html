@@ -3151,6 +3151,86 @@
       const SNAPSHOT_SAVE_INTERVAL = 2000;
       const DESKTOP_TERMINAL_SCROLLBACK = 6000;
       const GRID_TERMINAL_SCROLLBACK = 5000;
+
+      /**
+       * Creates a configured xterm.js Terminal with addons, copy/paste, and stdin wired up.
+       * @param {object} opts
+       * @param {number} opts.fontSize
+       * @param {number} opts.scrollback
+       * @param {boolean} [opts.cursorBlink=true]
+       * @param {boolean} [opts.disableStdin=false]
+       * @param {(data: Uint8Array) => void} opts.sendInput - send raw bytes to the backend
+       * @param {(msg: string) => void} opts.sendMessage - send a string message (e.g. resize JSON)
+       * @param {() => boolean} opts.canAcceptInput - guard for stdin (may include focus check)
+       * @param {() => boolean} [opts.canSendResize] - guard for resize messages (defaults to canAcceptInput)
+       * @returns {{ term: Terminal, fitAddon: FitAddon.FitAddon, searchAddon: SearchAddon.SearchAddon }}
+       */
+      function createXtermInstance({ fontSize, scrollback, cursorBlink = true, disableStdin = false, sendInput, sendMessage, canAcceptInput, canSendResize }) {
+        const shouldSendResize = canSendResize || canAcceptInput;
+        const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+        const termFontFamily = wpSettings.termFont === "alt"
+          ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
+          : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
+        const term = new Terminal({
+          cursorBlink,
+          disableStdin,
+          fontSize: fontSize != null ? fontSize : tp.fontSize,
+          lineHeight: tp.lineHeight,
+          fontFamily: termFontFamily,
+          theme: {
+            background: "#0a0a0a",
+            foreground: "#e0e0e0",
+            cursor: "#e0e0e0",
+            selectionBackground: "rgba(255,255,255,0.2)",
+          },
+          scrollback,
+          allowProposedApi: true,
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        const searchAddon = new SearchAddon.SearchAddon();
+        term.loadAddon(searchAddon);
+        try {
+          const unicodeAddon = new Unicode11Addon.Unicode11Addon();
+          term.loadAddon(unicodeAddon);
+          term.unicode.activeVersion = '11';
+        } catch {}
+
+        // Copy/paste
+        term.attachCustomKeyEventHandler((e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
+            navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+            return false;
+          }
+          if ((e.metaKey || e.ctrlKey) && e.key === "v" && e.type === "keydown") {
+            navigator.clipboard.readText().then(t => {
+              if (t && canAcceptInput()) sendInput(new TextEncoder().encode(t));
+            }).catch(() => {});
+            return false;
+          }
+          return true;
+        });
+
+        // Stdin forwarding
+        term.onData((data) => {
+          if (canAcceptInput()) sendInput(new TextEncoder().encode(data));
+        });
+        term.onBinary((data) => {
+          if (canAcceptInput()) {
+            const buf = new Uint8Array(data.length);
+            for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
+            sendInput(buf);
+          }
+        });
+
+        // Resize forwarding
+        term.onResize(({ cols, rows }) => {
+          if (shouldSendResize()) sendMessage(JSON.stringify({ type: "resize", cols, rows }));
+        });
+
+        return { term, fitAddon, searchAddon };
+      }
       const DESKTOP_INITIAL_PREFILL_TIMEOUT_MS = 1000;
       let mobileWs = null;
       let mobileReconnectTimer = null;
@@ -3231,69 +3311,20 @@
           // Mount xterm if not yet mounted
           if (!gs.term) {
             const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-            const termFontFamily = wpSettings.termFont === "alt"
-              ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
-              : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
-            const term = new Terminal({
+            const { term, fitAddon, searchAddon } = createXtermInstance({
+              fontSize: Math.max(tp.fontSize - 2, 10),
+              scrollback: GRID_TERMINAL_SCROLLBACK,
               cursorBlink: idx === gridFocusIndex,
               disableStdin: idx !== gridFocusIndex,
-              fontSize: Math.max(tp.fontSize - 2, 10),
-              lineHeight: tp.lineHeight,
-              fontFamily: termFontFamily,
-              theme: {
-                background: "#0a0a0a",
-                foreground: "#e0e0e0",
-                cursor: "#e0e0e0",
-                selectionBackground: "rgba(255,255,255,0.2)",
-              },
-              scrollback: GRID_TERMINAL_SCROLLBACK,
-              allowProposedApi: true,
+              sendInput: (data) => gs.ws && gs.ws.readyState === WebSocket.OPEN && gs.ws.send(data),
+              sendMessage: (msg) => gs.ws && gs.ws.readyState === WebSocket.OPEN && gs.ws.send(msg),
+              canAcceptInput: () => gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs,
+              canSendResize: () => !!(gs.ws && gs.ws.readyState === WebSocket.OPEN),
             });
-            const fitAddon = new FitAddon.FitAddon();
-            term.loadAddon(fitAddon);
-            const searchAddon = new SearchAddon.SearchAddon();
-            term.loadAddon(searchAddon);
-            try {
-              const unicodeAddon = new Unicode11Addon.Unicode11Addon();
-              term.loadAddon(unicodeAddon);
-              term.unicode.activeVersion = '11';
-            } catch {}
             term.open(cell);
+            if (term.element) term.element.style.visibility = "hidden";
             try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch {}
             // Don't fit yet — wait for layout to settle. WS connects after final fit.
-            // Wire stdin for focused cell
-            term.attachCustomKeyEventHandler((e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
-                navigator.clipboard.writeText(term.getSelection()).catch(() => {});
-                return false;
-              }
-              if ((e.metaKey || e.ctrlKey) && e.key === "v" && e.type === "keydown") {
-                navigator.clipboard.readText().then(t => {
-                  if (t && gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs) {
-                    gs.ws.send(new TextEncoder().encode(t));
-                  }
-                }).catch(() => {});
-                return false;
-              }
-              return true;
-            });
-            term.onData((data) => {
-              if (gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs) {
-                gs.ws.send(new TextEncoder().encode(data));
-              }
-            });
-            term.onBinary((data) => {
-              if (gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs) {
-                const buf = new Uint8Array(data.length);
-                for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
-                gs.ws.send(buf);
-              }
-            });
-            term.onResize(({ cols, rows }) => {
-              if (gs.ws && gs.ws.readyState === WebSocket.OPEN) {
-                gs.ws.send(JSON.stringify({ type: "resize", cols, rows }));
-              }
-            });
             gs.term = term;
             gs.fitAddon = fitAddon;
             gs.searchAddon = searchAddon;
@@ -3319,6 +3350,20 @@
         });
       }
 
+      function finishGridCellInitialPrefill(gs) {
+        if (!gs.initialPrefillPending) return;
+        gs.initialPrefillPending = false;
+        if (gs.initialPrefillTimer) {
+          clearTimeout(gs.initialPrefillTimer);
+          gs.initialPrefillTimer = null;
+        }
+        if (gs.term) {
+          if (gs.term.element) gs.term.element.style.visibility = "visible";
+          try { gs.term.scrollToBottom(); } catch {}
+          if (gridSessions[gridFocusIndex] === gs) gs.term.focus();
+        }
+      }
+
       function connectGridCellWs(gs) {
         if (gs.ws && gs.ws.readyState <= WebSocket.OPEN) return;
         const resetSuffix = gs._resetPty ? "&reset=1" : "";
@@ -3335,6 +3380,9 @@
         const ws = new WebSocket(wsUrl);
         ws.binaryType = "arraybuffer";
         gs.ws = ws;
+        gs.initialPrefillPending = true;
+        if (gs.initialPrefillTimer) clearTimeout(gs.initialPrefillTimer);
+        gs.initialPrefillTimer = setTimeout(() => finishGridCellInitialPrefill(gs), DESKTOP_INITIAL_PREFILL_TIMEOUT_MS);
         ws.onopen = () => {
           gs.reconnectDelay = RECONNECT_BASE_DELAY_MS;
           gs.reconnectStartedAt = 0;
@@ -3361,7 +3409,14 @@
             } catch {}
             return;
           }
-          if (gs.term) gs.term.write(new Uint8Array(ev.data));
+          if (gs.term) {
+            const data = new Uint8Array(ev.data);
+            if (gs.initialPrefillPending) {
+              gs.term.write(data, () => finishGridCellInitialPrefill(gs));
+            } else {
+              gs.term.write(data);
+            }
+          }
         };
         ws.onclose = (ev) => {
           if (gs.ws === ws) gs.ws = null;
@@ -3496,6 +3551,8 @@
           reconnectDelay: RECONNECT_BASE_DELAY_MS,
           reconnectStartedAt: 0,
           retryBlocked: false,
+          initialPrefillPending: false,
+          initialPrefillTimer: null,
         };
         gridSessions.push(gs);
         // If transitioning from single to grid, add current session too
@@ -3508,6 +3565,7 @@
               term: null, ws: null, fitAddon: null, searchAddon: null,
               reconnectTimer: null, reconnectDelay: RECONNECT_BASE_DELAY_MS,
               reconnectStartedAt: 0, retryBlocked: false,
+              initialPrefillPending: false, initialPrefillTimer: null,
             });
           }
         }
@@ -3539,6 +3597,7 @@
         const gs = gridSessions[idx];
         // Cleanup
         if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
+        if (gs.initialPrefillTimer) clearTimeout(gs.initialPrefillTimer);
         if (gs.ws) { try { gs.ws.close(); } catch {} }
         if (gs.term) { try { gs.term.dispose(); } catch {} }
         gridSessions.splice(idx, 1);
@@ -3568,6 +3627,7 @@
         // Destroy all grid sessions
         for (const gs of gridSessions) {
           if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
+          if (gs.initialPrefillTimer) clearTimeout(gs.initialPrefillTimer);
           if (gs.ws) { try { gs.ws.close(); } catch {} }
           if (gs.term) { try { gs.term.dispose(); } catch {} }
         }
@@ -5047,40 +5107,18 @@
         document.getElementById("cmd-palette").style.display = "none";
         document.getElementById("msg-preview").style.display = "none";
 
-        const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-        const termFontFamily = wpSettings.termFont === "alt"
-          ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
-          : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
-        const term = new Terminal({
-          cursorBlink: true,
-          fontSize: tp.fontSize,
-          lineHeight: tp.lineHeight,
-          fontFamily: termFontFamily,
-          theme: {
-            background: "#0a0a0a",
-            foreground: "#e0e0e0",
-            cursor: "#e0e0e0",
-            selectionBackground: "rgba(255,255,255,0.2)",
-          },
+        const { term, fitAddon, searchAddon } = createXtermInstance({
           scrollback: DESKTOP_TERMINAL_SCROLLBACK,
-          allowProposedApi: true,
+          sendInput: (data) => desktopWs && desktopWs.readyState === WebSocket.OPEN && desktopWs.send(data),
+          sendMessage: (msg) => desktopWs && desktopWs.readyState === WebSocket.OPEN && desktopWs.send(msg),
+          canAcceptInput: () => !!(desktopWs && desktopWs.readyState === WebSocket.OPEN),
         });
         desktopTerm = term;
+        desktopFitAddon = fitAddon;
+        desktopSearchAddon = searchAddon;
         desktopInitialPrefillPending = true;
         if (desktopInitialPrefillTimer) clearTimeout(desktopInitialPrefillTimer);
         desktopInitialPrefillTimer = setTimeout(finishDesktopInitialPrefill, DESKTOP_INITIAL_PREFILL_TIMEOUT_MS);
-
-        const fitAddon = new FitAddon.FitAddon();
-        desktopFitAddon = fitAddon;
-        term.loadAddon(fitAddon);
-
-        const searchAddon = new SearchAddon.SearchAddon();
-        desktopSearchAddon = searchAddon;
-        term.loadAddon(searchAddon);
-
-        const unicodeAddon = new Unicode11Addon.Unicode11Addon();
-        term.loadAddon(unicodeAddon);
-        term.unicode.activeVersion = '11';
 
         term.open(container);
         try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch(e) { console.warn("canvas addon failed:", e); }
@@ -5091,47 +5129,11 @@
           });
         }
 
-        term.attachCustomKeyEventHandler((e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
-            navigator.clipboard.writeText(term.getSelection()).catch(() => {});
-            return false;
-          }
-          if ((e.metaKey || e.ctrlKey) && e.key === "v" && e.type === "keydown") {
-            navigator.clipboard.readText().then(t => {
-              if (t && desktopWs && desktopWs.readyState === WebSocket.OPEN) {
-                desktopWs.send(new TextEncoder().encode(t));
-              }
-            }).catch(() => {});
-            return false;
-          }
-          return true;
-        });
-
-        term.onData((data) => {
-          if (desktopWs && desktopWs.readyState === WebSocket.OPEN) {
-            desktopWs.send(new TextEncoder().encode(data));
-          }
-        });
-
-        term.onBinary((data) => {
-          if (desktopWs && desktopWs.readyState === WebSocket.OPEN) {
-            const buf = new Uint8Array(data.length);
-            for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
-            desktopWs.send(buf);
-          }
-        });
-
         const onResize = () => {
           if (desktopFitAddon) desktopFitAddon.fit();
         };
         window.addEventListener("resize", onResize);
         desktopResizeHandler = onResize;
-
-        term.onResize(({ cols, rows }) => {
-          if (desktopWs && desktopWs.readyState === WebSocket.OPEN) {
-            desktopWs.send(JSON.stringify({ type: "resize", cols, rows }));
-          }
-        });
 
         const onKeyDown = (e) => {
           if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
