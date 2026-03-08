@@ -1,0 +1,81 @@
+# Progress Log
+
+## Phase 1: Inventory And Freeze Behavior — DONE
+- Created `docs/terminal-lifecycle-inventory.md`
+- Documented server-side PTY lifecycle (already unified in websocket.ts)
+- Documented both client-side stacks: single desktop terminal + grid cell terminal
+- Cataloged all shared behavior (5 categories, each with side-by-side comparison)
+- Cataloged all view-specific behavior (single-only vs grid-only)
+- Captured 7 invariants that must hold after refactoring (INV-1 through INV-7)
+
+## Phase 2: Extract Shared Terminal Construction — DONE
+- Created `createXtermInstance()` helper function in `public/index.html`
+- Extracts: Terminal option construction, theme/font/scrollback config, addon loading (FitAddon, SearchAddon, Unicode11Addon), copy/paste handling, stdin forwarding (onData/onBinary), resize forwarding (onResize)
+- Callbacks kept external: `sendInput`, `sendMessage`, `canAcceptInput`, `canSendResize`
+- Refactored both call sites: desktop single terminal + grid cell terminals
+- Grid uses separate `canSendResize` (ws-open only) vs `canAcceptInput` (ws-open + focus check) to preserve original behavior
+- Regenerated `src/public-assets.ts`
+- All 659 tests pass
+
+## Phase 3: Extract Shared Initial Hydration Controller — DONE
+- Created `createInitialHydrationController(opts)` helper in `public/index.html`
+- Owns: pending state, timeout fallback (1000ms default), visibility reveal, scrollToBottom, conditional focus
+- API: `{ pending (getter), start(), finish(), cancel() }`
+- Accepts: `getElement()`, `getTerm()`, `shouldFocus()`, `timeoutMs?`
+- Replaced desktop terminal: `desktopInitialPrefillPending` + `desktopInitialPrefillTimer` + `finishDesktopInitialPrefill()` → single `desktopHydration` instance
+- Replaced grid cells: `gs.initialPrefillPending` + `gs.initialPrefillTimer` + `finishGridCellInitialPrefill(gs)` → `gs.hydration` instance
+- Updated all 4 call sites: init, onmessage (first-data callback), destroy/cleanup
+- Desktop `shouldFocus: () => true`; grid `shouldFocus: () => gridSessions[gridFocusIndex] === gs`
+- All 659 tests pass (5 pre-existing Playwright config failures unrelated)
+
+## Phase 4: Extract Shared PTY WebSocket Client — DONE
+- Created `createPtySocketClient(opts)` helper in `public/index.html`
+- Owns: WebSocket URL construction (machine-aware wss/ws), socket lifecycle, `binaryType = "arraybuffer"`, binary/text frame dispatch, control message parsing (viewer_conflict, control_granted), initial resize handshake (`sendFitResize()`), reconnect backoff (jitter, budget, max delay)
+- API: `{ connect(), scheduleReconnect(), sendFitResize(), sendResize(), sendTakeControl(), send(), close(), resetRetry(), ws (getter), isOpen (getter), retryBlocked (getter) }`
+- Hooks: `onOpen(wasReconnect)`, `onBinaryData(Uint8Array)`, `onViewerConflict()`, `onControlGranted()`, `onDisconnected(code, reason)`, `onReconnecting()`, `onReconnectExhausted()`, `shouldReconnect()`
+- Callbacks: `getTermDimensions()`, `fitTerminal()` — used for fit+resize handshake on open and control_granted
+- Refactored grid cells: `gs.ws` + `gs.reconnectTimer/Delay/StartedAt/retryBlocked` → `gs.ptyClient`
+- Refactored desktop: `desktopWs` + `desktopReconnectTimer/Delay/StartedAt/RetryBlocked` → `desktopPtyClient`
+- Removed `scheduleGridCellReconnect()` and `scheduleDesktopReconnect()` — now handled internally by the client
+- Updated all conflict/displaced overlay functions, cleanup paths (removeFromGrid, exitGridMode, destroyDesktopTerminal, retryDesktopConnection), and session-switch reconnect logic
+- Regenerated `src/public-assets.ts`
+- All 659 tests pass (5 pre-existing Playwright config failures unrelated)
+
+## Phase 5: Build Shared PTY Terminal Controller — DONE
+- Created `createPtyTerminalController(opts)` in `public/index.html`
+- Composes all three Phase 2-4 helpers: `createXtermInstance`, `createInitialHydrationController`, `createPtySocketClient`
+- Lifecycle API: `mount(container, {cached}?)`, `connect()`, `focus()`, `resize()`, `dispose()`
+- Delegation methods: `scheduleReconnect()`, `sendTakeControl()`, `sendFitResize()`, `send()`, `resetRetry()`
+- Read-only accessors: `term`, `fitAddon`, `searchAddon`, `ptyClient`, `hydration`, `isConnected`, `retryBlocked`
+- Internalizes: xterm↔socket wiring, binary data→term.write, hydration finish on first data, CanvasAddon loading, visibility hide/reveal
+- View-specific hooks kept external: `onOutput`, `onOpen`, `onViewerConflict`, `onControlGranted`, `onDisconnected`, `onReconnecting`, `onReconnectExhausted`
+- Configurable guards: `canAcceptInput`, `canSendResize` (for grid focus rules), `shouldReconnect`
+- Configurable hydration: `getHydrationElement` (defaults to mount container), `shouldFocus`, `hydrationTimeoutMs`
+- Hydration created in `mount()`, started in `connect()` — avoids timer running during grid layout settle
+- Regenerated `src/public-assets.ts`
+- All 659 tests pass (5 pre-existing Playwright config failures unrelated)
+
+## Phase 6: Migrate Single-Session Desktop View — DONE
+- Replaced 5 module-level state vars (`desktopTerm`, `desktopFitAddon`, `desktopSearchAddon`, `desktopPtyClient`, `desktopHydration`) with single `desktopController` instance
+- Rewrote `initDesktopTerminal(cached)` to create `createPtyTerminalController()` → `mount()` → `connect()`, passing all event callbacks (metrics, conflict overlay, connection state, reconnect) at construction time
+- Rewrote `connectDesktopWs()` as thin wrapper: `desktopController.connect()`
+- Rewrote `destroyDesktopTerminal()` to use `desktopController.dispose()` + DOM cleanup (event listeners, container visibility, mobile element restore)
+- Updated ~30 reference sites across the file: `applyTermToXterm()`, `addToGrid()`, `exitGridMode()`, `flushSnapshot()`, `setConnState()`, `retryDesktopConnection()`, `switchSession()`, visibility change handler, Cmd+K clear, search (close/do/next/prev), sidebar transition refit
+- Kept outside controller: connection state badge (`setConnState`), conflict overlay DOM (`showDesktopConflictOverlay`/`removeDesktopConflictOverlay`), search keybindings, window resize listener, container ownership/visibility, session navigation logic
+- Minor behavioral change: dropped per-message render latency metric (`wpMetrics.recordLatency`) from desktop path — the controller's `onOutput` hook fires post-write without pre-write timestamp context. Message count and snapshot scheduling preserved via `onOutput`.
+- All 659 tests pass (5 pre-existing Playwright config failures unrelated)
+
+## Phase 7: Migrate Grid Cells — DONE
+- Replaced per-cell raw wiring (`createXtermInstance` + `createInitialHydrationController` + `createPtySocketClient`) with single `createPtyTerminalController()` instance per grid cell
+- Simplified `gridSessions` object: removed `term`, `ws`, `fitAddon`, `searchAddon`, `reconnectTimer`, `reconnectDelay`, `reconnectStartedAt`, `retryBlocked`, `hydration` fields → replaced with single `controller` field
+- Rewrote `renderGridCells()`: creates controller with `createPtyTerminalController()` + `mount(cell)`, passing grid-specific callbacks at construction time (focus-gated `canAcceptInput`, unfocused `canSendResize`, viewer conflict/disconnect handlers)
+- Removed `connectGridCellWs()` entirely — replaced by `gs.controller.connect()` called after layout settles
+- Updated `setGridFocus()`: accesses `gs.controller.term.options` for stdin/cursor toggling, `gs.controller.focus()` for terminal focus
+- Updated `removeFromGrid()` / `exitGridMode()`: single `gs.controller.dispose()` replaces manual 3-step cleanup (ptyClient.close + hydration.cancel + term.dispose)
+- Updated `fitAllGridCells()`: `gs.controller.resize()` replaces `gs.fitAddon.fit()`
+- Updated `addToGrid()`: simplified gs object construction (3 fields vs 11)
+- Updated overlay functions: `gs.controller.sendTakeControl()`, `gs.controller.resetRetry()`, `gs.controller.connect()`
+- Updated Cmd+K handler: `gs.controller.term.clear()`
+- Kept outside controller (grid-specific): `gridSessions` array, `gridFocusIndex`, per-cell DOM (headers, close buttons, focus borders), add/remove behavior, overlay DOM, sidebar sync
+- Behavioral improvement: hydration now runs only once per cell (on first connect) instead of re-hiding terminal on every reconnect
+- All 659 tests pass (5 pre-existing Playwright config failures unrelated)

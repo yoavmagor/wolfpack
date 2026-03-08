@@ -3626,7 +3626,7 @@
       let useDesktopTerminal = false;
 
       // ── Multi-terminal grid state ──
-      let gridSessions = [];        // [{session, machine, term, ws, fitAddon, searchAddon, reconnectTimer, reconnectDelay, reconnectStartedAt, retryBlocked}]
+      let gridSessions = [];        // [{session, machine, controller}]
       let gridFocusIndex = 0;       // which cell is interactive
       const MAX_GRID_CELLS = 6;
 
@@ -3678,30 +3678,42 @@
             removeFromGrid(idx);
           });
           container.appendChild(cell);
-          // Mount xterm if not yet mounted
-          if (!gs.term) {
+          // Mount controller if not yet created
+          if (!gs.controller) {
             const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-            const { term, fitAddon, searchAddon } = createXtermInstance({
+            gs.controller = createPtyTerminalController({
+              session: gs.session,
+              machine: gs.machine || "",
               fontSize: Math.max(tp.fontSize - 2, 10),
               scrollback: GRID_TERMINAL_SCROLLBACK,
               cursorBlink: idx === gridFocusIndex,
               disableStdin: idx !== gridFocusIndex,
-              sendInput: (data) => gs.ptyClient && gs.ptyClient.send(data),
-              sendMessage: (msg) => gs.ptyClient && gs.ptyClient.send(msg),
-              canAcceptInput: () => !!(gs.ptyClient && gs.ptyClient.isOpen && gridSessions[gridFocusIndex] === gs),
-              canSendResize: () => !!(gs.ptyClient && gs.ptyClient.isOpen),
+              resetPty: gs._resetPty,
+              shouldFocus: () => gridSessions[gridFocusIndex] === gs,
+              shouldReconnect: () => gridSessions.includes(gs),
+              canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && gridSessions[gridFocusIndex] === gs),
+              canSendResize: () => !!(gs.controller && gs.controller.isConnected),
+              onViewerConflict: () => showGridCellConflictOverlay(gs),
+              onControlGranted: () => {
+                removeGridCellConflictOverlay(gs);
+                if (gridSessions[gridFocusIndex] === gs) gs.controller.focus();
+              },
+              onDisconnected: (code) => {
+                removeGridCellConflictOverlay(gs);
+                if (!gridSessions.includes(gs)) return;
+                if (code === 4002) {
+                  gs.controller.connect();
+                } else {
+                  gs.controller.scheduleReconnect();
+                }
+              },
             });
-            term.open(cell);
-            if (term.element) term.element.style.visibility = "hidden";
-            try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch {}
-            // Don't fit yet — wait for layout to settle. WS connects after final fit.
-            gs.term = term;
-            gs.fitAddon = fitAddon;
-            gs.searchAddon = searchAddon;
+            delete gs._resetPty;
+            gs.controller.mount(cell);
             gs._needsConnect = true;  // connect after final fit
           } else {
             // Re-attach existing terminal to new cell DOM
-            cell.appendChild(gs.term.element);
+            cell.appendChild(gs.controller.term.element);
           }
         });
         updateGridLayout();
@@ -3713,58 +3725,14 @@
             gridSessions.forEach(gs => {
               if (gs._needsConnect) {
                 delete gs._needsConnect;
-                connectGridCellWs(gs);
+                gs.controller.connect();
               }
             });
           }, 100);
         });
       }
 
-      // finishGridCellInitialPrefill — now delegated to gs.hydration.finish()
-
-      function connectGridCellWs(gs) {
-        if (gs.ptyClient && gs.ptyClient.isOpen) return;
-        if (gs.ptyClient) gs.ptyClient.close();
-        gs.hydration = createInitialHydrationController({
-          getElement: () => gs.term && gs.term.element,
-          getTerm: () => gs.term,
-          shouldFocus: () => gridSessions[gridFocusIndex] === gs,
-        });
-        gs.hydration.start();
-        gs.ptyClient = createPtySocketClient({
-          session: gs.session,
-          machine: gs.machine || "",
-          resetPty: gs._resetPty,
-          getTermDimensions: () => gs.term ? { cols: gs.term.cols, rows: gs.term.rows } : null,
-          fitTerminal: () => { if (gs.fitAddon) gs.fitAddon.fit(); },
-          shouldReconnect: () => gridSessions.includes(gs),
-          onBinaryData: (data) => {
-            if (!gs.term) return;
-            if (gs.hydration && gs.hydration.pending) {
-              gs.term.write(data, () => { if (gs.hydration) gs.hydration.finish(); });
-            } else {
-              gs.term.write(data);
-            }
-          },
-          onViewerConflict: () => showGridCellConflictOverlay(gs),
-          onControlGranted: () => {
-            removeGridCellConflictOverlay(gs);
-            if (gridSessions[gridFocusIndex] === gs && gs.term) gs.term.focus();
-          },
-          onDisconnected: (code) => {
-            removeGridCellConflictOverlay(gs);
-            if (!gridSessions.includes(gs)) return;
-            if (code === 4002) {
-              // Immediate reconnect on displace
-              connectGridCellWs(gs);
-            } else {
-              gs.ptyClient.scheduleReconnect();
-            }
-          },
-        });
-        delete gs._resetPty;
-        gs.ptyClient.connect();
-      }
+      // connectGridCellWs — replaced by gs.controller.connect()
 
       function getGridCellElement(gs) {
         const idx = gridSessions.indexOf(gs);
@@ -3782,7 +3750,7 @@
         overlay.innerHTML = '<div class="conflict-msg">Active on another device</div><button class="conflict-btn" type="button">Take Control</button>';
         overlay.querySelector(".conflict-btn").addEventListener("click", (e) => {
           e.stopPropagation();
-          if (gs.ptyClient) gs.ptyClient.sendTakeControl();
+          if (gs.controller) gs.controller.sendTakeControl();
           // Don't remove overlay here — wait for control_granted to confirm
         });
         overlay.addEventListener("click", (e) => e.stopPropagation());
@@ -3806,8 +3774,8 @@
         overlay.querySelector(".conflict-btn").addEventListener("click", (e) => {
           e.stopPropagation();
           overlay.remove();
-          if (gs.ptyClient) gs.ptyClient.resetRetry();
-          connectGridCellWs(gs);
+          if (gs.controller) gs.controller.resetRetry();
+          gs.controller.connect();
         });
         overlay.addEventListener("click", (e) => e.stopPropagation());
         cell.appendChild(overlay);
@@ -3819,10 +3787,10 @@
         gridFocusIndex = idx;
         // Update xterm stdin/cursor for old + new focus
         gridSessions.forEach((gs, i) => {
-          if (!gs.term) return;
+          if (!gs.controller || !gs.controller.term) return;
           const focused = i === idx;
-          gs.term.options.disableStdin = !focused;
-          gs.term.options.cursorBlink = focused;
+          gs.controller.term.options.disableStdin = !focused;
+          gs.controller.term.options.cursorBlink = focused;
         });
         // Update cell border highlights
         const cells = document.querySelectorAll("#desktop-grid-container .grid-cell");
@@ -3836,7 +3804,7 @@
           currentMachine = focusedGs.machine || "";
           renderSidebar();
           // Focus the terminal
-          focusedGs.term?.focus();
+          if (focusedGs.controller) focusedGs.controller.focus();
         }
       }
 
@@ -3851,15 +3819,7 @@
         const gs = {
           session,
           machine: machine || "",
-          term: null,
-          ws: null,
-          fitAddon: null,
-          searchAddon: null,
-          reconnectTimer: null,
-          reconnectDelay: RECONNECT_BASE_DELAY_MS,
-          reconnectStartedAt: 0,
-          retryBlocked: false,
-          hydration: null,
+          controller: null,
         };
         gridSessions.push(gs);
         // If transitioning from single to grid, add current session too
@@ -3869,10 +3829,7 @@
             gridSessions.unshift({
               session: currentSession,
               machine: currentMachine,
-              term: null, ws: null, fitAddon: null, searchAddon: null,
-              reconnectTimer: null, reconnectDelay: RECONNECT_BASE_DELAY_MS,
-              reconnectStartedAt: 0, retryBlocked: false,
-              hydration: null,
+              controller: null,
             });
           }
         }
@@ -3903,9 +3860,7 @@
         if (idx < 0 || idx >= gridSessions.length) return;
         const gs = gridSessions[idx];
         // Cleanup
-        if (gs.ptyClient) gs.ptyClient.close();
-        if (gs.hydration) gs.hydration.cancel();
-        if (gs.term) { try { gs.term.dispose(); } catch {} }
+        if (gs.controller) gs.controller.dispose();
         gridSessions.splice(idx, 1);
         // Adjust focus
         if (gridFocusIndex >= gridSessions.length) gridFocusIndex = Math.max(0, gridSessions.length - 1);
@@ -3932,9 +3887,7 @@
         const restoreMachine = remaining ? (remaining.machine || "") : currentMachine;
         // Destroy all grid sessions
         for (const gs of gridSessions) {
-          if (gs.ptyClient) gs.ptyClient.close();
-          if (gs.hydration) gs.hydration.cancel();
-          if (gs.term) { try { gs.term.dispose(); } catch {} }
+          if (gs.controller) gs.controller.dispose();
         }
         gridSessions = [];
         gridFocusIndex = 0;
@@ -3961,8 +3914,8 @@
 
       function fitAllGridCells() {
         for (const gs of gridSessions) {
-          if (gs.fitAddon) {
-            try { gs.fitAddon.fit(); } catch {}
+          if (gs.controller) {
+            try { gs.controller.resize(); } catch {}
           }
         }
       }
@@ -6358,7 +6311,7 @@
           e.stopPropagation();
           if (isGridActive()) {
             const gs = gridSessions[gridFocusIndex];
-            if (gs && gs.term) gs.term.clear();
+            if (gs && gs.controller && gs.controller.term) gs.controller.term.clear();
           } else if (desktopController?.term) {
             desktopController.term.clear();
           }
