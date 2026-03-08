@@ -3761,24 +3761,6 @@
         cell.querySelectorAll(".viewer-conflict-overlay").forEach(el => el.remove());
       }
 
-      function showGridCellDisplacedOverlay(gs) {
-        const cell = getGridCellElement(gs);
-        if (!cell) return;
-        removeGridCellConflictOverlay(gs);
-        const overlay = document.createElement("div");
-        overlay.className = "viewer-conflict-overlay";
-        overlay.dataset.conflictType = "displaced";
-        overlay.innerHTML = '<div class="conflict-msg">Taken over by another viewer</div><button class="conflict-btn" type="button">Reconnect</button>';
-        overlay.querySelector(".conflict-btn").addEventListener("click", (e) => {
-          e.stopPropagation();
-          overlay.remove();
-          if (gs.controller) gs.controller.resetRetry();
-          gs.controller.connect();
-        });
-        overlay.addEventListener("click", (e) => e.stopPropagation());
-        cell.appendChild(overlay);
-      }
-
       function setGridFocus(idx) {
         if (idx < 0 || idx >= gridSessions.length) return;
         const prev = gridFocusIndex;
