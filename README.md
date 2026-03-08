@@ -4,6 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
 [![Version](https://img.shields.io/github/v/release/almogdepaz/wolfpack?label=version)](https://github.com/almogdepaz/wolfpack/releases)
+[![GitHub stars](https://img.shields.io/github/stars/almogdepaz/wolfpack?style=social)](https://github.com/almogdepaz/wolfpack/stargazers)
 
 ```
         ...:.
@@ -236,6 +237,12 @@ Compiles for: linux-x64, linux-arm64, darwin-x64, darwin-arm64.
 - Branch off `main`
 - Tests must pass (`bun test`)
 - Keep PRs focused — one feature or fix per PR
+
+## Community & Support
+
+- 💬 [Open a Discussion](https://github.com/almogdepaz/wolfpack/discussions) — questions, ideas, show & tell
+- 🐛 [File an Issue](https://github.com/almogdepaz/wolfpack/issues) — bugs and feature requests
+- ⭐ **Star the repo** if Wolfpack saves you time — it helps others find it
 
 ## License
 
