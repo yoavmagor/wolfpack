@@ -109,3 +109,13 @@
   - Pending viewer disconnect without take_control does not affect active viewer
   - take_control creates fresh PTY entry (old entry replaced)
 - All tests pass (40 tests in file, 0 failures)
+
+## Input-Gating Unit Tests — DONE
+- Extracted `canAcceptInput()`, `canSendResize()`, `canAcceptInputDefault()`, `computeInputGate()` into `src/grid-logic.ts`
+- Pure functions mirroring the inline lambdas from `public/index.html` grid cell creation
+- `canAcceptInput`: requires controller + connected + focused (all three)
+- `canSendResize`: requires controller + connected (no focus check — allows resize on unfocused cells)
+- `canAcceptInputDefault`: non-grid fallback, just ptyClient + isOpen
+- `computeInputGate`: derives InputGateState from grid array + focus/cell indices + connection state
+- Added 19 new tests in `tests/unit/grid-logic.test.ts` across 4 describe blocks
+- All 47 grid-logic tests pass (was 28, now 47)

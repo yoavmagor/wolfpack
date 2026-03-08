@@ -145,3 +145,55 @@ export function gridArrowNav(
   if (newIndex < 0 || newIndex >= cellCount) return currentIndex;
   return newIndex;
 }
+
+/**
+ * Input-gating state for a grid cell.
+ * Mirrors the checks used in the frontend's canAcceptInput/canSendResize lambdas.
+ */
+export interface InputGateState {
+  hasController: boolean;
+  isConnected: boolean;
+  isFocused: boolean;
+}
+
+/**
+ * Whether a grid cell should accept keyboard/paste input.
+ * Requires: controller exists AND connected AND cell is focused.
+ * Frontend equivalent: `!!(gs.controller && gs.controller.isConnected && gridSessions[gridFocusIndex] === gs)`
+ */
+export function canAcceptInput(state: InputGateState): boolean {
+  return state.hasController && state.isConnected && state.isFocused;
+}
+
+/**
+ * Whether a grid cell should send resize events.
+ * Requires: controller exists AND connected (no focus requirement).
+ * Frontend equivalent: `!!(gs.controller && gs.controller.isConnected)`
+ */
+export function canSendResize(state: InputGateState): boolean {
+  return state.hasController && state.isConnected;
+}
+
+/**
+ * Default input gate (non-grid / single terminal mode).
+ * Only checks that PTY client exists and socket is open.
+ */
+export function canAcceptInputDefault(hasPtyClient: boolean, isOpen: boolean): boolean {
+  return hasPtyClient && isOpen;
+}
+
+/**
+ * Compute InputGateState for a grid cell given current grid state.
+ */
+export function computeInputGate(
+  gridSessions: GridSession[],
+  focusIndex: number,
+  cellIndex: number,
+  isConnected: boolean,
+): InputGateState {
+  return {
+    hasController: true, // caller only invokes this if controller exists
+    isConnected,
+    isFocused: cellIndex >= 0 && cellIndex < gridSessions.length && focusIndex === cellIndex,
+  };
+}
