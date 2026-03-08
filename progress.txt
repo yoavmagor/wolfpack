@@ -79,3 +79,11 @@
 - Kept outside controller (grid-specific): `gridSessions` array, `gridFocusIndex`, per-cell DOM (headers, close buttons, focus borders), add/remove behavior, overlay DOM, sidebar sync
 - Behavioral improvement: hydration now runs only once per cell (on first connect) instead of re-hiding terminal on every reconnect
 - All 659 tests pass (5 pre-existing Playwright config failures unrelated)
+
+## Phase 8: Remove Dead Code — DONE
+- Removed dead `poll()` function (was never called — leftover from older polling pattern)
+- Inlined `enterFastPoll()` wrapper (was just `connectMobileTerminalWs()`) at 3 call sites
+- Removed stale comment `// connectGridCellWs — replaced by gs.controller.connect()`
+- Verified no remaining dead code from migration: old vars (`desktopTerm`, `desktopFitAddon`, `desktopSearchAddon`, `desktopPtyClient`, `desktopHydration`, `gs.term`, `gs.fitAddon`, `gs.ws`, etc.) were already removed during Phase 6-7 migration commits
+- Verified all shared controller functions (`createXtermInstance`, `createInitialHydrationController`, `createPtySocketClient`, `createPtyTerminalController`) are actively used
+- All 659 tests pass (5 pre-existing Playwright config failures unrelated)

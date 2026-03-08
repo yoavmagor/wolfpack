@@ -3027,7 +3027,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ session: currentSession, text: cmd.cmd }),
           }, currentMachine);
-          enterFastPoll();
+          connectMobileTerminalWs();
         } catch {
           wpMetrics.sendFailCount++;
         }
@@ -3731,8 +3731,6 @@
           }, 100);
         });
       }
-
-      // connectGridCellWs — replaced by gs.controller.connect()
 
       function getGridCellElement(gs) {
         const idx = gridSessions.indexOf(gs);
@@ -5524,10 +5522,6 @@
         connectMobileTerminalWs();
       }
 
-      function enterFastPoll() {
-        connectMobileTerminalWs();
-      }
-
       function stopPolling() {
         if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
         mobileStreamingActive = false;
@@ -5576,10 +5570,6 @@
         else retryTerminalConnection();
       }
 
-      async function poll() {
-        startPolling(false);
-      }
-
       let enterRetryTimer = null;
 
       async function sendMsg() {
@@ -5605,7 +5595,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ session: currentSession, text: text.replace(/\n/g, " ") }),
           }, currentMachine);
-          enterFastPoll();
+          connectMobileTerminalWs();
 
           // Enter retry: if output hasn't changed within 800ms, Enter may have been dropped.
           // Timer is cleared on any pane change, so this only fires if truly stuck.
@@ -5648,7 +5638,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ session: currentSession, key }),
           }, currentMachine);
-          enterFastPoll();
+          connectMobileTerminalWs();
         } catch {
           wpMetrics.sendFailCount++;
         }
