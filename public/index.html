@@ -3235,18 +3235,23 @@
 
       /**
        * Shared hydration controller for xterm.js terminals.
-       * Owns: pending state, timeout fallback, visibility reveal, scrollToBottom, optional focus.
-       * @param {{ getElement: () => HTMLElement|null, getTerm: () => Terminal|null, shouldFocus: () => boolean, timeoutMs?: number }} opts
+       * Owns: pending state, timeout fallback, visibility reveal, scrollToBottom,
+       * optional focus, and a short quiet-period debounce so initial history bursts
+       * can settle before the terminal becomes visible.
+       * @param {{ getElement: () => HTMLElement|null, getTerm: () => Terminal|null, shouldFocus: () => boolean, timeoutMs?: number, settleMs?: number }} opts
        */
       function createInitialHydrationController(opts) {
         let _pending = false;
-        let _timer = null;
+        let _fallbackTimer = null;
+        let _settleTimer = null;
         const timeoutMs = opts.timeoutMs || DESKTOP_INITIAL_PREFILL_TIMEOUT_MS;
+        const settleMs = opts.settleMs || 80;
 
         function finish() {
           if (!_pending) return;
           _pending = false;
-          if (_timer) { clearTimeout(_timer); _timer = null; }
+          if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+          if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null; }
           const el = opts.getElement();
           if (el) el.style.visibility = "visible";
           const term = opts.getTerm();
@@ -3258,18 +3263,27 @@
 
         function start() {
           _pending = true;
-          if (_timer) clearTimeout(_timer);
-          _timer = setTimeout(finish, timeoutMs);
+          if (_fallbackTimer) clearTimeout(_fallbackTimer);
+          if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null; }
+          _fallbackTimer = setTimeout(finish, timeoutMs);
+        }
+
+        function scheduleFinish() {
+          if (!_pending) return;
+          if (_settleTimer) clearTimeout(_settleTimer);
+          _settleTimer = setTimeout(finish, settleMs);
         }
 
         function cancel() {
           _pending = false;
-          if (_timer) { clearTimeout(_timer); _timer = null; }
+          if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+          if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null; }
         }
 
         return {
           get pending() { return _pending; },
           start,
+          scheduleFinish,
           finish,
           cancel,
         };
@@ -3545,7 +3559,7 @@
               if (!_term) return;
               if (_hydration && _hydration.pending) {
                 _term.write(data, () => {
-                  if (_hydration) _hydration.finish();
+                  if (_hydration) _hydration.scheduleFinish();
                   if (opts.onOutput) opts.onOutput(data);
                 });
               } else {
@@ -5179,7 +5193,7 @@
         const overlay = document.createElement("div");
         overlay.className = "viewer-conflict-overlay";
         overlay.id = "desktop-conflict-overlay";
-        overlay.innerHTML = \'<div class="conflict-msg">Session active on another device</div><button class="conflict-btn" type="button">Take Control</button>\';
+        overlay.innerHTML = '<div class="conflict-msg">Session active on another device</div><button class="conflict-btn" type="button">Take Control</button>';
         overlay.querySelector(".conflict-btn").addEventListener("click", () => {
           if (desktopController) desktopController.sendTakeControl();
           // Don\'t remove overlay here \u2014 wait for control_granted to confirm
