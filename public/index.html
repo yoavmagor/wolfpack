@@ -2877,16 +2877,16 @@
       }
       const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
       function applyTermToXterm() {
-        if (!desktopTerm) return;
+        if (!desktopController?.term) return;
         const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-        desktopTerm.options.fontSize = p.fontSize;
-        desktopTerm.options.lineHeight = p.lineHeight;
+        desktopController.term.options.fontSize = p.fontSize;
+        desktopController.term.options.lineHeight = p.lineHeight;
         if (wpSettings.termFont === "alt") {
-          desktopTerm.options.fontFamily = '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace';
+          desktopController.term.options.fontFamily = '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace';
         } else {
-          desktopTerm.options.fontFamily = '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
+          desktopController.term.options.fontFamily = '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
         }
-        if (desktopFitAddon) desktopFitAddon.fit();
+        desktopController.resize();
       }
       function initSettings() {
         Object.entries(wpSettings).forEach(([k, v]) => {
@@ -3621,12 +3621,8 @@
       let ralphStartMachine = ""; // machine context for ralph-start form
       let ralphLogPollTimer = null;
       let currentRalphPlanFile = "";
-      let desktopTerm = null;       // xterm.js Terminal instance
-      let desktopFitAddon = null;   // FitAddon instance
-      let desktopSearchAddon = null; // SearchAddon instance
-      // desktopPtyClient declared near connectDesktopWs
+      let desktopController = null;  // createPtyTerminalController instance
       let desktopResizeHandler = null;
-      let desktopHydration = null; // createInitialHydrationController instance
       let useDesktopTerminal = false;
 
       // ── Multi-terminal grid state ──
@@ -3850,7 +3846,7 @@
         // Already in grid?
         if (gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
         // Track which session had a full-width PTY (needs reset on grid connect)
-        const singleTermSession = (desktopTerm && currentSession) ? currentSession : null;
+        const singleTermSession = (desktopController?.term && currentSession) ? currentSession : null;
         const singleTermMachine = singleTermSession ? (currentMachine || "") : "";
         const gs = {
           session,
@@ -3951,11 +3947,8 @@
         const dtc = document.getElementById("desktop-terminal-container");
         dtc.style.display = "none";
         dtc.innerHTML = "";
-        // Clear desktopTerm reference in case it's stale
-        desktopTerm = null;
-        desktopFitAddon = null;
-        desktopPtyClient = null;
-        desktopSearchAddon = null;
+        // Clear desktopController reference in case it's stale
+        desktopController = null;
         // Restore single-terminal mode
         if (restoreSession) {
           currentSession = restoreSession;
@@ -4068,8 +4061,8 @@
         snapshotTimer = null;
         if (!currentSession) { snapshotPending = null; return; }
         let text;
-        if (useDesktopTerminal && desktopTerm) {
-          text = serializeXtermTail(desktopTerm, 100);
+        if (useDesktopTerminal && desktopController?.term) {
+          text = serializeXtermTail(desktopController.term, 100);
         } else {
           text = snapshotPending;
         }
@@ -5241,45 +5234,63 @@
 
       // ── Desktop Terminal (xterm.js + /ws/pty binary WS) ──
 
-      let desktopPtyClient = null;
-
-      // finishDesktopInitialPrefill — now delegated to desktopHydration.finish()
-
       function connectDesktopWs() {
-        if (desktopPtyClient && desktopPtyClient.isOpen) return;
-        if (desktopPtyClient) desktopPtyClient.close();
-        desktopPtyClient = createPtySocketClient({
+        if (!desktopController) return;
+        desktopController.connect();
+      }
+
+      function showDesktopConflictOverlay() {
+        const container = document.getElementById("desktop-terminal-container");
+        if (!container) return;
+        removeDesktopConflictOverlay();
+        const overlay = document.createElement("div");
+        overlay.className = "viewer-conflict-overlay";
+        overlay.id = "desktop-conflict-overlay";
+        overlay.innerHTML = \'<div class="conflict-msg">Session active on another device</div><button class="conflict-btn" type="button">Take Control</button>\';
+        overlay.querySelector(".conflict-btn").addEventListener("click", () => {
+          if (desktopController) desktopController.sendTakeControl();
+          // Don\'t remove overlay here \u2014 wait for control_granted to confirm
+        });
+        container.appendChild(overlay);
+      }
+
+      function removeDesktopConflictOverlay() {
+        const el = document.getElementById("desktop-conflict-overlay");
+        if (el) el.remove();
+      }
+
+      function initDesktopTerminal(cached) {
+        if (desktopController) return;
+        const container = document.getElementById("desktop-terminal-container");
+        container.style.display = "block";
+        container.innerHTML = "";
+        document.getElementById("terminal").style.display = "none";
+        document.getElementById("kb-accessory").classList.remove("visible");
+        document.getElementById("kb-toggle")?.classList.remove("active");
+        kbAccessoryOpen = false;
+        document.getElementById("input-bar").style.display = "none";
+        document.getElementById("cmd-palette").style.display = "none";
+        document.getElementById("msg-preview").style.display = "none";
+
+        desktopController = createPtyTerminalController({
           session: currentSession,
           machine: currentMachine || "",
-          getTermDimensions: () => desktopTerm ? { cols: desktopTerm.cols, rows: desktopTerm.rows } : null,
-          fitTerminal: () => { if (desktopFitAddon) desktopFitAddon.fit(); },
-          shouldReconnect: () => useDesktopTerminal && !!desktopTerm,
+          scrollback: DESKTOP_TERMINAL_SCROLLBACK,
+          getHydrationElement: () => document.getElementById("desktop-terminal-container"),
+          shouldFocus: () => true,
+          shouldReconnect: () => useDesktopTerminal && !!desktopController?.term,
           onOpen: (wasReconnect) => {
             if (wasReconnect) wpMetrics.reconnectCount++;
             setConnState("live");
           },
-          onBinaryData: (data) => {
-            if (!desktopTerm) return;
+          onOutput: (data) => {
             wpMetrics.wsMessagesReceived++;
-            const t0 = performance.now();
-            const finalizeWrite = () => {
-              wpMetrics.recordLatency(performance.now() - t0);
-              scheduleSnapshotSave(null);
-            };
-            if (desktopHydration && desktopHydration.pending) {
-              desktopTerm.write(data, () => {
-                if (desktopHydration) desktopHydration.finish();
-                finalizeWrite();
-              });
-            } else {
-              desktopTerm.write(data);
-              finalizeWrite();
-            }
+            scheduleSnapshotSave(null);
           },
           onViewerConflict: () => showDesktopConflictOverlay(),
           onControlGranted: () => {
             removeDesktopConflictOverlay();
-            if (desktopTerm) desktopTerm.focus();
+            if (desktopController) desktopController.focus();
           },
           onDisconnected: (code, reason) => {
             removeDesktopConflictOverlay();
@@ -5297,75 +5308,16 @@
               setConnState("session-ended");
               return;
             }
-            desktopPtyClient.scheduleReconnect();
+            desktopController.scheduleReconnect();
           },
           onReconnecting: () => setConnState("reconnecting"),
           onReconnectExhausted: () => setConnState("offline"),
         });
-        desktopPtyClient.connect();
-      }
 
-      function showDesktopConflictOverlay() {
-        const container = document.getElementById("desktop-terminal-container");
-        if (!container) return;
-        removeDesktopConflictOverlay();
-        const overlay = document.createElement("div");
-        overlay.className = "viewer-conflict-overlay";
-        overlay.id = "desktop-conflict-overlay";
-        overlay.innerHTML = \'<div class="conflict-msg">Session active on another device</div><button class="conflict-btn" type="button">Take Control</button>\';
-        overlay.querySelector(".conflict-btn").addEventListener("click", () => {
-          if (desktopPtyClient) desktopPtyClient.sendTakeControl();
-          // Don\'t remove overlay here \u2014 wait for control_granted to confirm
-        });
-        container.appendChild(overlay);
-      }
-
-      function removeDesktopConflictOverlay() {
-        const el = document.getElementById("desktop-conflict-overlay");
-        if (el) el.remove();
-      }
-
-      function initDesktopTerminal(cached) {
-        if (desktopTerm) return;
-        const container = document.getElementById("desktop-terminal-container");
-        container.style.display = "block";
-        container.style.visibility = "hidden";
-        container.innerHTML = "";
-        document.getElementById("terminal").style.display = "none";
-        document.getElementById("kb-accessory").classList.remove("visible");
-        document.getElementById("kb-toggle")?.classList.remove("active");
-        kbAccessoryOpen = false;
-        document.getElementById("input-bar").style.display = "none";
-        document.getElementById("cmd-palette").style.display = "none";
-        document.getElementById("msg-preview").style.display = "none";
-
-        const { term, fitAddon, searchAddon } = createXtermInstance({
-          scrollback: DESKTOP_TERMINAL_SCROLLBACK,
-          sendInput: (data) => desktopPtyClient && desktopPtyClient.send(data),
-          sendMessage: (msg) => desktopPtyClient && desktopPtyClient.send(msg),
-          canAcceptInput: () => !!(desktopPtyClient && desktopPtyClient.isOpen),
-        });
-        desktopTerm = term;
-        desktopFitAddon = fitAddon;
-        desktopSearchAddon = searchAddon;
-        desktopHydration = createInitialHydrationController({
-          getElement: () => document.getElementById("desktop-terminal-container"),
-          getTerm: () => desktopTerm,
-          shouldFocus: () => true,
-        });
-        desktopHydration.start();
-
-        term.open(container);
-        try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch(e) { console.warn("canvas addon failed:", e); }
-        fitAddon.fit();
-        if (cached) {
-          term.write(cached, () => {
-            try { term.scrollToBottom(); } catch {}
-          });
-        }
+        desktopController.mount(container, { cached });
 
         const onResize = () => {
-          if (desktopFitAddon) desktopFitAddon.fit();
+          if (desktopController) desktopController.resize();
         };
         window.addEventListener("resize", onResize);
         desktopResizeHandler = onResize;
@@ -5389,8 +5341,7 @@
 
       function destroyDesktopTerminal() {
         if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
-        if (desktopPtyClient) { desktopPtyClient.close(); desktopPtyClient = null; }
-        if (desktopHydration) { desktopHydration.cancel(); desktopHydration = null; }
+        if (desktopController) { desktopController.dispose(); desktopController = null; }
         if (desktopResizeHandler) {
           window.removeEventListener("resize", desktopResizeHandler);
           desktopResizeHandler = null;
@@ -5400,15 +5351,6 @@
           document.removeEventListener("keydown", container._onKeyDown);
           container._onKeyDown = null;
         }
-        if (desktopSearchAddon) {
-          try { desktopSearchAddon.dispose(); } catch {}
-          desktopSearchAddon = null;
-        }
-        if (desktopTerm) {
-          try { desktopTerm.dispose(); } catch {}
-          desktopTerm = null;
-        }
-        desktopFitAddon = null;
         container.style.display = "none";
         container.style.visibility = "";
         container.innerHTML = "";
@@ -5426,7 +5368,7 @@
       function setConnState(state) {
         const statusEl = document.getElementById("conn-status");
         if (!statusEl) return;
-        const active = useDesktopTerminal ? !!desktopTerm : mobileStreamingActive;
+        const active = useDesktopTerminal ? !!desktopController?.term : mobileStreamingActive;
         if (currentView !== "terminal" || !active || state === "live") {
           statusEl.style.display = "none";
           statusEl.style.background = "#cc3333";
@@ -5671,8 +5613,7 @@
       }
 
       function retryDesktopConnection() {
-        if (!useDesktopTerminal || !desktopTerm) return;
-        if (desktopPtyClient) { desktopPtyClient.close(); desktopPtyClient = null; }
+        if (!useDesktopTerminal || !desktopController?.term) return;
         setConnState("reconnecting");
         connectDesktopWs();
       }
@@ -6032,8 +5973,7 @@
         }
         if (name === currentSession && machineUrl === currentMachine) {
           // Same session — but reconnect if WS is dead/blocked
-          if (useDesktopTerminal && !(desktopPtyClient && desktopPtyClient.isOpen)) {
-            if (desktopPtyClient) { desktopPtyClient.close(); desktopPtyClient = null; }
+          if (useDesktopTerminal && desktopController && !desktopController.isConnected) {
             connectDesktopWs();
           }
           return;
@@ -6157,8 +6097,8 @@
           if (currentSession && currentView === "terminal") {
             if (useDesktopTerminal) {
               // Desktop: reset budget and reconnect if WS is dead (but not during grid view)
-              if (desktopTerm && !isGridActive()) {
-                if (desktopPtyClient) desktopPtyClient.resetRetry();
+              if (desktopController?.term && !isGridActive()) {
+                desktopController.resetRetry();
                 connectDesktopWs();
               }
             } else {
@@ -6419,8 +6359,8 @@
           if (isGridActive()) {
             const gs = gridSessions[gridFocusIndex];
             if (gs && gs.term) gs.term.clear();
-          } else if (desktopTerm) {
-            desktopTerm.clear();
+          } else if (desktopController?.term) {
+            desktopController.term.clear();
           }
           return;
         }
@@ -6553,8 +6493,8 @@
         document.getElementById("search-input").value = "";
         document.getElementById("search-count").textContent = "";
         if (useDesktopTerminal) {
-          if (desktopSearchAddon) desktopSearchAddon.clearDecorations();
-          if (desktopTerm) desktopTerm.focus();
+          if (desktopController?.searchAddon) desktopController.searchAddon.clearDecorations();
+          if (desktopController) desktopController.focus();
         } else {
           const term = document.getElementById("terminal");
           if (lastRawPane) term.textContent = lastRawPane;
@@ -6566,7 +6506,7 @@
         if (!searchTerm) {
           document.getElementById("search-count").textContent = "";
           if (useDesktopTerminal) {
-            if (desktopSearchAddon) desktopSearchAddon.clearDecorations();
+            if (desktopController?.searchAddon) desktopController.searchAddon.clearDecorations();
           } else {
             const term = document.getElementById("terminal");
             if (lastRawPane) term.textContent = lastRawPane;
@@ -6575,8 +6515,8 @@
           searchIndex = -1;
           return;
         }
-        if (useDesktopTerminal && desktopSearchAddon) {
-          desktopSearchAddon.findNext(searchTerm, { caseSensitive: false, decorations: {
+        if (useDesktopTerminal && desktopController?.searchAddon) {
+          desktopController.searchAddon.findNext(searchTerm, { caseSensitive: false, decorations: {
             matchOverviewRuler: "#6e5c00",
             activeMatchColorOverviewRuler: "#ff6600",
           }});
@@ -6611,8 +6551,8 @@
       // Desktop search is handled by xterm-addon-search (see doSearch/nextMatch/prevMatch)
 
       function nextMatch() {
-        if (useDesktopTerminal && desktopSearchAddon && searchTerm) {
-          desktopSearchAddon.findNext(searchTerm, { caseSensitive: false });
+        if (useDesktopTerminal && desktopController?.searchAddon && searchTerm) {
+          desktopController.searchAddon.findNext(searchTerm, { caseSensitive: false });
           return;
         }
         if (searchMatches.length === 0) return;
@@ -6621,8 +6561,8 @@
       }
 
       function prevMatch() {
-        if (useDesktopTerminal && desktopSearchAddon && searchTerm) {
-          desktopSearchAddon.findPrevious(searchTerm, { caseSensitive: false });
+        if (useDesktopTerminal && desktopController?.searchAddon && searchTerm) {
+          desktopController.searchAddon.findPrevious(searchTerm, { caseSensitive: false });
           return;
         }
         if (searchMatches.length === 0) return;
@@ -6990,8 +6930,8 @@
         // Resizing the PTY during hover causes Claude Code's TUI to redraw with
         // a right-margin dot fill (·) that persists after the sidebar collapses.
         sidebar.addEventListener("transitionend", (e) => {
-          if (e.propertyName === "margin-left" && desktopFitAddon && !sidebarAutoExpanded) {
-            desktopFitAddon.fit();
+          if (e.propertyName === "margin-left" && desktopController && !sidebarAutoExpanded) {
+            desktopController.resize();
           }
         });
 
