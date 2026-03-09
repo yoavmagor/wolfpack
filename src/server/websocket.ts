@@ -325,7 +325,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
 
     const spawnedAt = Date.now();
     entry.proc = Bun.spawn([TMUX, "attach-session", "-t", session], {
-      env: { ...process.env, TERM: "xterm-256color" },
+      env: { ...process.env, TERM: "xterm-256color", LANG: "en_US.UTF-8" },
       terminal: {
         cols,
         rows,
