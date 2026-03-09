@@ -10,14 +10,14 @@ import type { AddressInfo } from "node:net";
 
 process.env.WOLFPACK_TEST = "1";
 
-import {
+const {
   server,
   __setTmuxList,
   __setTmuxSend,
   __setTmuxSendKey,
   __setTmuxResize,
   __setCapturePane,
-} from "../../src/server/index.ts";
+} = await import("../../src/server/index.ts");
 
 // ── Mock tmux ──
 

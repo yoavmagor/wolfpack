@@ -1248,6 +1248,9 @@
         display: flex;
         flex-direction: column;
       }
+      .grid-cell.grid-loading .xterm {
+        opacity: 0;
+      }
       .grid-cell.grid-focused {
         border-color: rgba(0,255,65,0.6);
         box-shadow: inset 0 0 12px rgba(0,255,65,0.1), 0 0 8px rgba(0,255,65,0.15);
@@ -1255,8 +1258,37 @@
       .grid-cell .xterm {
         flex: 1;
         min-height: 0;
-        padding: 0 2px;
         overflow: hidden;
+        transition: opacity 0.15s ease;
+      }
+      .grid-cell-loading {
+        position: absolute;
+        inset: 26px 0 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1.2px;
+        text-transform: uppercase;
+        color: rgba(255,255,255,0.28);
+        background:
+          linear-gradient(
+            90deg,
+            rgba(255,255,255,0.02) 0%,
+            rgba(255,255,255,0.05) 50%,
+            rgba(255,255,255,0.02) 100%
+          );
+        background-size: 200% 100%;
+        animation: grid-loading-sheen 1.1s linear infinite;
+        pointer-events: none;
+      }
+      .grid-cell:not(.grid-loading) .grid-cell-loading {
+        display: none;
+      }
+      @keyframes grid-loading-sheen {
+        from { background-position: 200% 0; }
+        to { background-position: -200% 0; }
       }
       .grid-cell-header {
         display: flex;
@@ -2522,7 +2554,8 @@
     <script src="/xterm-addon-fit.min.js"></script>
     <script src="/xterm-addon-search.min.js"></script>
     <script src="/xterm-addon-unicode11.min.js"></script>
-    <script src="/xterm-addon-canvas.min.js"></script>
+    <script src="/xterm-addon-webgl.min.js"></script>
+    <script src="/xterm-addon-web-links.min.js"></script>
   </head>
   <body>
     <header>
@@ -2871,11 +2904,7 @@
         const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
         desktopTerm.options.fontSize = p.fontSize;
         desktopTerm.options.lineHeight = p.lineHeight;
-        if (wpSettings.termFont === "alt") {
-          desktopTerm.options.fontFamily = '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace';
-        } else {
-          desktopTerm.options.fontFamily = '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
-        }
+        desktopTerm.options.fontFamily = getTerminalFontFamily();
         if (desktopFitAddon) desktopFitAddon.fit();
       }
       function initSettings() {
@@ -3162,6 +3191,104 @@
       let desktopResizeHandler = null;
       let useDesktopTerminal = false;
 
+      function getTerminalFontFamily() {
+        return wpSettings.termFont === "alt"
+          ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
+          : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
+      }
+
+      function encodeTerminalBinary(data) {
+        const buf = new Uint8Array(data.length);
+        for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
+        return buf;
+      }
+
+      function buildPtyWsUrl(session, machine, reset = false) {
+        const resetSuffix = reset ? "&reset=1" : "";
+        if (machine) {
+          const remote = new URL(machine);
+          const proto = remote.protocol === "https:" ? "wss:" : "ws:";
+          return proto + "//" + remote.host + "/ws/pty?session=" + encodeURIComponent(session) + resetSuffix;
+        }
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        return proto + "//" + location.host + "/ws/pty?session=" + encodeURIComponent(session) + resetSuffix;
+      }
+
+      function fitAndSendTerminalResize(term, fitAddon, ws, focus = false) {
+        if (!term || !fitAddon || !ws || ws.readyState !== WebSocket.OPEN) return;
+        try { fitAddon.fit(); } catch {}
+        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+        if (focus) term.focus();
+      }
+
+      function createConflictOverlay(message, buttonLabel, onClick) {
+        const overlay = document.createElement("div");
+        overlay.className = "viewer-conflict-overlay";
+        overlay.innerHTML = '<div class="conflict-msg">' + esc(message) + '</div><button class="conflict-btn" type="button">' + esc(buttonLabel) + "</button>";
+        overlay.querySelector(".conflict-btn").addEventListener("click", onClick);
+        overlay.addEventListener("click", (e) => e.stopPropagation());
+        return overlay;
+      }
+
+      function createConfiguredTerminal(options) {
+        const term = new Terminal({
+          allowProposedApi: true,
+          macOptionClickForcesSelection: true,
+          fontFamily: getTerminalFontFamily(),
+          theme: {
+            background: "#0a0a0a",
+            foreground: "#e0e0e0",
+            cursor: "#e0e0e0",
+            selectionBackground: "rgba(255,255,255,0.2)",
+          },
+          ...options,
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+
+        const searchAddon = new SearchAddon.SearchAddon();
+        term.loadAddon(searchAddon);
+
+        try {
+          const unicodeAddon = new Unicode11Addon.Unicode11Addon();
+          term.loadAddon(unicodeAddon);
+          term.unicode.activeVersion = "11";
+        } catch {}
+
+        try { term.loadAddon(new WebglAddon.WebglAddon()); } catch {}
+
+        try { term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch {}
+
+        return { term, fitAddon, searchAddon };
+      }
+
+      function wireTerminalPty(term, getWs, shouldSendInput = () => true) {
+        term.onData((data) => {
+          const ws = getWs();
+          if (!shouldSendInput() || !ws || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(new TextEncoder().encode(data));
+        });
+
+        term.onBinary((data) => {
+          const ws = getWs();
+          if (!shouldSendInput() || !ws || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(encodeTerminalBinary(data));
+        });
+
+        term.onResize(({ cols, rows }) => {
+          const ws = getWs();
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(JSON.stringify({ type: "resize", cols, rows }));
+        });
+      }
+
+      function setGridCellLoading(gs, loading) {
+        gs._loading = loading;
+        const cell = getGridCellElement(gs);
+        if (cell) cell.classList.toggle("grid-loading", loading);
+      }
+
       // ── Multi-terminal grid state ──
       let gridSessions = [];        // [{session, machine, term, ws, fitAddon, searchAddon, reconnectTimer, reconnectDelay, reconnectStartedAt, retryBlocked}]
       let gridFocusIndex = 0;       // which cell is interactive
@@ -3203,9 +3330,9 @@
         }
         gridSessions.forEach((gs, idx) => {
           const cell = document.createElement("div");
-          cell.className = "grid-cell" + (idx === gridFocusIndex ? " grid-focused" : "");
+          cell.className = "grid-cell" + (idx === gridFocusIndex ? " grid-focused" : "") + (gs._loading ? " grid-loading" : "");
           cell.dataset.gridIndex = idx;
-          cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div>';
+          cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div><div class="grid-cell-loading">Loading terminal</div>';
           cell.addEventListener("click", (e) => {
             if (e.target.classList.contains("grid-cell-close")) return;
             setGridFocus(idx);
@@ -3218,57 +3345,20 @@
           // Mount xterm if not yet mounted
           if (!gs.term) {
             const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-            const termFontFamily = wpSettings.termFont === "alt"
-              ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
-              : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
-            const term = new Terminal({
+            const { term, fitAddon, searchAddon } = createConfiguredTerminal({
               cursorBlink: idx === gridFocusIndex,
               disableStdin: idx !== gridFocusIndex,
               fontSize: Math.max(tp.fontSize - 2, 10),
               lineHeight: tp.lineHeight,
-              fontFamily: termFontFamily,
-              theme: {
-                background: "#0a0a0a",
-                foreground: "#e0e0e0",
-                cursor: "#e0e0e0",
-                selectionBackground: "rgba(255,255,255,0.2)",
-              },
               scrollback: 3000,
-              allowProposedApi: true,
             });
-            const fitAddon = new FitAddon.FitAddon();
-            term.loadAddon(fitAddon);
-            const searchAddon = new SearchAddon.SearchAddon();
-            term.loadAddon(searchAddon);
-            try {
-              const unicodeAddon = new Unicode11Addon.Unicode11Addon();
-              term.loadAddon(unicodeAddon);
-              term.unicode.activeVersion = '11';
-            } catch {}
             term.open(cell);
-            try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch {}
             // Don't fit yet — wait for layout to settle. WS connects after final fit.
-            // Wire stdin for focused cell
-            term.onData((data) => {
-              if (gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs) {
-                gs.ws.send(new TextEncoder().encode(data));
-              }
-            });
-            term.onBinary((data) => {
-              if (gs.ws && gs.ws.readyState === WebSocket.OPEN && gridSessions[gridFocusIndex] === gs) {
-                const buf = new Uint8Array(data.length);
-                for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
-                gs.ws.send(buf);
-              }
-            });
-            term.onResize(({ cols, rows }) => {
-              if (gs.ws && gs.ws.readyState === WebSocket.OPEN) {
-                gs.ws.send(JSON.stringify({ type: "resize", cols, rows }));
-              }
-            });
+            wireTerminalPty(term, () => gs.ws, () => gridSessions[gridFocusIndex] === gs);
             gs.term = term;
             gs.fitAddon = fitAddon;
             gs.searchAddon = searchAddon;
+            gs._loading = true;
             gs._needsConnect = true;  // connect after final fit
           } else {
             // Re-attach existing terminal to new cell DOM
@@ -3287,34 +3377,24 @@
                 connectGridCellWs(gs);
               }
             });
+            scheduleGridStabilizedFit();
           }, 100);
         });
       }
 
       function connectGridCellWs(gs) {
         if (gs.ws && gs.ws.readyState <= WebSocket.OPEN) return;
-        const resetSuffix = gs._resetPty ? "&reset=1" : "";
+        const reset = !!gs._resetPty;
         delete gs._resetPty;
-        let wsUrl;
-        if (gs.machine) {
-          const remote = new URL(gs.machine);
-          const proto = remote.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl = proto + "//" + remote.host + "/ws/pty?session=" + encodeURIComponent(gs.session) + resetSuffix;
-        } else {
-          const proto = location.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl = proto + "//" + location.host + "/ws/pty?session=" + encodeURIComponent(gs.session) + resetSuffix;
-        }
-        const ws = new WebSocket(wsUrl);
+        const ws = new WebSocket(buildPtyWsUrl(gs.session, gs.machine, reset));
         ws.binaryType = "arraybuffer";
         gs.ws = ws;
+        setGridCellLoading(gs, true);
         ws.onopen = () => {
           gs.reconnectDelay = RECONNECT_BASE_DELAY_MS;
           gs.reconnectStartedAt = 0;
           gs.retryBlocked = false;
-          if (gs.fitAddon && gs.term) {
-            try { gs.fitAddon.fit(); } catch {}
-            ws.send(JSON.stringify({ type: "resize", cols: gs.term.cols, rows: gs.term.rows }));
-          }
+          fitAndSendTerminalResize(gs.term, gs.fitAddon, ws);
         };
         ws.onmessage = (ev) => {
           if (typeof ev.data === "string") {
@@ -3324,19 +3404,19 @@
                 showGridCellConflictOverlay(gs, ws);
               } else if (msg.type === "control_granted") {
                 removeGridCellConflictOverlay(gs);
-                if (gs.fitAddon && gs.term) {
-                  try { gs.fitAddon.fit(); } catch {}
-                  ws.send(JSON.stringify({ type: "resize", cols: gs.term.cols, rows: gs.term.rows }));
-                  if (gridSessions[gridFocusIndex] === gs) gs.term.focus();
-                }
+                fitAndSendTerminalResize(gs.term, gs.fitAddon, ws, gridSessions[gridFocusIndex] === gs);
               }
             } catch {}
             return;
           }
-          if (gs.term) gs.term.write(new Uint8Array(ev.data));
+          if (gs.term) {
+            gs.term.write(new Uint8Array(ev.data));
+            if (gs._loading) setGridCellLoading(gs, false);
+          }
         };
         ws.onclose = (ev) => {
           if (gs.ws === ws) gs.ws = null;
+          setGridCellLoading(gs, false);
           removeGridCellConflictOverlay(gs);
           // Auto-reconnect on displace (4002) — will get viewer_conflict → "Take Control"
           // Only reconnect if still in grid
@@ -3381,18 +3461,14 @@
         const cell = getGridCellElement(gs);
         if (!cell) return;
         removeGridCellConflictOverlay(gs);
-        const overlay = document.createElement("div");
-        overlay.className = "viewer-conflict-overlay";
-        overlay.dataset.conflictType = "conflict";
-        overlay.innerHTML = '<div class="conflict-msg">Active on another device</div><button class="conflict-btn" type="button">Take Control</button>';
-        overlay.querySelector(".conflict-btn").addEventListener("click", (e) => {
+        const overlay = createConflictOverlay("Active on another device", "Take Control", (e) => {
           e.stopPropagation();
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "take_control" }));
           }
           // Don't remove overlay here — wait for control_granted to confirm
         });
-        overlay.addEventListener("click", (e) => e.stopPropagation());
+        overlay.dataset.conflictType = "conflict";
         cell.appendChild(overlay);
       }
 
@@ -3406,11 +3482,7 @@
         const cell = getGridCellElement(gs);
         if (!cell) return;
         removeGridCellConflictOverlay(gs);
-        const overlay = document.createElement("div");
-        overlay.className = "viewer-conflict-overlay";
-        overlay.dataset.conflictType = "displaced";
-        overlay.innerHTML = '<div class="conflict-msg">Taken over by another viewer</div><button class="conflict-btn" type="button">Reconnect</button>';
-        overlay.querySelector(".conflict-btn").addEventListener("click", (e) => {
+        const overlay = createConflictOverlay("Taken over by another viewer", "Reconnect", (e) => {
           e.stopPropagation();
           overlay.remove();
           gs.retryBlocked = false;
@@ -3418,7 +3490,7 @@
           gs.reconnectDelay = RECONNECT_BASE_DELAY_MS;
           connectGridCellWs(gs);
         });
-        overlay.addEventListener("click", (e) => e.stopPropagation());
+        overlay.dataset.conflictType = "displaced";
         cell.appendChild(overlay);
       }
 
@@ -3464,6 +3536,7 @@
           ws: null,
           fitAddon: null,
           searchAddon: null,
+          _loading: true,
           reconnectTimer: null,
           reconnectDelay: RECONNECT_BASE_DELAY_MS,
           reconnectStartedAt: 0,
@@ -3478,6 +3551,7 @@
               session: currentSession,
               machine: currentMachine,
               term: null, ws: null, fitAddon: null, searchAddon: null,
+              _loading: true,
               reconnectTimer: null, reconnectDelay: RECONNECT_BASE_DELAY_MS,
               reconnectStartedAt: 0, retryBlocked: false,
             });
@@ -3575,6 +3649,16 @@
             try { gs.fitAddon.fit(); } catch {}
           }
         }
+      }
+
+      function scheduleGridStabilizedFit() {
+        if (!isGridActive()) return;
+        requestAnimationFrame(() => {
+          fitAllGridCells();
+          setTimeout(() => {
+            if (isGridActive()) fitAllGridCells();
+          }, 180);
+        });
       }
 
       let gridResizeHandler = null;
@@ -4839,16 +4923,7 @@
         if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
         if (desktopRetryBlocked) return;
         if (desktopWs && desktopWs.readyState <= WebSocket.OPEN) return;
-        let wsUrl;
-        if (currentMachine) {
-          const remote = new URL(currentMachine);
-          const proto = remote.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl = proto + "//" + remote.host + "/ws/pty?session=" + encodeURIComponent(currentSession);
-        } else {
-          const proto = location.protocol === "https:" ? "wss:" : "ws:";
-          wsUrl = proto + "//" + location.host + "/ws/pty?session=" + encodeURIComponent(currentSession);
-        }
-        const ws = new WebSocket(wsUrl);
+        const ws = new WebSocket(buildPtyWsUrl(currentSession, currentMachine));
         ws.binaryType = "arraybuffer";
         desktopWs = ws;
 
@@ -4858,10 +4933,7 @@
           desktopReconnectStartedAt = 0;
           desktopRetryBlocked = false;
           setConnState("live");
-          if (desktopFitAddon && desktopTerm) {
-            try { desktopFitAddon.fit(); } catch {}
-            ws.send(JSON.stringify({ type: "resize", cols: desktopTerm.cols, rows: desktopTerm.rows }));
-          }
+          fitAndSendTerminalResize(desktopTerm, desktopFitAddon, ws);
         };
 
         ws.onmessage = (ev) => {
@@ -4874,11 +4946,7 @@
                 showDesktopConflictOverlay(ws);
               } else if (msg.type === "control_granted") {
                 removeDesktopConflictOverlay();
-                if (desktopFitAddon && desktopTerm) {
-                  try { desktopFitAddon.fit(); } catch {}
-                  ws.send(JSON.stringify({ type: "resize", cols: desktopTerm.cols, rows: desktopTerm.rows }));
-                  desktopTerm.focus();
-                }
+                fitAndSendTerminalResize(desktopTerm, desktopFitAddon, ws, true);
               }
             } catch {}
             return;
@@ -4946,16 +5014,13 @@
         const container = document.getElementById("desktop-terminal-container");
         if (!container) return;
         removeDesktopConflictOverlay();
-        const overlay = document.createElement("div");
-        overlay.className = "viewer-conflict-overlay";
-        overlay.id = "desktop-conflict-overlay";
-        overlay.innerHTML = '<div class="conflict-msg">Session active on another device</div><button class="conflict-btn" type="button">Take Control</button>';
-        overlay.querySelector(".conflict-btn").addEventListener("click", () => {
+        const overlay = createConflictOverlay("Session active on another device", "Take Control", () => {
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "take_control" }));
           }
           // Don't remove overlay here — wait for control_granted to confirm
         });
+        overlay.id = "desktop-conflict-overlay";
         container.appendChild(overlay);
       }
 
@@ -4978,68 +5043,28 @@
         document.getElementById("msg-preview").style.display = "none";
 
         const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-        const termFontFamily = wpSettings.termFont === "alt"
-          ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
-          : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
-        const term = new Terminal({
+        const { term, fitAddon, searchAddon } = createConfiguredTerminal({
           cursorBlink: true,
           fontSize: tp.fontSize,
           lineHeight: tp.lineHeight,
-          fontFamily: termFontFamily,
-          theme: {
-            background: "#0a0a0a",
-            foreground: "#e0e0e0",
-            cursor: "#e0e0e0",
-            selectionBackground: "rgba(255,255,255,0.2)",
-          },
           scrollback: 5000,
-          allowProposedApi: true,
         });
         desktopTerm = term;
-
-        const fitAddon = new FitAddon.FitAddon();
         desktopFitAddon = fitAddon;
-        term.loadAddon(fitAddon);
-
-        const searchAddon = new SearchAddon.SearchAddon();
         desktopSearchAddon = searchAddon;
-        term.loadAddon(searchAddon);
-
-        const unicodeAddon = new Unicode11Addon.Unicode11Addon();
-        term.loadAddon(unicodeAddon);
-        term.unicode.activeVersion = '11';
 
         term.open(container);
-        try { term.loadAddon(new CanvasAddon.CanvasAddon()); } catch(e) { console.warn("canvas addon failed:", e); }
         fitAddon.fit();
         if (cached) term.write(cached);
         term.focus();
 
-        term.onData((data) => {
-          if (desktopWs && desktopWs.readyState === WebSocket.OPEN) {
-            desktopWs.send(new TextEncoder().encode(data));
-          }
-        });
-
-        term.onBinary((data) => {
-          if (desktopWs && desktopWs.readyState === WebSocket.OPEN) {
-            const buf = new Uint8Array(data.length);
-            for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
-            desktopWs.send(buf);
-          }
-        });
+        wireTerminalPty(term, () => desktopWs);
 
         const onResize = () => {
           if (desktopFitAddon) desktopFitAddon.fit();
         };
         window.addEventListener("resize", onResize);
         desktopResizeHandler = onResize;
-
-        term.onResize(({ cols, rows }) => {
-          if (desktopWs && desktopWs.readyState === WebSocket.OPEN) {
-            desktopWs.send(JSON.stringify({ type: "resize", cols, rows }));
-          }
-        });
 
         const onKeyDown = (e) => {
           if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
@@ -6675,8 +6700,12 @@
         // Resizing the PTY during hover causes Claude Code's TUI to redraw with
         // a right-margin dot fill (·) that persists after the sidebar collapses.
         sidebar.addEventListener("transitionend", (e) => {
-          if (e.propertyName === "margin-left" && desktopFitAddon && !sidebarAutoExpanded) {
-            desktopFitAddon.fit();
+          if (e.propertyName === "margin-left" && !sidebarAutoExpanded) {
+            if (isGridActive()) {
+              scheduleGridStabilizedFit();
+            } else if (desktopFitAddon) {
+              desktopFitAddon.fit();
+            }
           }
         });
 

@@ -32,6 +32,41 @@ export function __getActivePtySessions(): Map<string, { viewer: any; alive: bool
   return activePtySessions as any;
 }
 
+const PREFILL_OVERLAP_LIMIT = 32 * 1024;
+
+function bufferStartsWithPrefillSuffix(prefillTail: Buffer, attachPrefix: Buffer, overlap: number): boolean {
+  const prefillStart = prefillTail.length - overlap;
+  for (let i = 0; i < overlap; i++) {
+    if (prefillTail[prefillStart + i] !== attachPrefix[i]) return false;
+  }
+  return true;
+}
+
+export function __stripInitialPtyOverlap(
+  prefill: Buffer,
+  attachPrefix: Buffer,
+): { awaitingMore: boolean; data: Buffer } {
+  if (!prefill.length || !attachPrefix.length) {
+    return { awaitingMore: false, data: attachPrefix };
+  }
+
+  const prefillTail = prefill.subarray(Math.max(0, prefill.length - PREFILL_OVERLAP_LIMIT));
+  const maxOverlap = Math.min(prefillTail.length, attachPrefix.length);
+
+  for (let overlap = maxOverlap; overlap > 0; overlap--) {
+    if (!bufferStartsWithPrefillSuffix(prefillTail, attachPrefix, overlap)) continue;
+    if (overlap === attachPrefix.length) {
+      return { awaitingMore: true, data: Buffer.alloc(0) };
+    }
+    return {
+      awaitingMore: false,
+      data: attachPrefix.subarray(overlap),
+    };
+  }
+
+  return { awaitingMore: false, data: attachPrefix };
+}
+
 // ── Terminal WS handler (mobile — capture-pane polling) ──
 
 export function handleTerminalWs(ws: WebSocket, session: string): void {
@@ -249,6 +284,9 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
 
   async function spawnPty(cols: number, rows: number) {
     if (entry.proc) return;
+    let prefill = Buffer.alloc(0);
+    let pendingAttach = Buffer.alloc(0);
+    let shouldDedupeInitialAttach = false;
 
     try {
       await exec(TMUX, ["has-session", "-t", session], { timeout: 2000 });
@@ -267,14 +305,43 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
 
     if (!entry.alive) return;
 
+    // Pre-fill viewer with tmux scrollback so xterm.js has content to scroll through.
+    // The attach path can replay part of the visible pane, so strip any overlap from
+    // the first PTY bytes only after the prefill has been delivered successfully.
+    try {
+      const { stdout } = await exec(TMUX, [
+        "capture-pane", "-t", session, "-p", "-e", "-S", "-2000",
+      ], { timeout: 3000 });
+      if (stdout && entry.viewer && entry.viewer.readyState === 1) {
+        prefill = Buffer.from(stdout);
+        try {
+          entry.viewer.send(prefill);
+          shouldDedupeInitialAttach = true;
+        } catch (err: any) {
+          console.error(`PTY prefill send failed [${session}]:`, err?.message || err);
+        }
+      }
+    } catch {}
+
     const spawnedAt = Date.now();
     entry.proc = Bun.spawn([TMUX, "attach-session", "-t", session], {
-      env: { ...process.env, TERM: "xterm-256color" },
+      env: { ...process.env, TERM: "xterm-256color", LANG: "en_US.UTF-8" },
       terminal: {
         cols,
         rows,
         data(_terminal: unknown, data: Buffer) {
           if (!entry.alive) return;
+          if (shouldDedupeInitialAttach) {
+            pendingAttach = pendingAttach.length
+              ? Buffer.concat([pendingAttach, data])
+              : Buffer.from(data);
+            const next = __stripInitialPtyOverlap(prefill, pendingAttach);
+            if (next.awaitingMore) return;
+            shouldDedupeInitialAttach = false;
+            pendingAttach = Buffer.alloc(0);
+            data = next.data;
+            if (!data.length) return;
+          }
           if (entry.viewer && entry.viewer.readyState === 1) {
             try { entry.viewer.send(data); } catch {}
           }

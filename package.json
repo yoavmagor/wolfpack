@@ -17,10 +17,10 @@
     "postinstall": "node bin/install.cjs"
   },
   "optionalDependencies": {
-    "wolfpack-bridge-darwin-arm64": "1.5.0",
-    "wolfpack-bridge-darwin-x64": "1.5.0",
-    "wolfpack-bridge-linux-arm64": "1.5.0",
-    "wolfpack-bridge-linux-x64": "1.5.0"
+    "wolfpack-bridge-darwin-arm64": "1.5.1",
+    "wolfpack-bridge-darwin-x64": "1.5.1",
+    "wolfpack-bridge-linux-arm64": "1.5.1",
+    "wolfpack-bridge-linux-x64": "1.5.1"
   },
   "keywords": [
     "tmux",
@@ -41,6 +41,8 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "qrcode-terminal": "^0.12.0",
     "ws": "^8.19.0"
