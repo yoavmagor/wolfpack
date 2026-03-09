@@ -3219,6 +3219,7 @@
         const term = new Terminal({
           cursorBlink,
           disableStdin,
+          macOptionClickForcesSelection: true,
           fontSize: fontSize != null ? fontSize : tp.fontSize,
           lineHeight: tp.lineHeight,
           fontFamily: termFontFamily,
@@ -3345,7 +3346,7 @@
       /**
        * Shared PTY WebSocket client for xterm.js terminals.
        * Owns: URL construction, socket lifecycle, binary/text frame dispatch,
-       *       initial resize handshake, reconnect backoff, control message parsing.
+       *       initial attach handshake, reconnect backoff, control message parsing.
        * @param {object} opts
        * @param {string} opts.session - tmux session name
        * @param {string} opts.machine - remote machine URL ("" for local)
@@ -3369,6 +3370,8 @@
         let retryBlocked = false;
         let hasConnected = false;
         let consumeReset = !!opts.resetPty;
+        let _attachAckTimer = null;
+        let _awaitingAttachAck = false;
 
         function buildUrl() {
           const resetSuffix = consumeReset ? "&reset=1" : "";
@@ -3381,6 +3384,26 @@
           }
           const proto = location.protocol === "https:" ? "wss:" : "ws:";
           return proto + "//" + location.host + "/ws/pty?session=" + session + resetSuffix;
+        }
+
+        /** Send one attach handshake to bootstrap PTY spawn on fresh WS open. */
+        function sendAttachHandshake() {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          try { opts.fitTerminal(); } catch {}
+          const dims = opts.getTermDimensions();
+          if (!dims) return;
+          _lastSentResize = dims.cols + "x" + dims.rows;
+          _awaitingAttachAck = true;
+          ws.send(JSON.stringify({ type: "attach", cols: dims.cols, rows: dims.rows }));
+          if (_attachAckTimer) clearTimeout(_attachAckTimer);
+          // Compatibility fallback: older servers don't implement attach_ack.
+          _attachAckTimer = setTimeout(() => {
+            _attachAckTimer = null;
+            if (!_awaitingAttachAck) return;
+            _awaitingAttachAck = false;
+            _lastSentResize = "";
+            sendFitResize();
+          }, 300);
         }
 
         /** Fit terminal + send resize dimensions over the socket (debounced). */
@@ -3420,7 +3443,7 @@
             reconnectDelay = RECONNECT_BASE_DELAY_MS;
             reconnectStartedAt = 0;
             retryBlocked = false;
-            sendFitResize();
+            sendAttachHandshake();
             if (opts.onOpen) opts.onOpen(wasReconnect);
           };
 
@@ -3428,12 +3451,16 @@
             if (typeof ev.data === "string") {
               try {
                 const msg = JSON.parse(ev.data);
-                if (msg.type === "viewer_conflict") {
+                if (msg.type === "attach_ack") {
+                  _awaitingAttachAck = false;
+                  if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+                } else if (msg.type === "viewer_conflict") {
+                  _awaitingAttachAck = false;
+                  if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
                   if (opts.onViewerConflict) opts.onViewerConflict();
                 } else if (msg.type === "control_granted") {
-                  // Reset dedup — server needs a fresh resize to spawn the new PTY
-                  _lastSentResize = "";
-                  sendFitResize();
+                  // Fresh viewer takeover needs a fresh attach bootstrap.
+                  sendAttachHandshake();
                   if (opts.onControlGranted) opts.onControlGranted();
                 }
               } catch {}
@@ -3444,6 +3471,8 @@
 
           sock.onclose = (ev) => {
             if (ws === sock) ws = null;
+            _awaitingAttachAck = false;
+            if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
             if (opts.onDisconnected) opts.onDisconnected(ev.code, ev.reason);
           };
 
@@ -3492,6 +3521,8 @@
 
         function close() {
           if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+          _awaitingAttachAck = false;
+          if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
           retryBlocked = true;
           if (ws) { ws.close(); ws = null; }
         }
@@ -3850,6 +3881,8 @@
         cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div><div class="grid-cell-loading">Loading terminal</div>';
         cell.addEventListener("click", (e) => {
           if (e.target.classList.contains("grid-cell-close")) return;
+          const sel = window.getSelection ? window.getSelection() : null;
+          if (sel && !sel.isCollapsed) return;
           const i = parseInt(cell.dataset.gridIndex, 10);
           setGridFocus(i);
         });
@@ -4581,12 +4614,19 @@
 
       // ── Ralph Loop Functions ──
 
-      function renderRalphCardHtml(loop, machineUrl) {
+      function getRalphStatus(loop) {
         const hitLimit = !loop.active && !loop.completed && loop.finished;
-        const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
-        const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
-        const dotClass = loop.active ? "purple" : "gray";
-        const dotTitle = loop.active ? "active" : "idle";
+        return {
+          hitLimit,
+          status: loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle",
+          statusLabel: loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE",
+          dotClass: loop.active ? "purple" : "gray",
+          dotTitle: loop.active ? "active" : "idle",
+        };
+      }
+
+      function renderRalphCardHtml(loop, machineUrl) {
+        const { status, statusLabel, dotClass, dotTitle } = getRalphStatus(loop);
         const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
         const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
         const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
@@ -4608,11 +4648,7 @@
       }
 
       function sidebarRalphCardHtml(loop, machineUrl) {
-        const hitLimit = !loop.active && !loop.completed && loop.finished;
-        const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
-        const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
-        const dotClass = loop.active ? "purple" : "gray";
-        const dotTitle = loop.active ? "active" : "idle";
+        const { status, statusLabel, dotClass, dotTitle } = getRalphStatus(loop);
         const mUrl = escAttr(machineUrl || '');
         return '<div class="ralph-card sidebar-ralph-card ' + status + '" onclick="openRalphDetail(\'' + escAttr(loop.project) + '\', \'' + mUrl + '\')">' +
           '<span class="dot ' + dotClass + '" title="' + dotTitle + '"></span>' +
@@ -4642,9 +4678,7 @@
             actions.innerHTML = '';
             return;
           }
-          const hitLimit = !loop.active && !loop.completed && loop.finished;
-          const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
-          const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
+          const { status, statusLabel } = getRalphStatus(loop);
           const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
           const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
           const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
@@ -4989,16 +5023,16 @@
       // Shared session groups cache for switcher reuse
       let lastSessionGroups = [];
 
-      function renderGroupHtml(g) {
-        const mUrl = esc(g.machine.url);
-        const mUrlAttr = escAttr(g.machine.url);
+      function renderMachineGroupHtml(g, multiMachine) {
+        const mUrl = multiMachine ? esc(g.machine.url) : "";
+        const mUrlAttr = multiMachine ? escAttr(g.machine.url) : "";
         const mName = esc(g.machine.name);
-        const statusDot = g.online ? "green" : (g.pending ? "gray" : "red");
-        const statusTitle = g.online ? "online" : (g.pending ? "connecting" : "offline");
-        const versionWarning = g.outdated ? `<span style="color:#ff6600;margin-left:6px;font-size:11px;padding:3px 8px;border:1px solid #00ff41;border-radius:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;letter-spacing:1px" onclick="event.stopPropagation();alert('Running v${escAttr(g.machine.version || "?")} — newer version available on another machine')">⚠ UPDATE</span>` : "";
-        let html = `<div class="machine-group" data-machine="${mUrl}">`;
+        const statusDot = !multiMachine ? "green" : g.online ? "green" : (g.pending ? "gray" : "red");
+        const statusTitle = !multiMachine ? "online" : g.online ? "online" : (g.pending ? "connecting" : "offline");
+        const versionWarning = multiMachine && g.outdated ? `<span style="color:#ff6600;margin-left:6px;font-size:11px;padding:3px 8px;border:1px solid #00ff41;border-radius:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;letter-spacing:1px" onclick="event.stopPropagation();alert('Running v${escAttr(g.machine.version || "?")} — newer version available on another machine')">⚠ UPDATE</span>` : "";
+        let html = multiMachine ? `<div class="machine-group" data-machine="${mUrl}">` : `<div class="machine-group">`;
         html += `<div class="machine-header"><div class="dot ${statusDot}" title="${statusTitle}"></div>${mName}${versionWarning}<div class="machine-header-btns"><button class="machine-ralph-btn" onclick="showRalphStart('${mUrlAttr}')">&#129355;</button><button class="machine-add-btn" onclick="showProjectPicker('${mUrlAttr}')">+</button></div></div>`;
-        if (g.pending) {
+        if (multiMachine && g.pending) {
           html += `<div style="padding:4px 4px;color:#555;font-size:11px">Connecting...</div>`;
         } else if (g.online) {
           if (g.sessions.length) {
@@ -5006,48 +5040,23 @@
               const lastLine = s.lastLine || "";
               const ui = triageUi(s.triage);
               const anim = firstLoad ? "animate-in" : "";
-              return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}', '${mUrlAttr}')">
+              return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}'${mUrlAttr ? ", '" + mUrlAttr + "'" : ''})">
                 <div class="dot ${ui.dot}" title="${ui.title}"></div>
                 <div class="card-info">
                   <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
                   <div class="card-preview">${esc(lastLine)}</div>
                 </div>
-                <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event, '${mUrlAttr}')">&times;</button>
+                <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event${mUrlAttr ? ", '" + mUrlAttr + "'" : ''})">&times;</button>
               </div>`;
             }).join("");
           }
           if (g.loops && g.loops.length) {
-            html += g.loops.map(loop => renderRalphCardHtml(loop, g.machine.url)).join("");
+            html += g.loops.map(loop => renderRalphCardHtml(loop, g.machine.url || "")).join("");
           }
-        } else {
+        } else if (multiMachine) {
           html += `<div style="padding:4px 4px;color:#555;font-size:11px">Offline</div>`;
         }
         html += `</div>`;
-        return html;
-      }
-
-      function renderSingleMachineHtml(g) {
-        let html = `<div class="machine-group">`;
-        html += `<div class="machine-header"><div class="dot green"></div>${esc(g.machine.name)}<div class="machine-header-btns"><button class="machine-ralph-btn" onclick="showRalphStart()">&#129355;</button><button class="machine-add-btn" onclick="showProjectPicker()">+</button></div></div>`;
-        if (g.online && g.sessions.length) {
-          html += g.sessions.map((s, i) => {
-            const lastLine = s.lastLine || "";
-            const ui = triageUi(s.triage);
-            const anim = firstLoad ? "animate-in" : "";
-            return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}')">
-              <div class="dot ${ui.dot}" title="${ui.title}"></div>
-              <div class="card-info">
-                <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
-                <div class="card-preview">${esc(lastLine)}</div>
-              </div>
-              <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event)">&times;</button>
-            </div>`;
-          }).join("");
-        }
-        if (g.online && g.loops && g.loops.length) {
-          html += g.loops.map(loop => renderRalphCardHtml(loop, "")).join("");
-        }
-        html += '</div>';
         return html;
       }
 
@@ -5080,7 +5089,7 @@
           if (myEpoch !== loadSessionsEpoch) return; // stale call, discard
           lastSessionGroups = [g];
           allSessions = g.sessions.map(s => ({ ...s, machineUrl: "", machineName: g.machine.name }));
-          const html = renderSingleMachineHtml(g);
+          const html = renderMachineGroupHtml(g, false);
           if (html !== lastSessionsHtml) { el.innerHTML = html; lastSessionsHtml = html; }
           checkStateTransitions([g]);
           firstLoad = false;
@@ -5096,7 +5105,7 @@
         // Show placeholders on first load
         if (firstLoad) {
           el.innerHTML = allMachines.map(m =>
-            renderGroupHtml({ machine: { ...m.meta, url: m.url }, sessions: [], online: false, pending: true })
+            renderMachineGroupHtml({ machine: { ...m.meta, url: m.url }, sessions: [], online: false, pending: true }, true)
           ).join("");
         }
 
@@ -5112,7 +5121,7 @@
               const existing = el.querySelector(`[data-machine="${esc(m.url)}"]`);
               if (existing) {
                 const tmp = document.createElement("div");
-                tmp.innerHTML = renderGroupHtml(g);
+                tmp.innerHTML = renderMachineGroupHtml(g, true);
                 existing.replaceWith(tmp.firstElementChild);
               }
             }
@@ -5133,10 +5142,10 @@
 
         // Sort by number of open terminals (most first) and do final render
         groups.sort((a, b) => b.sessions.length - a.sessions.length);
-        const html = groups.map(g => renderGroupHtml(g)).join("");
+        const html = groups.map(g => renderMachineGroupHtml(g, true)).join("");
         if (html !== lastSessionsHtml) {
           // Incremental per-group update: replace only changed groups
-          const perGroupHtml = groups.map(g => renderGroupHtml(g));
+          const perGroupHtml = groups.map(g => renderMachineGroupHtml(g, true));
           let didIncrementalUpdate = false;
           if (!firstLoad && el.children.length === groups.length) {
             didIncrementalUpdate = true;
@@ -5431,7 +5440,10 @@
             useDesktopTerminal = isDesktop();
             // Refresh session list in background so it doesn't block terminal init
             loadSessions().then(() => { loadSessionSwitcher(); renderSidebar(); });
-            if (useDesktopTerminal) {
+            if (useDesktopTerminal && isGridActive()) {
+              // Grid is active — add new session to grid instead of single-terminal
+              addToGrid(data.session, machine);
+            } else if (useDesktopTerminal) {
               destroyDesktopTerminal();
               initDesktopTerminal();
             } else {
@@ -6298,6 +6310,9 @@
       // Recover terminal stream on foreground; manage session refresh
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
+          if (isDesktop() && !sidebarRefreshTimer) {
+            startSidebarRefresh();
+          }
           // Restart session refresh if on sessions view
           if (currentView === "sessions" && !sessionRefreshTimer) {
             loadSessions();
@@ -6305,8 +6320,14 @@
           }
           if (currentSession && currentView === "terminal") {
             if (useDesktopTerminal) {
-              // Desktop: reset budget and reconnect if WS is dead (but not during grid view)
-              if (desktopController?.term && !isGridActive()) {
+              // Desktop: reset retry budget and reconnect current terminal context.
+              if (isGridActive()) {
+                for (const gs of gridSessions) {
+                  if (!gs.controller) continue;
+                  gs.controller.resetRetry();
+                  if (!gs.controller.isConnected) gs.controller.connect();
+                }
+              } else if (desktopController?.term) {
                 desktopController.resetRetry();
                 connectDesktopWs();
               }
@@ -6320,6 +6341,10 @@
           if (sessionRefreshTimer) {
             clearInterval(sessionRefreshTimer);
             sessionRefreshTimer = null;
+          }
+          if (sidebarRefreshTimer) {
+            clearInterval(sidebarRefreshTimer);
+            sidebarRefreshTimer = null;
           }
         }
       });

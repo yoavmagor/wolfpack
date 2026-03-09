@@ -48,6 +48,29 @@ import {
   scanRalphLoops,
   countPlanTasks,
 } from "./ralph.js";
+
+/** Validate project name param. Returns project string or sends 400 and returns null. */
+function validateProject(res: ServerResponse, project: string | null | undefined): project is string {
+  if (!project || !isValidProjectName(project)) {
+    json(res, { error: "invalid project" }, 400);
+    return false;
+  }
+  return true;
+}
+
+/** Validate project directory exists and is not a symlink. Returns true or sends error and returns false. */
+function validateProjectDir(res: ServerResponse, projectDir: string): boolean {
+  try {
+    if (lstatSync(projectDir).isSymbolicLink() || !statSync(projectDir).isDirectory()) {
+      json(res, { error: "not a directory" }, 400);
+      return false;
+    }
+  } catch {
+    json(res, { error: "project directory not found" }, 404);
+    return false;
+  }
+  return true;
+}
 import {
   uniqueSessionName,
   isAllowedSession,
@@ -224,9 +247,7 @@ export const routes: Record<
   "GET /api/next-session-name": async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const project = url.searchParams.get("project");
-    if (!project || !isValidProjectName(project)) {
-      return json(res, { error: "invalid project" }, 400);
-    }
+    if (!validateProject(res, project)) return;
     const name = await uniqueSessionName(project);
     json(res, { name });
   },
@@ -241,9 +262,7 @@ export const routes: Record<
     if (!body) return;
     const { project, newProject, cmd, sessionName } = body;
     const folderName = newProject?.trim() || project?.trim();
-    if (!folderName || !isValidProjectName(folderName)) {
-      return json(res, { error: "invalid project name" }, 400);
-    }
+    if (!validateProject(res, folderName)) return;
     if (cmd && cmd !== "shell" && !CMD_REGEX.test(cmd)) {
       return json(res, { error: "invalid characters in command" }, 400);
     }
@@ -261,12 +280,7 @@ export const routes: Record<
     if (newProject) {
       try { mkdirSync(projectDir, { recursive: true }); } catch {}
     }
-    try {
-      if (lstatSync(projectDir).isSymbolicLink() || !statSync(projectDir).isDirectory())
-        return json(res, { error: "not a directory" }, 400);
-    } catch {
-      return json(res, { error: "project directory not found" }, 404);
-    }
+    if (!validateProjectDir(res, projectDir)) return;
     const finalName = customName || await uniqueSessionName(folderName);
     await tmuxNewSession(finalName, projectDir, cmd, loadSettings);
     json(res, { ok: true, session: finalName });
@@ -364,9 +378,7 @@ export const routes: Record<
   "GET /api/git-status": async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const session = url.searchParams.get("session");
-    if (!session) return json(res, { error: "missing session param" }, 400);
-    if (!isValidProjectName(session))
-      return json(res, { error: "invalid session name" }, 400);
+    if (!validateProject(res, session)) return;
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
     // Strip deduplication suffix (-2, -3, ...) to get base project name
@@ -428,17 +440,9 @@ export const routes: Record<
   "GET /api/ralph/branches": async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const project = url.searchParams.get("project");
-    if (!project || !isValidProjectName(project)) {
-      return json(res, { error: "invalid project" }, 400);
-    }
+    if (!validateProject(res, project)) return;
     const projectDir = join(DEV_DIR, project);
-    try {
-      if (lstatSync(projectDir).isSymbolicLink() || !statSync(projectDir).isDirectory()) {
-        return json(res, { error: "not a directory" }, 400);
-      }
-    } catch {
-      return json(res, { error: "project not found" }, 404);
-    }
+    if (!validateProjectDir(res, projectDir)) return;
     try {
       const out = execFileSync("git", ["branch", "--list", "--no-color"], {
         cwd: projectDir,
@@ -467,9 +471,7 @@ export const routes: Record<
   "GET /api/ralph/plans": async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const project = url.searchParams.get("project");
-    if (!project || !isValidProjectName(project)) {
-      return json(res, { error: "invalid project" }, 400);
-    }
+    if (!validateProject(res, project)) return;
     const projectDir = join(DEV_DIR, project);
     try {
       const files = readdirSync(projectDir)
@@ -485,9 +487,7 @@ export const routes: Record<
   "GET /api/ralph/log": async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const project = url.searchParams.get("project");
-    if (!project || !isValidProjectName(project)) {
-      return json(res, { error: "invalid project" }, 400);
-    }
+    if (!validateProject(res, project)) return;
     const logPath = join(DEV_DIR, project, ".ralph.log");
     if (!existsSync(logPath)) {
       return json(res, { error: "no ralph log found" }, 404);
@@ -526,17 +526,9 @@ export const routes: Record<
     }>(req, res);
     if (!body) return;
     const { project, iterations, planFile, agent, newBranch, sourceBranch, format } = body;
-    if (!project || !isValidProjectName(project)) {
-      return json(res, { error: "invalid project name" }, 400);
-    }
+    if (!validateProject(res, project)) return;
     const projectDir = join(DEV_DIR, project);
-    try {
-      if (lstatSync(projectDir).isSymbolicLink() || !statSync(projectDir).isDirectory()) {
-        return json(res, { error: "not a directory" }, 400);
-      }
-    } catch {
-      return json(res, { error: "project directory not found" }, 404);
-    }
+    if (!validateProjectDir(res, projectDir)) return;
     const existing = parseRalphLog(projectDir);
     if (existing?.active) {
       return json(res, { error: "ralph loop already running", pid: existing.pid }, 409);
@@ -632,9 +624,7 @@ export const routes: Record<
     const url = new URL(req.url ?? "/", "http://localhost");
     const project = url.searchParams.get("project");
     const plan = url.searchParams.get("plan");
-    if (!project || !isValidProjectName(project)) {
-      return json(res, { error: "invalid project" }, 400);
-    }
+    if (!validateProject(res, project)) return;
     if (!plan || !/^[a-zA-Z0-9._\- ]+\.md$/.test(plan)) {
       return json(res, { error: "invalid plan file" }, 400);
     }
@@ -649,9 +639,7 @@ export const routes: Record<
     const body = await parseBody<{ project?: string }>(req, res);
     if (!body) return;
     const { project } = body;
-    if (!project || !isValidProjectName(project)) {
-      return json(res, { error: "invalid project name" }, 400);
-    }
+    if (!validateProject(res, project)) return;
     const projectDir = join(DEV_DIR, project);
     const status = parseRalphLog(projectDir);
     if (!status?.active || !status.pid || status.pid <= 1) {
@@ -678,9 +666,7 @@ export const routes: Record<
     const body = await parseBody<{ project?: string; deletePlan?: boolean }>(req, res);
     if (!body) return;
     const { project, deletePlan } = body;
-    if (!project || !isValidProjectName(project)) {
-      return json(res, { error: "invalid project name" }, 400);
-    }
+    if (!validateProject(res, project)) return;
     const projectDir = join(DEV_DIR, project);
     const status = parseRalphLog(projectDir);
     if (status?.active) {

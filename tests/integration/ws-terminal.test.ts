@@ -235,6 +235,30 @@ describe("WS /ws/terminal message handling", () => {
 // ── /ws/pty spawn failure + reconnect loop prevention ──
 
 describe("WS /ws/pty spawn failure handling", () => {
+  test("attach handshake triggers PTY spawn and closes 4001 on failure", async () => {
+    const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=test-session`);
+    ws.binaryType = "arraybuffer";
+
+    const closePromise = new Promise<CloseEvent>((resolve) => {
+      ws.addEventListener("close", (ev) => resolve(ev));
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", () => reject(new Error("ws/pty connect failed")));
+    });
+
+    // Trigger attach bootstrap — will fail because "test-session" has no real tmux session
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24 }));
+
+    const closeEvent = await Promise.race([
+      closePromise,
+      wait(5000).then(() => { throw new Error("timed out waiting for WS close"); }),
+    ]) as CloseEvent;
+
+    expect(closeEvent.code).toBe(4001);
+  });
+
   test("closes with 4001 when pty spawn fails (no real tmux session)", async () => {
     const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=test-session`);
     ws.binaryType = "arraybuffer";

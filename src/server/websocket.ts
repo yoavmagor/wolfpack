@@ -18,6 +18,22 @@ import {
 } from "./tmux.js";
 import { isAllowedSession } from "./http.js";
 
+/** Token bucket rate limiter. */
+function createRateLimiter(rate: number) {
+  let tokens = rate;
+  let last = Date.now();
+  return {
+    allow(): boolean {
+      const now = Date.now();
+      tokens = Math.min(rate, tokens + ((now - last) / 1000) * rate);
+      last = now;
+      if (tokens < 1) return false;
+      tokens--;
+      return true;
+    },
+  };
+}
+
 // ── PTY session tracking ──
 
 export const activePtySessions = new Map<string, {
@@ -118,15 +134,10 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
     }
   }, 25000);
 
-  let rlTokens = 60;
-  let rlLast = Date.now();
+  const rl = createRateLimiter(60);
 
   ws.on("message", async (raw) => {
-    const now = Date.now();
-    rlTokens = Math.min(60, rlTokens + ((now - rlLast) / 1000) * 60);
-    rlLast = now;
-    if (rlTokens < 1) return;
-    rlTokens--;
+    if (!rl.allow()) return;
 
     try {
       const str = String(raw);
@@ -379,24 +390,33 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
     }, 100);
   }
 
-  let rlTokens = 60;
-  let rlLast = Date.now();
+  const rl = createRateLimiter(60);
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
   ws.on("message", (raw: Buffer | string, isBinary: boolean) => {
     if (!entry.alive) return;
-    const now = Date.now();
-    rlTokens = Math.min(60, rlTokens + ((now - rlLast) / 1000) * 60);
-    rlLast = now;
-    if (rlTokens < 1) return;
-    rlTokens--;
+    if (!rl.allow()) return;
     try {
       if (!isBinary) {
         const msg = JSON.parse(String(raw));
-        if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
+        if (
+          msg.type === "attach" &&
+          typeof msg.cols === "number" &&
+          typeof msg.rows === "number"
+        ) {
+          // Attach handshake is a one-time bootstrap for a fresh WS viewer.
+          // It spawns the PTY without forcing an extra tmux resize if dims are unchanged.
+          if (!entry.proc) {
+            spawnPty(clampCols(msg.cols), clampRows(msg.rows));
+          }
+          if (entry.viewer && entry.viewer.readyState === 1) {
+            try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch {}
+          }
+        } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           const cols = clampCols(msg.cols);
           const rows = clampRows(msg.rows);
           if (!entry.proc) {
+            // Backward compatibility: older clients still bootstrap PTY via first resize.
             spawnPty(cols, rows);
           } else {
             // Debounce resize to prevent storms crashing TUI apps
