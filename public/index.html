@@ -3869,23 +3869,44 @@
         const cell = getGridCellElement(gs);
         if (cell) cell.classList.toggle("grid-loading", loading);
       }
-      const GRID_RELAYOUT_LOADING_MS = 90;
-      let gridRelayoutLoadingTimer = null;
+      let gridRelayoutTransitionId = 0;
 
-      function setGridRelayoutLoading(loading) {
-        if (gridRelayoutLoadingTimer) {
-          clearTimeout(gridRelayoutLoadingTimer);
-          gridRelayoutLoadingTimer = null;
-        }
-        for (const gs of gridSessions) setGridCellLoading(gs, loading);
+      function beginGridRelayoutTransition() {
+        gridRelayoutTransitionId += 1;
+        const transitionId = gridRelayoutTransitionId;
+        for (const gs of gridSessions) setGridCellLoading(gs, true);
+        return transitionId;
       }
 
-      function clearGridRelayoutLoadingSoon() {
-        if (gridRelayoutLoadingTimer) clearTimeout(gridRelayoutLoadingTimer);
-        gridRelayoutLoadingTimer = setTimeout(() => {
-          gridRelayoutLoadingTimer = null;
+      function isGridRelayoutTransitionCurrent(transitionId) {
+        return transitionId === gridRelayoutTransitionId;
+      }
+
+      function endGridRelayoutTransition(transitionId) {
+        if (!isGridRelayoutTransitionCurrent(transitionId)) return;
+        requestAnimationFrame(() => {
+          if (!isGridRelayoutTransitionCurrent(transitionId)) return;
           for (const gs of gridSessions) setGridCellLoading(gs, false);
-        }, GRID_RELAYOUT_LOADING_MS);
+        });
+      }
+
+      function cancelGridRelayoutTransition() {
+        gridRelayoutTransitionId += 1;
+      }
+
+      /** Run a two-pass relayout while keeping loading overlay visible. */
+      function runGridRelayoutTransition(primaryFit) {
+        if (!isGridActive()) return;
+        const transitionId = beginGridRelayoutTransition();
+        requestAnimationFrame(() => {
+          if (!isGridRelayoutTransitionCurrent(transitionId) || !isGridActive()) return;
+          try { primaryFit(); } catch {}
+          requestAnimationFrame(() => {
+            if (!isGridRelayoutTransitionCurrent(transitionId) || !isGridActive()) return;
+            fitAllGridCells();
+            endGridRelayoutTransition(transitionId);
+          });
+        });
       }
 
       // ── Multi-terminal grid state ──
@@ -3985,11 +4006,7 @@
         if (!gridResizeHandler) {
           gridResizeHandler = () => {
             if (!isGridActive()) return;
-            setGridRelayoutLoading(true);
-            requestAnimationFrame(() => {
-              fitAllGridCells();
-              clearGridRelayoutLoadingSoon();
-            });
+            runGridRelayoutTransition(() => { fitAllGridCells(); });
           };
           window.addEventListener("resize", gridResizeHandler);
         }
@@ -4027,19 +4044,16 @@
           }
         });
         updateGridLayout();
-        // Single delayed fit + connect — only send ONE resize to PTY after layout settles
+        // Add-flow relayout + connect in one transition to avoid visible flicker.
         if (newCellSessions.length > 0) {
-          requestAnimationFrame(() => {
-            setTimeout(() => {
-              fitAllGridCells();
-              newCellSessions.forEach(gs => {
-                if (gs._needsConnect) {
-                  delete gs._needsConnect;
-                  gs.controller.connect();
-                }
-              });
-              scheduleGridStabilizedFit();
-            }, 60);
+          runGridRelayoutTransition(() => {
+            fitAllGridCells();
+            newCellSessions.forEach(gs => {
+              if (gs._needsConnect) {
+                delete gs._needsConnect;
+                gs.controller.connect();
+              }
+            });
           });
         } else {
           // No new cells — just refit existing (layout may have changed)
@@ -4162,7 +4176,6 @@
           // Exit grid mode → single terminal
           exitGridMode();
         } else {
-          setGridRelayoutLoading(true);
           // Update layout and indices without full renderGridCells
           gridSessions.forEach((g, i) => {
             if (g._cellElement) {
@@ -4171,22 +4184,15 @@
             }
           });
           updateGridLayout();
-          // Fit remaining cells with scroll preservation
-          requestAnimationFrame(() => {
-            fitGridCellsPreserveScroll();
-            scheduleGridStabilizedFit();
-            clearGridRelayoutLoadingSoon();
-          });
+          // Remove-flow relayout while preserving scroll on first fit pass.
+          runGridRelayoutTransition(() => { fitGridCellsPreserveScroll(); });
           setGridFocus(gridFocusIndex);
         }
         renderSidebar();
       }
 
       function exitGridMode() {
-        if (gridRelayoutLoadingTimer) {
-          clearTimeout(gridRelayoutLoadingTimer);
-          gridRelayoutLoadingTimer = null;
-        }
+        cancelGridRelayoutTransition();
         // Remove grid resize handler
         if (gridResizeHandler) {
           window.removeEventListener("resize", gridResizeHandler);
@@ -4249,10 +4255,7 @@
 
       function scheduleGridStabilizedFit() {
         if (!isGridActive()) return;
-        // Single deferred fit after layout has fully stabilized
-        setTimeout(() => {
-          if (isGridActive()) fitAllGridCells();
-        }, 150);
+        runGridRelayoutTransition(() => { fitAllGridCells(); });
       }
 
       let gridResizeHandler = null;
