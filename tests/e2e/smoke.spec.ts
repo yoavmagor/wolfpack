@@ -50,3 +50,13 @@ test("api/send dispatches to mock tmux", async ({ page }) => {
   const body = await res.json();
   expect(body).toEqual({ ok: true });
 });
+
+test("malformed wp-effects storage does not brick the app", async ({ page }) => {
+  await page.goto(srv.baseUrl);
+  await page.evaluate(() => {
+    localStorage.setItem("wp-effects", "{not-json");
+  });
+  await page.reload();
+  await page.waitForSelector(".card", { timeout: 5000 });
+  await expect(page.locator(".card").first()).toBeVisible();
+});

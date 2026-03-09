@@ -21,6 +21,7 @@ import {
   isPortInUse,
   killPortHolder,
   waitForPortFree,
+  type Config,
 } from "./config.js";
 
 const IS_MACOS = platform() === "darwin";
@@ -63,9 +64,7 @@ function programArgs(): string[] {
   return [exe];
 }
 
-export function generatePlist(): string {
-  const args = programArgs();
-  const config = loadConfig();
+export function renderPlist(config: Config | null, args: string[], logPath: string): string {
   const env: Record<string, string> = { WOLFPACK_SERVICE: "1" };
   if (config?.devDir) env.WOLFPACK_DEV_DIR = config.devDir;
   if (config?.port) env.WOLFPACK_PORT = String(config.port);
@@ -74,7 +73,7 @@ export function generatePlist(): string {
     .map(([k, v]) => `      <key>${xmlEsc(k)}</key>\n      <string>${xmlEsc(v)}</string>`)
     .join("\n");
 
-  const logPath = xmlEsc(join(homedir(), ".wolfpack", "wolfpack.log"));
+  const safeLogPath = xmlEsc(logPath);
   const argsXml = args.map(a => `    <string>${xmlEsc(a)}</string>`).join("\n");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -98,16 +97,22 @@ ${envEntries}
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${logPath}</string>
+  <string>${safeLogPath}</string>
   <key>StandardErrorPath</key>
-  <string>${logPath}</string>
+  <string>${safeLogPath}</string>
 </dict>
 </plist>`;
 }
 
-export function generateSystemdUnit(): string {
-  const args = programArgs();
-  const config = loadConfig();
+export function generatePlist(): string {
+  return renderPlist(
+    loadConfig(),
+    programArgs(),
+    join(homedir(), ".wolfpack", "wolfpack.log"),
+  );
+}
+
+export function renderSystemdUnit(config: Config | null, args: string[]): string {
   const envLines: string[] = [
     `Environment=PATH=/usr/local/bin:/usr/bin:/bin`,
     `Environment=WOLFPACK_SERVICE=1`,
@@ -132,6 +137,10 @@ WantedBy=default.target
 `;
 }
 
+export function generateSystemdUnit(): string {
+  return renderSystemdUnit(loadConfig(), programArgs());
+}
+
 // launchd domain target for the current user
 const LAUNCHD_DOMAIN = `gui/${process.getuid()}`;
 const LAUNCHD_TARGET = `${LAUNCHD_DOMAIN}/${PLIST_LABEL}`;
@@ -145,6 +154,12 @@ function launchdBootout() {
 function launchdBootstrap() {
   execSync(`launchctl bootstrap ${LAUNCHD_DOMAIN} "${PLIST_PATH}"`);
   execSync(`launchctl kickstart ${LAUNCHD_TARGET}`);
+}
+
+export function isServiceInstalled(): boolean {
+  if (IS_MACOS) return existsSync(PLIST_PATH);
+  if (IS_LINUX) return existsSync(SYSTEMD_PATH);
+  return false;
 }
 
 export function serviceInstall() {

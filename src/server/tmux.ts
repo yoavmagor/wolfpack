@@ -11,6 +11,8 @@ import { INTERACTIVE_CONTEXT } from "../wolfpack-context.js";
 const exec = promisify(execFile);
 
 export const TMUX = "tmux";
+export const MOBILE_CAPTURE_HISTORY_LINES = 2000;
+export const DESKTOP_PREFILL_HISTORY_LINES = 5000;
 
 export const DEV_DIR =
   process.env.WOLFPACK_DEV_DIR || join(homedir(), "Dev");
@@ -132,7 +134,7 @@ export async function tmuxResize(session: string, cols: number, rows: number): P
 let _capturePane: (session: string) => Promise<string> = async (session) => {
   try {
     const { stdout } = await exec(TMUX, [
-      "capture-pane", "-t", session, "-p", "-S", "-2000",
+      "capture-pane", "-t", session, "-p", "-S", `-${MOBILE_CAPTURE_HISTORY_LINES}`,
     ]);
     return stdout;
   } catch {

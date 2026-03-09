@@ -9,6 +9,7 @@ import {
 } from "../validation.js";
 import {
   TMUX,
+  DESKTOP_PREFILL_HISTORY_LINES,
   exec,
   tmuxSend,
   tmuxSendKey,
@@ -310,7 +311,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
     // the first PTY bytes only after the prefill has been delivered successfully.
     try {
       const { stdout } = await exec(TMUX, [
-        "capture-pane", "-t", session, "-p", "-e", "-S", "-2000",
+        "capture-pane", "-t", session, "-p", "-e", "-S", `-${DESKTOP_PREFILL_HISTORY_LINES}`,
       ], { timeout: 3000 });
       if (stdout && entry.viewer && entry.viewer.readyState === 1) {
         prefill = Buffer.from(stdout);
@@ -381,7 +382,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
   let rlTokens = 60;
   let rlLast = Date.now();
 
-  ws.on("message", (raw: Buffer | string) => {
+  ws.on("message", (raw: Buffer | string, isBinary: boolean) => {
     if (!entry.alive) return;
     const now = Date.now();
     rlTokens = Math.min(60, rlTokens + ((now - rlLast) / 1000) * 60);
@@ -389,7 +390,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
     if (rlTokens < 1) return;
     rlTokens--;
     try {
-      if (typeof raw === "string" || (Buffer.isBuffer(raw) && raw[0] === 0x7b)) {
+      if (!isBinary) {
         const msg = JSON.parse(String(raw));
         if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           const cols = clampCols(msg.cols);
