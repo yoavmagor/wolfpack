@@ -35,6 +35,14 @@ const XTERM_ASSETS = [
     source: join(NODE_MODULES_DIR, "@xterm", "addon-unicode11", "lib", "addon-unicode11.js"),
     target: join(PUBLIC_DIR, "xterm-addon-unicode11.min.js"),
   },
+  {
+    source: join(NODE_MODULES_DIR, "@xterm", "addon-webgl", "lib", "addon-webgl.js"),
+    target: join(PUBLIC_DIR, "xterm-addon-webgl.min.js"),
+  },
+  {
+    source: join(NODE_MODULES_DIR, "@xterm", "addon-web-links", "lib", "addon-web-links.js"),
+    target: join(PUBLIC_DIR, "xterm-addon-web-links.min.js"),
+  },
 ] as const;
 
 const MIME_MAP: Record<string, string> = {

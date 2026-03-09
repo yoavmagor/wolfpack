@@ -1258,7 +1258,6 @@
       .grid-cell .xterm {
         flex: 1;
         min-height: 0;
-        padding: 0 2px;
         overflow: hidden;
         transition: opacity 0.15s ease;
       }
@@ -2555,6 +2554,8 @@
     <script src="/xterm-addon-fit.min.js"></script>
     <script src="/xterm-addon-search.min.js"></script>
     <script src="/xterm-addon-unicode11.min.js"></script>
+    <script src="/xterm-addon-webgl.min.js"></script>
+    <script src="/xterm-addon-web-links.min.js"></script>
   </head>
   <body>
     <header>
@@ -3231,6 +3232,7 @@
 
       function createConfiguredTerminal(options) {
         const term = new Terminal({
+          allowProposedApi: true,
           macOptionClickForcesSelection: true,
           fontFamily: getTerminalFontFamily(),
           theme: {
@@ -3253,6 +3255,10 @@
           term.loadAddon(unicodeAddon);
           term.unicode.activeVersion = "11";
         } catch {}
+
+        try { term.loadAddon(new WebglAddon.WebglAddon()); } catch {}
+
+        try { term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch {}
 
         return { term, fitAddon, searchAddon };
       }
@@ -3371,6 +3377,7 @@
                 connectGridCellWs(gs);
               }
             });
+            scheduleGridStabilizedFit();
           }, 100);
         });
       }
@@ -3642,6 +3649,16 @@
             try { gs.fitAddon.fit(); } catch {}
           }
         }
+      }
+
+      function scheduleGridStabilizedFit() {
+        if (!isGridActive()) return;
+        requestAnimationFrame(() => {
+          fitAllGridCells();
+          setTimeout(() => {
+            if (isGridActive()) fitAllGridCells();
+          }, 180);
+        });
       }
 
       let gridResizeHandler = null;
@@ -6683,8 +6700,12 @@
         // Resizing the PTY during hover causes Claude Code's TUI to redraw with
         // a right-margin dot fill (·) that persists after the sidebar collapses.
         sidebar.addEventListener("transitionend", (e) => {
-          if (e.propertyName === "margin-left" && desktopFitAddon && !sidebarAutoExpanded) {
-            desktopFitAddon.fit();
+          if (e.propertyName === "margin-left" && !sidebarAutoExpanded) {
+            if (isGridActive()) {
+              scheduleGridStabilizedFit();
+            } else if (desktopFitAddon) {
+              desktopFitAddon.fit();
+            }
           }
         });
 
