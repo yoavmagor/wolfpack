@@ -2,10 +2,10 @@ import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-// Set WOLFPACK_TEST before importing serve.ts to prevent auto-listen
+// Use dynamic import so WOLFPACK_TEST is set before server module evaluation.
 process.env.WOLFPACK_TEST = "1";
 
-import { server, __setTmuxList } from "../../src/server/index.ts";
+const { server, __setTmuxList } = await import("../../src/server/index.ts");
 
 // ── Fake tmux list (no real tmux needed) ──
 

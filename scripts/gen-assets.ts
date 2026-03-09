@@ -1,16 +1,41 @@
 #!/usr/bin/env bun
 /**
- * Generates public-assets.ts — a module that embeds all files from public/
- * as a Map<string, { content: string | Uint8Array; mime: string }>.
+ * Syncs browser xterm assets from node_modules into public/, then generates
+ * public-assets.ts — a module that embeds all files from public/ as a
+ * Map<string, { content: string | Uint8Array; mime: string }>.
  *
  * Run: bun run scripts/gen-assets.ts
  * Output: public-assets.ts (project root)
  */
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, extname } from "node:path";
+import { copyFileSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { extname, join } from "node:path";
 
 const PUBLIC_DIR = join(import.meta.dirname, "..", "public");
 const OUT_FILE = join(import.meta.dirname, "..", "src", "public-assets.ts");
+const NODE_MODULES_DIR = join(import.meta.dirname, "..", "node_modules");
+
+const XTERM_ASSETS = [
+  {
+    source: join(NODE_MODULES_DIR, "@xterm", "xterm", "lib", "xterm.js"),
+    target: join(PUBLIC_DIR, "xterm.min.js"),
+  },
+  {
+    source: join(NODE_MODULES_DIR, "@xterm", "xterm", "css", "xterm.css"),
+    target: join(PUBLIC_DIR, "xterm.css"),
+  },
+  {
+    source: join(NODE_MODULES_DIR, "@xterm", "addon-fit", "lib", "addon-fit.js"),
+    target: join(PUBLIC_DIR, "xterm-addon-fit.min.js"),
+  },
+  {
+    source: join(NODE_MODULES_DIR, "@xterm", "addon-search", "lib", "addon-search.js"),
+    target: join(PUBLIC_DIR, "xterm-addon-search.min.js"),
+  },
+  {
+    source: join(NODE_MODULES_DIR, "@xterm", "addon-unicode11", "lib", "addon-unicode11.js"),
+    target: join(PUBLIC_DIR, "xterm-addon-unicode11.min.js"),
+  },
+] as const;
 
 const MIME_MAP: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -32,6 +57,10 @@ const TEXT_EXTS = new Set([".html", ".json", ".js", ".css", ".svg", ".xml"]);
 
 function isText(ext: string): boolean {
   return TEXT_EXTS.has(ext);
+}
+
+for (const asset of XTERM_ASSETS) {
+  copyFileSync(asset.source, asset.target);
 }
 
 const files = readdirSync(PUBLIC_DIR).sort();
