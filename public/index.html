@@ -1206,15 +1206,42 @@
         overflow: hidden;
       }
       #desktop-terminal-container.hydrating {
-        opacity: 0;
+        background: #0a0a0a;
       }
-      #desktop-terminal-container.hydrated {
-        opacity: 1;
-        transition: opacity 0.08s ease-in;
+      #desktop-terminal-container.hydrating::before {
+        content: "Loading terminal";
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1.2px;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.32);
+        background:
+          linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0.02) 0%,
+            rgba(255, 255, 255, 0.05) 50%,
+            rgba(255, 255, 255, 0.02) 100%
+          );
+        background-size: 200% 100%;
+        animation: grid-loading-sheen 1.1s linear infinite;
+        pointer-events: none;
+        z-index: 5;
       }
       #desktop-terminal-container .xterm {
         height: 100%;
         padding: 4px;
+      }
+      #desktop-terminal-container.hydrating .xterm {
+        opacity: 0;
+      }
+      #desktop-terminal-container.hydrated .xterm {
+        opacity: 1;
+        transition: opacity 0.08s ease-in;
       }
 
       /* ── Multi-terminal grid ── */
@@ -3611,12 +3638,12 @@
           _fitAddon = result.fitAddon;
           _searchAddon = result.searchAddon;
 
-          _term.open(container);
-          try { _term.loadAddon(new WebglAddon.WebglAddon()); } catch (e) { console.warn("webgl addon failed:", e); }
-
-          // Mark hydrating (revealed by hydration.finish() via opacity transition)
+          // Mark hydrating before xterm mounts to avoid first-frame flicker.
           const hydrationEl = _getHydrationElement();
           if (hydrationEl) { hydrationEl.classList.add("hydrating"); hydrationEl.classList.remove("hydrated"); }
+
+          _term.open(container);
+          try { _term.loadAddon(new WebglAddon.WebglAddon()); } catch (e) { console.warn("webgl addon failed:", e); }
 
           // Create hydration controller (started in connect())
           _hydration = createInitialHydrationController({
@@ -5493,6 +5520,8 @@
         const container = document.getElementById("desktop-terminal-container");
         container.style.display = "block";
         container.innerHTML = "";
+        container.classList.add("hydrating");
+        container.classList.remove("hydrated");
         document.getElementById("terminal").style.display = "none";
         document.getElementById("kb-accessory").classList.remove("visible");
         document.getElementById("kb-toggle")?.classList.remove("active");
