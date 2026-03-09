@@ -1205,6 +1205,13 @@
         background: #0a0a0a;
         overflow: hidden;
       }
+      #desktop-terminal-container.hydrating {
+        opacity: 0;
+      }
+      #desktop-terminal-container.hydrated {
+        opacity: 1;
+        transition: opacity 0.08s ease-in;
+      }
       #desktop-terminal-container .xterm {
         height: 100%;
         padding: 4px;
@@ -1260,6 +1267,13 @@
         min-height: 0;
         overflow: hidden;
         transition: opacity 0.15s ease;
+      }
+      .grid-cell.hydrating .xterm {
+        opacity: 0;
+      }
+      .grid-cell.hydrated .xterm {
+        opacity: 1;
+        transition: opacity 0.08s ease-in;
       }
       .grid-cell-loading {
         position: absolute;
@@ -2881,6 +2895,8 @@
       function toggleSetting(key, val) {
         wpSettings[key] = val;
         localStorage.setItem("wp-effects", JSON.stringify(wpSettings));
+        // Invalidate cached char dimensions on font changes
+        if (key === "termFontSize" || key === "termFont") _charDimCache = { key: "", w: 0, h: 0 };
         applySetting(key, val);
       }
       function applySetting(key, val) {
@@ -3282,7 +3298,10 @@
           if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
           if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null; }
           const el = opts.getElement();
-          if (el) el.style.visibility = "visible";
+          if (el) {
+            el.classList.remove("hydrating");
+            el.classList.add("hydrated");
+          }
           const term = opts.getTerm();
           if (term) {
             try { term.scrollToBottom(); } catch {}
@@ -3541,9 +3560,9 @@
           _term.open(container);
           try { _term.loadAddon(new CanvasAddon.CanvasAddon()); } catch (e) { console.warn("canvas addon failed:", e); }
 
-          // Hide hydration element (revealed by hydration.finish())
+          // Mark hydrating (revealed by hydration.finish() via opacity transition)
           const hydrationEl = _getHydrationElement();
-          if (hydrationEl) hydrationEl.style.visibility = "hidden";
+          if (hydrationEl) { hydrationEl.classList.add("hydrating"); hydrationEl.classList.remove("hydrated"); }
 
           // Create hydration controller (started in connect())
           _hydration = createInitialHydrationController({
@@ -3797,84 +3816,123 @@
         document.getElementById("kb-accessory").classList.remove("visible");
       }
 
+      function createGridCell(gs, idx) {
+        const cell = document.createElement("div");
+        cell.className = "grid-cell" + (idx === gridFocusIndex ? " grid-focused" : "") + (gs._loading ? " grid-loading" : "");
+        cell.dataset.gridIndex = idx;
+        cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div><div class="grid-cell-loading">Loading terminal</div>';
+        cell.addEventListener("click", (e) => {
+          if (e.target.classList.contains("grid-cell-close")) return;
+          const i = parseInt(cell.dataset.gridIndex, 10);
+          setGridFocus(i);
+        });
+        cell.querySelector(".grid-cell-close").addEventListener("click", (e) => {
+          e.stopPropagation();
+          const i = parseInt(cell.dataset.gridIndex, 10);
+          removeFromGrid(i);
+        });
+        gs._cellElement = cell;
+        return cell;
+      }
+
+      function mountGridController(gs, cell, idx) {
+        if (gs.controller) return; // already mounted
+        const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+        gs.controller = createPtyTerminalController({
+          session: gs.session,
+          machine: gs.machine || "",
+          fontSize: Math.max(tp.fontSize - 2, 10),
+          scrollback: GRID_TERMINAL_SCROLLBACK,
+          cursorBlink: idx === gridFocusIndex,
+          disableStdin: idx !== gridFocusIndex,
+          resetPty: gs._resetPty,
+          shouldFocus: () => gridSessions[gridFocusIndex] === gs,
+          shouldReconnect: () => gridSessions.includes(gs),
+          canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && gridSessions[gridFocusIndex] === gs),
+          canSendResize: () => !!(gs.controller && gs.controller.isConnected),
+          onViewerConflict: () => showGridCellConflictOverlay(gs),
+          onControlGranted: () => {
+            removeGridCellConflictOverlay(gs);
+            if (gridSessions[gridFocusIndex] === gs) gs.controller.focus();
+          },
+          onDisconnected: (code) => {
+            removeGridCellConflictOverlay(gs);
+            if (!gridSessions.includes(gs)) return;
+            if (code === 4002) {
+              gs.controller.connect();
+            } else {
+              gs.controller.scheduleReconnect();
+            }
+          },
+        });
+        delete gs._resetPty;
+        gs.controller.mount(cell);
+        gs._needsConnect = true;
+      }
+
       function renderGridCells() {
         const container = document.getElementById("desktop-grid-container");
-        container.innerHTML = "";
         // Install resize handler if not yet
         if (!gridResizeHandler) {
           gridResizeHandler = () => { if (isGridActive()) fitAllGridCells(); };
           window.addEventListener("resize", gridResizeHandler);
         }
+        // Build set of current sessions for diffing
+        const existingCells = container.querySelectorAll(".grid-cell");
+        const existingMap = new Map();
+        existingCells.forEach(cell => {
+          const idx = parseInt(cell.dataset.gridIndex, 10);
+          existingMap.set(idx, cell);
+        });
+        // Track which sessions need new cells vs reuse
+        const newCellSessions = [];
         gridSessions.forEach((gs, idx) => {
-          const cell = document.createElement("div");
-          cell.className = "grid-cell" + (idx === gridFocusIndex ? " grid-focused" : "") + (gs._loading ? " grid-loading" : "");
-          cell.dataset.gridIndex = idx;
-          cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div><div class="grid-cell-loading">Loading terminal</div>';
-          cell.addEventListener("click", (e) => {
-            if (e.target.classList.contains("grid-cell-close")) return;
-            setGridFocus(idx);
-          });
-          cell.querySelector(".grid-cell-close").addEventListener("click", (e) => {
-            e.stopPropagation();
-            removeFromGrid(idx);
-          });
-          container.appendChild(cell);
-          // Mount controller if not yet created
-          if (!gs.controller) {
-            const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-            gs.controller = createPtyTerminalController({
-              session: gs.session,
-              machine: gs.machine || "",
-              fontSize: Math.max(tp.fontSize - 2, 10),
-              scrollback: GRID_TERMINAL_SCROLLBACK,
-              cursorBlink: idx === gridFocusIndex,
-              disableStdin: idx !== gridFocusIndex,
-              resetPty: gs._resetPty,
-              shouldFocus: () => gridSessions[gridFocusIndex] === gs,
-              shouldReconnect: () => gridSessions.includes(gs),
-              canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && gridSessions[gridFocusIndex] === gs),
-              canSendResize: () => !!(gs.controller && gs.controller.isConnected),
-              onViewerConflict: () => showGridCellConflictOverlay(gs),
-              onControlGranted: () => {
-                removeGridCellConflictOverlay(gs);
-                if (gridSessions[gridFocusIndex] === gs) gs.controller.focus();
-              },
-              onDisconnected: (code) => {
-                removeGridCellConflictOverlay(gs);
-                if (!gridSessions.includes(gs)) return;
-                if (code === 4002) {
-                  gs.controller.connect();
-                } else {
-                  gs.controller.scheduleReconnect();
-                }
-              },
-            });
-            delete gs._resetPty;
-            gs.controller.mount(cell);
-            gs._needsConnect = true;  // connect after final fit
+          if (gs._cellElement && gs._cellElement.parentNode === container && gs.controller) {
+            // Existing cell — just update index and focus state
+            gs._cellElement.dataset.gridIndex = idx;
+            gs._cellElement.classList.toggle("grid-focused", idx === gridFocusIndex);
           } else {
-            // Re-attach existing terminal to new cell DOM
-            cell.appendChild(gs.controller.term.element);
+            // New cell needed
+            const cell = createGridCell(gs, idx);
+            container.appendChild(cell);
+            mountGridController(gs, cell, idx);
+            newCellSessions.push(gs);
+          }
+        });
+        // Remove orphaned cells (sessions removed from grid)
+        const activeCellElements = new Set(gridSessions.map(gs => gs._cellElement));
+        existingCells.forEach(cell => {
+          if (!activeCellElements.has(cell)) cell.remove();
+        });
+        // Reorder DOM to match gridSessions order
+        gridSessions.forEach(gs => {
+          if (gs._cellElement && gs._cellElement.parentNode === container) {
+            container.appendChild(gs._cellElement);
           }
         });
         updateGridLayout();
         // Single delayed fit + connect — only send ONE resize to PTY after layout settles
-        requestAnimationFrame(() => {
-          setTimeout(() => {
-            fitAllGridCells();
-            // Now connect any new WebSockets (PTY gets correct size from the start)
-            gridSessions.forEach(gs => {
-              if (gs._needsConnect) {
-                delete gs._needsConnect;
-                gs.controller.connect();
-              }
-            });
-            scheduleGridStabilizedFit();
-          }, 100);
-        });
+        if (newCellSessions.length > 0) {
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              fitAllGridCells();
+              newCellSessions.forEach(gs => {
+                if (gs._needsConnect) {
+                  delete gs._needsConnect;
+                  gs.controller.connect();
+                }
+              });
+              scheduleGridStabilizedFit();
+            }, 60);
+          });
+        } else {
+          // No new cells — just refit existing (layout may have changed)
+          requestAnimationFrame(() => { fitAllGridCells(); });
+        }
       }
 
       function getGridCellElement(gs) {
+        if (gs._cellElement) return gs._cellElement;
         const idx = gridSessions.indexOf(gs);
         if (idx < 0) return null;
         return document.querySelector('#desktop-grid-container .grid-cell[data-grid-index="' + idx + '"]');
@@ -3964,7 +4022,6 @@
           destroyDesktopTerminal();
           gridFocusIndex = gridSessions.length - 1;
           renderGridCells();
-          fitAllGridCells();
           renderSidebar();
         } else {
           // Only 1 session queued — no current session to pair with.
@@ -3977,7 +4034,9 @@
       function removeFromGrid(idx) {
         if (idx < 0 || idx >= gridSessions.length) return;
         const gs = gridSessions[idx];
-        // Cleanup
+        // Remove cell DOM immediately (avoids full rebuild flash)
+        if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
+        // Cleanup controller
         if (gs.controller) gs.controller.dispose();
         gridSessions.splice(idx, 1);
         // Adjust focus
@@ -3986,8 +4045,16 @@
           // Exit grid mode → single terminal
           exitGridMode();
         } else {
-          renderGridCells();
-          fitAllGridCells();
+          // Update layout and indices without full renderGridCells
+          gridSessions.forEach((g, i) => {
+            if (g._cellElement) {
+              g._cellElement.dataset.gridIndex = i;
+              g._cellElement.classList.toggle("grid-focused", i === gridFocusIndex);
+            }
+          });
+          updateGridLayout();
+          // Fit remaining cells with scroll preservation
+          requestAnimationFrame(() => { fitGridCellsPreserveScroll(); });
           setGridFocus(gridFocusIndex);
         }
         renderSidebar();
@@ -4005,6 +4072,7 @@
         const restoreMachine = remaining ? (remaining.machine || "") : currentMachine;
         // Destroy all grid sessions
         for (const gs of gridSessions) {
+          if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
           if (gs.controller) gs.controller.dispose();
         }
         gridSessions = [];
@@ -4038,14 +4106,27 @@
         }
       }
 
+      /** Fit grid cells but preserve each terminal's scroll position to avoid visible history jump. */
+      function fitGridCellsPreserveScroll() {
+        for (const gs of gridSessions) {
+          if (!gs.controller || !gs.controller.term) continue;
+          const term = gs.controller.term;
+          const wasAtBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
+          const prevViewportY = term.buffer.active.viewportY;
+          try { gs.controller.resize(); } catch {}
+          // If user was scrolled up, restore their position instead of jumping
+          if (!wasAtBottom) {
+            try { term.scrollToLine(prevViewportY); } catch {}
+          }
+        }
+      }
+
       function scheduleGridStabilizedFit() {
         if (!isGridActive()) return;
-        requestAnimationFrame(() => {
-          fitAllGridCells();
-          setTimeout(() => {
-            if (isGridActive()) fitAllGridCells();
-          }, 180);
-        });
+        // Single deferred fit after layout has fully stabilized
+        setTimeout(() => {
+          if (isGridActive()) fitAllGridCells();
+        }, 150);
       }
 
       let gridResizeHandler = null;
@@ -5022,7 +5103,24 @@
         groups.sort((a, b) => b.sessions.length - a.sessions.length);
         const html = groups.map(g => renderGroupHtml(g)).join("");
         if (html !== lastSessionsHtml) {
-          el.innerHTML = html;
+          // Incremental per-group update: replace only changed groups
+          const perGroupHtml = groups.map(g => renderGroupHtml(g));
+          let didIncrementalUpdate = false;
+          if (!firstLoad && el.children.length === groups.length) {
+            didIncrementalUpdate = true;
+            for (let gi = 0; gi < groups.length; gi++) {
+              const existingChild = el.children[gi];
+              const newHtml = perGroupHtml[gi];
+              if (existingChild && existingChild.outerHTML !== newHtml) {
+                const tmp = document.createElement("div");
+                tmp.innerHTML = newHtml;
+                existingChild.replaceWith(tmp.firstElementChild);
+              }
+            }
+          }
+          if (!didIncrementalUpdate) {
+            el.innerHTML = html;
+          }
           lastSessionsHtml = html;
         }
 
@@ -5101,21 +5199,28 @@
         renderSidebar();
       }
 
-      async function resizePane() {
-        if (!currentSession) return;
-        const term = document.getElementById("terminal");
-        const probe = document.createElement("span");
+      let _charDimCache = { key: "", w: 0, h: 0 };
+      function getCharDimensions() {
         const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+        const key = tp.fontSize + "|" + tp.lineHeight + "|" + wpSettings.termFont;
+        if (_charDimCache.key === key && _charDimCache.w > 0) return _charDimCache;
+        const probe = document.createElement("span");
         probe.style.cssText =
           'position:absolute;visibility:hidden;white-space:pre;font-size:' + tp.fontSize + 'px;line-height:' + tp.lineHeight + ';font-family:inherit';
         probe.textContent = "X";
         document.body.appendChild(probe);
-        const charW = probe.offsetWidth;
-        const charH = probe.offsetHeight;
+        _charDimCache = { key, w: probe.offsetWidth, h: probe.offsetHeight };
         document.body.removeChild(probe);
-        if (!charW || !charH) return false;
-        const cols = Math.floor(term.clientWidth / charW);
-        const rows = Math.floor(term.clientHeight / charH);
+        return _charDimCache;
+      }
+
+      async function resizePane() {
+        if (!currentSession) return;
+        const term = document.getElementById("terminal");
+        const dims = getCharDimensions();
+        if (!dims.w || !dims.h) return false;
+        const cols = Math.floor(term.clientWidth / dims.w);
+        const rows = Math.floor(term.clientHeight / dims.h);
         if (cols > 0 && rows > 0) {
           try {
             await api("/resize", {
@@ -5430,7 +5535,7 @@
           container._onKeyDown = null;
         }
         container.style.display = "none";
-        container.style.visibility = "";
+        container.classList.remove("hydrating", "hydrated");
         container.innerHTML = "";
         document.getElementById("terminal").style.display = "";
         document.getElementById("input-bar").style.display = "";
@@ -6835,8 +6940,20 @@
       let sessionsExpanded = true; // default to expanded sessions view
 
       let sidebarInitialRender = false;
+      let _sidebarRafId = null;
+      let _lastSidebarHtml = "";
+
       function renderSidebar() {
         if (!isDesktop()) return;
+        // Coalesce multiple calls per frame
+        if (_sidebarRafId) return;
+        _sidebarRafId = requestAnimationFrame(() => {
+          _sidebarRafId = null;
+          _renderSidebarNow();
+        });
+      }
+
+      function _renderSidebarNow() {
         const el = document.getElementById("sidebar-session-list");
         if (!el) return;
         const groups = lastSessionGroups;
@@ -6882,6 +6999,9 @@
             html += '</div>';
           }
         }
+        // Skip DOM update if nothing changed
+        if (html === _lastSidebarHtml) return;
+        _lastSidebarHtml = html;
         el.innerHTML = html;
       }
 
