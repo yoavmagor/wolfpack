@@ -381,6 +381,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
 
   let rlTokens = 60;
   let rlLast = Date.now();
+  let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
   ws.on("message", (raw: Buffer | string, isBinary: boolean) => {
     if (!entry.alive) return;
@@ -398,10 +399,16 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
           if (!entry.proc) {
             spawnPty(cols, rows);
           } else {
-            entry.proc.terminal!.resize(cols, rows);
-            exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 })
-              .then(() => exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 }))
-              .catch(() => {});
+            // Debounce resize to prevent storms crashing TUI apps
+            if (resizeTimer) clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+              resizeTimer = null;
+              if (!entry.alive || !entry.proc) return;
+              entry.proc.terminal!.resize(cols, rows);
+              exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 })
+                .then(() => exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 }))
+                .catch(() => {});
+            }, 80);
           }
         }
       } else if (entry.proc) {

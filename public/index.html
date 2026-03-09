@@ -3269,9 +3269,15 @@
           }
         });
 
-        // Resize forwarding
+        // Resize forwarding (debounced to prevent resize storms)
+        let _termResizeTimer = null;
         term.onResize(({ cols, rows }) => {
-          if (shouldSendResize()) sendMessage(JSON.stringify({ type: "resize", cols, rows }));
+          if (!shouldSendResize()) return;
+          if (_termResizeTimer) clearTimeout(_termResizeTimer);
+          _termResizeTimer = setTimeout(() => {
+            _termResizeTimer = null;
+            if (shouldSendResize()) sendMessage(JSON.stringify({ type: "resize", cols, rows }));
+          }, 50);
         });
 
         return { term, fitAddon, searchAddon };
@@ -3377,12 +3383,27 @@
           return proto + "//" + location.host + "/ws/pty?session=" + session + resetSuffix;
         }
 
-        /** Fit terminal + send resize dimensions over the socket. */
+        /** Fit terminal + send resize dimensions over the socket (debounced). */
+        let _lastSentResize = "";
+        let _resizeDebounceTimer = null;
         function sendFitResize() {
           if (!ws || ws.readyState !== WebSocket.OPEN) return;
           try { opts.fitTerminal(); } catch {}
           const dims = opts.getTermDimensions();
-          if (dims) ws.send(JSON.stringify({ type: "resize", cols: dims.cols, rows: dims.rows }));
+          if (!dims) return;
+          const key = dims.cols + "x" + dims.rows;
+          if (key === _lastSentResize) return; // same dimensions, skip
+          // Debounce: collapse rapid resize calls into one
+          if (_resizeDebounceTimer) clearTimeout(_resizeDebounceTimer);
+          _resizeDebounceTimer = setTimeout(() => {
+            _resizeDebounceTimer = null;
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const d = opts.getTermDimensions();
+            if (!d) return;
+            const msg = JSON.stringify({ type: "resize", cols: d.cols, rows: d.rows });
+            _lastSentResize = d.cols + "x" + d.rows;
+            ws.send(msg);
+          }, 50);
         }
 
         function connect() {
@@ -3410,6 +3431,8 @@
                 if (msg.type === "viewer_conflict") {
                   if (opts.onViewerConflict) opts.onViewerConflict();
                 } else if (msg.type === "control_granted") {
+                  // Reset dedup — server needs a fresh resize to spawn the new PTY
+                  _lastSentResize = "";
                   sendFitResize();
                   if (opts.onControlGranted) opts.onControlGranted();
                 }
@@ -3558,7 +3581,7 @@
           _searchAddon = result.searchAddon;
 
           _term.open(container);
-          try { _term.loadAddon(new CanvasAddon.CanvasAddon()); } catch (e) { console.warn("canvas addon failed:", e); }
+          try { _term.loadAddon(new WebglAddon.WebglAddon()); } catch (e) { console.warn("webgl addon failed:", e); }
 
           // Mark hydrating (revealed by hydration.finish() via opacity transition)
           const hydrationEl = _getHydrationElement();
@@ -3595,14 +3618,18 @@
             _hydrationStarted = true;
           }
 
-          _ptyClient = createPtySocketClient({
+          // Capture reference to detect stale callbacks from replaced ptyClients
+          let thisClient = null;
+          const isCurrent = () => _ptyClient === thisClient;
+
+          thisClient = _ptyClient = createPtySocketClient({
             session: opts.session,
             machine: opts.machine || "",
             resetPty: opts.resetPty,
             getTermDimensions: () => _term ? { cols: _term.cols, rows: _term.rows } : null,
             fitTerminal: () => { if (_fitAddon) _fitAddon.fit(); },
             shouldReconnect: opts.shouldReconnect,
-            onOpen: opts.onOpen,
+            onOpen: (wasReconnect) => { if (isCurrent() && opts.onOpen) opts.onOpen(wasReconnect); },
             onBinaryData: (data) => {
               if (!_term) return;
               if (_hydration && _hydration.pending) {
@@ -3615,11 +3642,11 @@
                 if (opts.onOutput) opts.onOutput(data);
               }
             },
-            onViewerConflict: opts.onViewerConflict,
-            onControlGranted: opts.onControlGranted,
-            onDisconnected: opts.onDisconnected,
-            onReconnecting: opts.onReconnecting,
-            onReconnectExhausted: opts.onReconnectExhausted,
+            onViewerConflict: () => { if (isCurrent() && opts.onViewerConflict) opts.onViewerConflict(); },
+            onControlGranted: () => { if (isCurrent() && opts.onControlGranted) opts.onControlGranted(); },
+            onDisconnected: (code, reason) => { if (isCurrent() && opts.onDisconnected) opts.onDisconnected(code, reason); },
+            onReconnecting: () => { if (isCurrent() && opts.onReconnecting) opts.onReconnecting(); },
+            onReconnectExhausted: () => { if (isCurrent() && opts.onReconnectExhausted) opts.onReconnectExhausted(); },
           });
           _ptyClient.connect();
         }
@@ -3859,7 +3886,11 @@
             removeGridCellConflictOverlay(gs);
             if (!gridSessions.includes(gs)) return;
             if (code === 4002) {
-              gs.controller.connect();
+              setTimeout(() => {
+                if (gridSessions.includes(gs) && gs.controller && !gs.controller.isConnected) {
+                  gs.controller.connect();
+                }
+              }, 500);
             } else {
               gs.controller.scheduleReconnect();
             }
@@ -3941,11 +3972,12 @@
       function showGridCellConflictOverlay(gs) {
         const cell = getGridCellElement(gs);
         if (!cell) return;
+        // Force hydration complete so overlay is visible (cell may be opacity:0)
+        if (gs.controller && gs.controller.hydration) gs.controller.hydration.finish();
         removeGridCellConflictOverlay(gs);
         const overlay = createConflictOverlay("Active on another device", "Take Control", (e) => {
           e.stopPropagation();
           if (gs.controller) gs.controller.sendTakeControl();
-          // Don't remove overlay here — wait for control_granted to confirm
         });
         overlay.dataset.conflictType = "conflict";
         cell.appendChild(overlay);
@@ -5428,6 +5460,8 @@
       function showDesktopConflictOverlay() {
         const container = document.getElementById("desktop-terminal-container");
         if (!container) return;
+        // Force hydration complete so overlay is visible (container may be opacity:0)
+        if (desktopController && desktopController.hydration) desktopController.hydration.finish();
         removeDesktopConflictOverlay();
         const overlay = createConflictOverlay("Session active on another device", "Take Control", () => {
           if (desktopController) desktopController.sendTakeControl();
