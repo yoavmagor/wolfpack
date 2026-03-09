@@ -1324,7 +1324,7 @@
         animation: grid-loading-sheen 1.1s linear infinite;
         pointer-events: none;
       }
-      .grid-cell:not(.grid-loading) .grid-cell-loading {
+      .grid-cell:not(.grid-loading):not(.hydrating) .grid-cell-loading {
         display: none;
       }
       @keyframes grid-loading-sheen {
@@ -3869,6 +3869,24 @@
         const cell = getGridCellElement(gs);
         if (cell) cell.classList.toggle("grid-loading", loading);
       }
+      const GRID_RELAYOUT_LOADING_MS = 90;
+      let gridRelayoutLoadingTimer = null;
+
+      function setGridRelayoutLoading(loading) {
+        if (gridRelayoutLoadingTimer) {
+          clearTimeout(gridRelayoutLoadingTimer);
+          gridRelayoutLoadingTimer = null;
+        }
+        for (const gs of gridSessions) setGridCellLoading(gs, loading);
+      }
+
+      function clearGridRelayoutLoadingSoon() {
+        if (gridRelayoutLoadingTimer) clearTimeout(gridRelayoutLoadingTimer);
+        gridRelayoutLoadingTimer = setTimeout(() => {
+          gridRelayoutLoadingTimer = null;
+          for (const gs of gridSessions) setGridCellLoading(gs, false);
+        }, GRID_RELAYOUT_LOADING_MS);
+      }
 
       // ── Multi-terminal grid state ──
       let gridSessions = [];        // [{session, machine, controller}]
@@ -3965,7 +3983,14 @@
         const container = document.getElementById("desktop-grid-container");
         // Install resize handler if not yet
         if (!gridResizeHandler) {
-          gridResizeHandler = () => { if (isGridActive()) fitAllGridCells(); };
+          gridResizeHandler = () => {
+            if (!isGridActive()) return;
+            setGridRelayoutLoading(true);
+            requestAnimationFrame(() => {
+              fitAllGridCells();
+              clearGridRelayoutLoadingSoon();
+            });
+          };
           window.addEventListener("resize", gridResizeHandler);
         }
         // Build set of current sessions for diffing
@@ -4137,6 +4162,7 @@
           // Exit grid mode → single terminal
           exitGridMode();
         } else {
+          setGridRelayoutLoading(true);
           // Update layout and indices without full renderGridCells
           gridSessions.forEach((g, i) => {
             if (g._cellElement) {
@@ -4146,13 +4172,21 @@
           });
           updateGridLayout();
           // Fit remaining cells with scroll preservation
-          requestAnimationFrame(() => { fitGridCellsPreserveScroll(); });
+          requestAnimationFrame(() => {
+            fitGridCellsPreserveScroll();
+            scheduleGridStabilizedFit();
+            clearGridRelayoutLoadingSoon();
+          });
           setGridFocus(gridFocusIndex);
         }
         renderSidebar();
       }
 
       function exitGridMode() {
+        if (gridRelayoutLoadingTimer) {
+          clearTimeout(gridRelayoutLoadingTimer);
+          gridRelayoutLoadingTimer = null;
+        }
         // Remove grid resize handler
         if (gridResizeHandler) {
           window.removeEventListener("resize", gridResizeHandler);
