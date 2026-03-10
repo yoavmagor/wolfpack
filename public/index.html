@@ -3747,8 +3747,18 @@
           shouldReconnect: () => state.gridSessions.includes(gs),
           canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && state.gridSessions[state.gridFocusIndex] === gs),
           canSendResize: () => !!(gs.controller && gs.controller.isConnected),
-          onViewerConflict: () => showGridCellConflictOverlay(gs),
+          onViewerConflict: () => {
+            // If auto-taking control back (user clicked Take Control on displaced cell),
+            // send take_control immediately instead of showing overlay again
+            if (gs._autoTakeControl) {
+              gs._autoTakeControl = false;
+              gs.controller.sendTakeControl();
+            } else {
+              showGridCellConflictOverlay(gs);
+            }
+          },
           onControlGranted: () => {
+            gs._displaced = false;
             removeGridCellConflictOverlay(gs);
             if (state.gridSessions[state.gridFocusIndex] === gs) gs.controller.focus();
           },
@@ -3756,11 +3766,9 @@
             removeGridCellConflictOverlay(gs);
             if (!state.gridSessions.includes(gs)) return;
             if (code === 4002) {
-              setTimeout(() => {
-                if (state.gridSessions.includes(gs) && gs.controller && !gs.controller.isConnected) {
-                  gs.controller.connect();
-                }
-              }, 500);
+              // Displaced by another viewer — show conflict overlay, don't auto-reconnect
+              gs._displaced = true;
+              showGridCellConflictOverlay(gs);
             } else {
               gs.controller.scheduleReconnect();
             }
@@ -3847,7 +3855,14 @@
         removeGridCellConflictOverlay(gs);
         const overlay = createConflictOverlay("Active on another device", "Take Control", (e) => {
           e.stopPropagation();
-          if (gs.controller) gs.controller.sendTakeControl();
+          if (!gs.controller) return;
+          if (gs.controller.isConnected) {
+            gs.controller.sendTakeControl();
+          } else {
+            // WS closed (displaced) — reconnect, then auto-send take_control on viewer_conflict
+            gs._autoTakeControl = true;
+            gs.controller.connect();
+          }
         });
         overlay.dataset.conflictType = "conflict";
         cell.appendChild(overlay);
@@ -6111,7 +6126,7 @@
               // Desktop: reset retry budget and reconnect current terminal context.
               if (isGridActive()) {
                 for (const gs of state.gridSessions) {
-                  if (!gs.controller) continue;
+                  if (!gs.controller || gs._displaced) continue;
                   gs.controller.resetRetry();
                   if (!gs.controller.isConnected) gs.controller.connect();
                 }
