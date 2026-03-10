@@ -2922,6 +2922,76 @@
       const RECONNECT_BASE_DELAY_MS = 500;
       const RECONNECT_MAX_DELAY_MS = 5000;
 
+      /**
+       * Shared reconnect backoff engine used by both desktop PTY and mobile WS paths.
+       * @param {object} opts
+       * @param {() => boolean} [opts.shouldReconnect] - guard; returning false skips scheduling
+       * @param {() => void} [opts.onReconnecting] - called when a reconnect attempt is scheduled
+       * @param {() => void} [opts.onExhausted] - called when the retry budget is spent
+       * @returns {{ schedule, cancel, reset, block, connected, isBlocked: boolean, pending: boolean }}
+       */
+      function createReconnector(opts = {}) {
+        let _timer = null;
+        let _delay = RECONNECT_BASE_DELAY_MS;
+        let _startedAt = 0;
+        let _blocked = false;
+
+        function schedule(connectFn) {
+          if (_timer) return;
+          if (_blocked) return;
+          if (opts.shouldReconnect && !opts.shouldReconnect()) return;
+          const now = Date.now();
+          if (!_startedAt) _startedAt = now;
+          const elapsed = now - _startedAt;
+          const remaining = RECONNECT_BUDGET_MS - elapsed;
+          if (remaining <= 0) {
+            _blocked = true;
+            if (opts.onExhausted) opts.onExhausted();
+            return;
+          }
+          if (opts.onReconnecting) opts.onReconnecting();
+          const jitterMs = Math.floor(Math.random() * 200);
+          const delayMs = Math.min(_delay + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
+          _timer = setTimeout(() => {
+            _timer = null;
+            if (opts.shouldReconnect && !opts.shouldReconnect()) return;
+            connectFn();
+          }, delayMs);
+          _delay = Math.min(Math.floor(_delay * 1.8), RECONNECT_MAX_DELAY_MS);
+        }
+
+        function cancel() {
+          if (_timer) { clearTimeout(_timer); _timer = null; }
+        }
+
+        function reset() {
+          _blocked = false;
+          _startedAt = 0;
+          _delay = RECONNECT_BASE_DELAY_MS;
+        }
+
+        function block() { _blocked = true; }
+
+        /** Call on successful connect. Returns true if this was a reconnect (budget was active). */
+        function connected() {
+          const wasReconnecting = _startedAt > 0;
+          _delay = RECONNECT_BASE_DELAY_MS;
+          _startedAt = 0;
+          _blocked = false;
+          return wasReconnecting;
+        }
+
+        return {
+          schedule,
+          cancel,
+          reset,
+          block,
+          connected,
+          get isBlocked() { return _blocked; },
+          get pending() { return !!_timer; },
+        };
+      }
+
       const state = {
         currentView: "sessions",
         currentSession: null,
@@ -2961,10 +3031,6 @@
         sessionsExpanded: true,
         // mobile/connection state
         mobileWs: null,
-        mobileReconnectTimer: null,
-        mobileReconnectDelayMs: RECONNECT_BASE_DELAY_MS,
-        mobileReconnectStartedAt: 0,
-        mobileRetryBlocked: false,
         mobileStreamingActive: false,
         termFollowMode: true,
         sessionRefreshTimer: null,
@@ -3176,10 +3242,11 @@
        */
       function createPtySocketClient(opts) {
         let ws = null;
-        let reconnectTimer = null;
-        let reconnectDelay = RECONNECT_BASE_DELAY_MS;
-        let reconnectStartedAt = 0;
-        let retryBlocked = false;
+        const _rc = createReconnector({
+          shouldReconnect: opts.shouldReconnect,
+          onReconnecting: opts.onReconnecting,
+          onExhausted: opts.onReconnectExhausted,
+        });
         let hasConnected = false;
         let consumeReset = !!opts.resetPty;
         let _skipPrefillNextAttach = false;
@@ -3247,7 +3314,7 @@
         }
 
         function connect() {
-          if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+          _rc.cancel();
           if (ws && ws.readyState <= WebSocket.OPEN) return;
 
           const sock = new WebSocket(buildUrl());
@@ -3257,9 +3324,7 @@
           sock.onopen = () => {
             const wasReconnect = hasConnected;
             hasConnected = true;
-            reconnectDelay = RECONNECT_BASE_DELAY_MS;
-            reconnectStartedAt = 0;
-            retryBlocked = false;
+            _rc.connected();
             _skipPrefillNextAttach = wasReconnect;
             sendAttachHandshake();
             if (opts.onOpen) opts.onOpen(wasReconnect);
@@ -3298,27 +3363,9 @@
         }
 
         function scheduleReconnect() {
-          if (reconnectTimer) return;
-          if (retryBlocked) return;
-          if (opts.shouldReconnect && !opts.shouldReconnect()) return;
-          const now = Date.now();
-          if (!reconnectStartedAt) reconnectStartedAt = now;
-          const elapsed = now - reconnectStartedAt;
-          const remaining = RECONNECT_BUDGET_MS - elapsed;
-          if (remaining <= 0) {
-            retryBlocked = true;
-            if (opts.onReconnectExhausted) opts.onReconnectExhausted();
-            return;
-          }
-          if (opts.onReconnecting) opts.onReconnecting();
-          const jitterMs = Math.floor(Math.random() * 200);
-          const delayMs = Math.min(reconnectDelay + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
-          reconnectTimer = setTimeout(() => {
-            reconnectTimer = null;
-            if (opts.shouldReconnect && !opts.shouldReconnect()) return;
+          _rc.schedule(() => {
             if (!ws || ws.readyState === WebSocket.CLOSED) connect();
-          }, delayMs);
-          reconnectDelay = Math.min(Math.floor(reconnectDelay * 1.8), RECONNECT_MAX_DELAY_MS);
+          });
         }
 
         function sendResize(cols, rows) {
@@ -3338,17 +3385,15 @@
         }
 
         function close() {
-          if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+          _rc.cancel();
+          _rc.block();
           _awaitingAttachAck = false;
           if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
-          retryBlocked = true;
           if (ws) { ws.close(); ws = null; }
         }
 
         function resetRetry() {
-          retryBlocked = false;
-          reconnectStartedAt = 0;
-          reconnectDelay = RECONNECT_BASE_DELAY_MS;
+          _rc.reset();
         }
 
         return {
@@ -3362,7 +3407,7 @@
           resetRetry,
           get ws() { return ws; },
           get isOpen() { return !!(ws && ws.readyState === WebSocket.OPEN); },
-          get retryBlocked() { return retryBlocked; },
+          get retryBlocked() { return _rc.isBlocked; },
         };
       }
 
@@ -5555,9 +5600,15 @@
         return proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
       }
 
+      const mobileReconnector = createReconnector({
+        shouldReconnect: () => state.mobileStreamingActive && !state.useDesktopTerminal && !!state.currentSession && state.currentView === "terminal",
+        onReconnecting: () => setConnState("reconnecting"),
+        onExhausted: () => setConnState("offline"),
+      });
+
       function connectMobileTerminalWs() {
         if (!state.mobileStreamingActive || state.useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
-        if (state.mobileRetryBlocked) return;
+        if (mobileReconnector.isBlocked) return;
         if (state.mobileWs && state.mobileWs.readyState <= WebSocket.OPEN) return;
         const connectKey = terminalSessionKey();
         const ws = new WebSocket(mobileTerminalWsUrl());
@@ -5569,10 +5620,7 @@
             ws.close();
             return;
           }
-          if (state.mobileReconnectStartedAt > 0) wpMetrics.reconnectCount++;
-          state.mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
-          state.mobileReconnectStartedAt = 0;
-          state.mobileRetryBlocked = false;
+          if (mobileReconnector.connected()) wpMetrics.reconnectCount++;
           setConnState("live");
           await resizePane();
         };
@@ -5595,49 +5643,22 @@
             setConnState("session-ended");
             return;
           }
-          scheduleMobileReconnect();
+          mobileReconnector.schedule(connectMobileTerminalWs);
         };
 
         ws.onerror = () => {};
       }
 
-      function scheduleMobileReconnect() {
-        if (!state.mobileStreamingActive || state.useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
-        if (state.mobileReconnectTimer) return;
-        const now = Date.now();
-        if (!state.mobileReconnectStartedAt) state.mobileReconnectStartedAt = now;
-        const elapsed = now - state.mobileReconnectStartedAt;
-        const remaining = RECONNECT_BUDGET_MS - elapsed;
-        if (remaining <= 0) {
-          state.mobileRetryBlocked = true;
-          setConnState("offline");
-          return;
-        }
-        setConnState("reconnecting");
-        const jitterMs = Math.floor(Math.random() * 200);
-        const delayMs = Math.min(state.mobileReconnectDelayMs + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
-        state.mobileReconnectTimer = setTimeout(() => {
-          state.mobileReconnectTimer = null;
-          connectMobileTerminalWs();
-        }, delayMs);
-        state.mobileReconnectDelayMs = Math.min(Math.floor(state.mobileReconnectDelayMs * 1.8), RECONNECT_MAX_DELAY_MS);
-      }
-
       function startPolling(resetBudget = true) {
         state.mobileStreamingActive = true;
         if (resetBudget) {
-          state.mobileReconnectStartedAt = 0;
-          state.mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
-          state.mobileRetryBlocked = false;
+          mobileReconnector.reset();
         }
-        if (state.mobileRetryBlocked && !resetBudget) {
+        if (mobileReconnector.isBlocked && !resetBudget) {
           setConnState("offline");
           return;
         }
-        if (state.mobileReconnectTimer) {
-          clearTimeout(state.mobileReconnectTimer);
-          state.mobileReconnectTimer = null;
-        }
+        mobileReconnector.cancel();
         if (!state.mobileWs || state.mobileWs.readyState === WebSocket.CLOSED) {
           setConnState("reconnecting");
         }
@@ -5647,13 +5668,8 @@
       function stopPolling() {
         if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
         state.mobileStreamingActive = false;
-        state.mobileReconnectStartedAt = 0;
-        state.mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
-        state.mobileRetryBlocked = false;
-        if (state.mobileReconnectTimer) {
-          clearTimeout(state.mobileReconnectTimer);
-          state.mobileReconnectTimer = null;
-        }
+        mobileReconnector.reset();
+        mobileReconnector.cancel();
         if (state.enterRetryTimer) {
           clearTimeout(state.enterRetryTimer);
           state.enterRetryTimer = null;
@@ -5672,7 +5688,7 @@
 
       function retryTerminalConnection() {
         if (state.useDesktopTerminal || !state.currentSession) return;
-        state.mobileRetryBlocked = false;
+        mobileReconnector.reset();
         if (state.mobileWs) {
           const ws = state.mobileWs;
           state.mobileWs = null;

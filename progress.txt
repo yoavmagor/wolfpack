@@ -251,3 +251,14 @@
 - `notificationsEnabled` initialized with runtime check: `("Notification" in window && Notification.permission === "granted")`
 - Regenerated `src/public-assets.ts`
 - All 660 tests pass (4 pre-existing Playwright config failures unrelated)
+
+## Task 10: Deduplicate Reconnect Logic — DONE
+- Created `createReconnector(opts)` factory function shared by desktop PTY and mobile WS paths
+- Encapsulates: timer, delay, startedAt, blocked state + exponential backoff with jitter + budget enforcement
+- API: `schedule(connectFn)`, `cancel()`, `reset()`, `block()`, `connected()` (returns wasReconnecting), `isBlocked`, `pending`
+- Hooks: `shouldReconnect`, `onReconnecting`, `onExhausted`
+- Refactored `createPtySocketClient()`: replaced 4 local vars (`reconnectTimer`, `reconnectDelay`, `reconnectStartedAt`, `retryBlocked`) + `scheduleReconnect()` (22 lines) + `resetRetry()` (4 lines) with `_rc` reconnector instance
+- Refactored mobile path: created `mobileReconnector` instance, replaced `scheduleMobileReconnect()` (20 lines) with inline `mobileReconnector.schedule(connectMobileTerminalWs)`, updated `startPolling()`, `stopPolling()`, `retryTerminalConnection()`, `connectMobileTerminalWs()`
+- Removed 4 stale state properties: `mobileReconnectTimer`, `mobileReconnectDelayMs`, `mobileReconnectStartedAt`, `mobileRetryBlocked`
+- Net savings: ~45 lines (20-line `scheduleMobileReconnect` + 22-line `scheduleReconnect` + state vars → 30-line factory + 3-line delegations)
+- All 660 tests pass (4 pre-existing Playwright config failures unrelated)
