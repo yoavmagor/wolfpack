@@ -34,7 +34,7 @@ export {
   __setTmuxResize,
   __setCapturePane,
 } from "./tmux.js";
-export { __getActivePtySessions } from "./websocket.js";
+export { __getActivePtySessions, __getPtySpawnAttempts } from "./websocket.js";
 
 const PORT =
   Number(process.env.WOLFPACK_PORT) || Number(process.argv[2]) || 18790;

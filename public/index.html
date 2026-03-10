@@ -1238,10 +1238,11 @@
       }
       #desktop-terminal-container.hydrating .xterm {
         opacity: 0;
+        visibility: hidden;
       }
       #desktop-terminal-container.hydrated .xterm {
         opacity: 1;
-        transition: opacity 0.08s ease-in;
+        visibility: visible;
       }
 
       /* ── Multi-terminal grid ── */
@@ -1284,6 +1285,7 @@
       }
       .grid-cell.grid-loading .xterm {
         opacity: 0;
+        visibility: hidden;
       }
       .grid-cell.grid-focused {
         border-color: rgba(0,255,65,0.6);
@@ -1293,14 +1295,14 @@
         flex: 1;
         min-height: 0;
         overflow: hidden;
-        transition: opacity 0.15s ease;
       }
       .grid-cell.hydrating .xterm {
         opacity: 0;
+        visibility: hidden;
       }
       .grid-cell.hydrated .xterm {
         opacity: 1;
-        transition: opacity 0.08s ease-in;
+        visibility: visible;
       }
       .grid-cell-loading {
         position: absolute;
@@ -3317,34 +3319,51 @@
        * Owns: pending state, timeout fallback, visibility reveal, scrollToBottom,
        * optional focus, and a short quiet-period debounce so initial history bursts
        * can settle before the terminal becomes visible.
-       * @param {{ getElement: () => HTMLElement|null, getTerm: () => Terminal|null, shouldFocus: () => boolean, timeoutMs?: number, settleMs?: number }} opts
+       * @param {{ getElement: () => HTMLElement|null, getTerm: () => Terminal|null, shouldFocus: () => boolean, canFinish?: () => boolean, timeoutMs?: number, settleMs?: number, maxPendingMs?: number }} opts
        */
       function createInitialHydrationController(opts) {
         let _pending = false;
         let _fallbackTimer = null;
         let _settleTimer = null;
+        let _startedAt = 0;
         const timeoutMs = opts.timeoutMs || DESKTOP_INITIAL_PREFILL_TIMEOUT_MS;
         const settleMs = opts.settleMs || 80;
+        const maxPendingMs = opts.maxPendingMs || 4000;
 
         function finish() {
           if (!_pending) return;
+          if (opts.canFinish && !opts.canFinish()) {
+            if (Date.now() - _startedAt >= maxPendingMs) {
+              // Safety valve: avoid infinite loader on very high-throughput sessions.
+            } else {
+              if (_settleTimer) clearTimeout(_settleTimer);
+              _settleTimer = setTimeout(finish, settleMs);
+              return;
+            }
+          }
           _pending = false;
           if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
           if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null; }
-          const el = opts.getElement();
-          if (el) {
-            el.classList.remove("hydrating");
-            el.classList.add("hydrated");
-          }
           const term = opts.getTerm();
           if (term) {
+            // Keep terminal hidden while positioning to avoid visible top->bottom jump.
             try { term.scrollToBottom(); } catch {}
-            if (opts.shouldFocus()) term.focus();
           }
+          requestAnimationFrame(() => {
+            if (!_pending) {
+              const el = opts.getElement();
+              if (el) {
+                el.classList.remove("hydrating");
+                el.classList.add("hydrated");
+              }
+              if (term && opts.shouldFocus()) term.focus();
+            }
+          });
         }
 
         function start() {
           _pending = true;
+          _startedAt = Date.now();
           if (_fallbackTimer) clearTimeout(_fallbackTimer);
           if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null; }
           _fallbackTimer = setTimeout(finish, timeoutMs);
@@ -3378,6 +3397,7 @@
        * @param {string} opts.session - tmux session name
        * @param {string} opts.machine - remote machine URL ("" for local)
        * @param {boolean} [opts.resetPty] - append &reset=1 on first connect
+       * @param {boolean} [opts.skipInitialPrefill] - ask server to skip first attach prefill
        * @param {() => {cols:number, rows:number}|null} opts.getTermDimensions
        * @param {() => void} opts.fitTerminal
        * @param {(Uint8Array) => void} opts.onBinaryData
@@ -3397,6 +3417,8 @@
         let retryBlocked = false;
         let hasConnected = false;
         let consumeReset = !!opts.resetPty;
+        let _skipPrefillNextAttach = false;
+        let _skipInitialPrefill = !!opts.skipInitialPrefill;
         let _attachAckTimer = null;
         let _awaitingAttachAck = false;
 
@@ -3419,9 +3441,12 @@
           try { opts.fitTerminal(); } catch {}
           const dims = opts.getTermDimensions();
           if (!dims) return;
+          const skipPrefill = _skipInitialPrefill || _skipPrefillNextAttach;
+          _skipInitialPrefill = false;
+          _skipPrefillNextAttach = false;
           _lastSentResize = dims.cols + "x" + dims.rows;
           _awaitingAttachAck = true;
-          ws.send(JSON.stringify({ type: "attach", cols: dims.cols, rows: dims.rows }));
+          ws.send(JSON.stringify({ type: "attach", cols: dims.cols, rows: dims.rows, skipPrefill }));
           if (_attachAckTimer) clearTimeout(_attachAckTimer);
           // Compatibility fallback: older servers don't implement attach_ack.
           _attachAckTimer = setTimeout(() => {
@@ -3470,6 +3495,7 @@
             reconnectDelay = RECONNECT_BASE_DELAY_MS;
             reconnectStartedAt = 0;
             retryBlocked = false;
+            _skipPrefillNextAttach = wasReconnect;
             sendAttachHandshake();
             if (opts.onOpen) opts.onOpen(wasReconnect);
           };
@@ -3590,6 +3616,7 @@
        * @param {number} [opts.hydrationTimeoutMs] - hydration reveal timeout
        * @param {() => HTMLElement|null} [opts.getHydrationElement] - element to show/hide for hydration (defaults to mount container)
        * @param {boolean} [opts.resetPty] - append &reset=1 on first connect
+       * @param {boolean} [opts.skipInitialPrefill] - skip server prefill on first attach
        * @param {() => boolean} [opts.shouldReconnect] - guard for reconnect attempts
        * @param {() => boolean} [opts.canAcceptInput] - override stdin guard (default: ptyClient.isOpen)
        * @param {() => boolean} [opts.canSendResize] - override resize guard (default: canAcceptInput)
@@ -3610,10 +3637,26 @@
         let _hydration = null;
         let _ptyClient = null;
         let _hydrationStarted = false;
+        let _hydrationWritesInFlight = 0;
+        let _lastHydrationOutputAt = 0;
+        const HYDRATION_QUIET_MS = 120;
 
         const _canAcceptInput = opts.canAcceptInput || (() => !!(_ptyClient && _ptyClient.isOpen));
         const _canSendResize = opts.canSendResize || _canAcceptInput;
         const _getHydrationElement = opts.getHydrationElement || (() => _container);
+
+        function fitTerminalPreserveScroll() {
+          if (!_fitAddon || !_term) return;
+          const buffer = _term.buffer.active;
+          const wasAtBottom = buffer.viewportY >= buffer.baseY;
+          const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY);
+          _fitAddon.fit();
+          if (!wasAtBottom) {
+            const nextBaseY = _term.buffer.active.baseY;
+            const target = Math.max(0, nextBaseY - distanceFromBottom);
+            try { _term.scrollToLine(target); } catch {}
+          }
+        }
 
         /**
          * mount(container, { cached }?) — create xterm, open in container, load
@@ -3650,11 +3693,14 @@
             getElement: _getHydrationElement,
             getTerm: () => _term,
             shouldFocus: opts.shouldFocus || (() => true),
+            canFinish: () => (
+              _hydrationWritesInFlight === 0 &&
+              (_lastHydrationOutputAt === 0 || Date.now() - _lastHydrationOutputAt >= HYDRATION_QUIET_MS)
+            ),
             timeoutMs: opts.hydrationTimeoutMs,
           });
 
-          _fitAddon.fit();
-
+          fitTerminalPreserveScroll();
           if (mountOpts && mountOpts.cached) {
             _term.write(mountOpts.cached, () => {
               try { _term.scrollToBottom(); } catch {}
@@ -3684,14 +3730,18 @@
             session: opts.session,
             machine: opts.machine || "",
             resetPty: opts.resetPty,
+            skipInitialPrefill: opts.skipInitialPrefill,
             getTermDimensions: () => _term ? { cols: _term.cols, rows: _term.rows } : null,
-            fitTerminal: () => { if (_fitAddon) _fitAddon.fit(); },
+            fitTerminal: fitTerminalPreserveScroll,
             shouldReconnect: opts.shouldReconnect,
             onOpen: (wasReconnect) => { if (isCurrent() && opts.onOpen) opts.onOpen(wasReconnect); },
             onBinaryData: (data) => {
               if (!_term) return;
               if (_hydration && _hydration.pending) {
+                _lastHydrationOutputAt = Date.now();
+                _hydrationWritesInFlight++;
                 _term.write(data, () => {
+                  _hydrationWritesInFlight = Math.max(0, _hydrationWritesInFlight - 1);
                   if (_hydration) _hydration.scheduleFinish();
                   if (opts.onOutput) opts.onOutput(data);
                 });
@@ -3714,7 +3764,7 @@
         }
 
         function resize() {
-          if (_fitAddon) _fitAddon.fit();
+          fitTerminalPreserveScroll();
         }
 
         /**
@@ -3725,6 +3775,8 @@
           if (_ptyClient) { _ptyClient.close(); _ptyClient = null; }
           if (_hydration) { _hydration.cancel(); _hydration = null; }
           _hydrationStarted = false;
+          _hydrationWritesInFlight = 0;
+          _lastHydrationOutputAt = 0;
           if (_searchAddon) { try { _searchAddon.dispose(); } catch {} _searchAddon = null; }
           if (_term) { try { _term.dispose(); } catch {} _term = null; }
           _fitAddon = null;
@@ -3770,6 +3822,7 @@
       let currentRalphPlanFile = "";
       let desktopController = null;  // createPtyTerminalController instance
       let desktopResizeHandler = null;
+      let desktopResizeTimer = null;
       let useDesktopTerminal = false;
 
       function getTerminalFontFamily() {
@@ -3972,6 +4025,7 @@
           cursorBlink: idx === gridFocusIndex,
           disableStdin: idx !== gridFocusIndex,
           resetPty: gs._resetPty,
+          skipInitialPrefill: true,
           shouldFocus: () => gridSessions[gridFocusIndex] === gs,
           shouldReconnect: () => gridSessions.includes(gs),
           canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && gridSessions[gridFocusIndex] === gs),
@@ -5612,7 +5666,11 @@
         desktopController.mount(container, { cached });
 
         const onResize = () => {
-          if (desktopController) desktopController.resize();
+          if (desktopResizeTimer) clearTimeout(desktopResizeTimer);
+          desktopResizeTimer = setTimeout(() => {
+            desktopResizeTimer = null;
+            if (desktopController) desktopController.resize();
+          }, 60);
         };
         window.addEventListener("resize", onResize);
         desktopResizeHandler = onResize;
@@ -5636,6 +5694,7 @@
 
       function destroyDesktopTerminal() {
         if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
+        if (desktopResizeTimer) { clearTimeout(desktopResizeTimer); desktopResizeTimer = null; }
         if (desktopController) { desktopController.dispose(); desktopController = null; }
         if (desktopResizeHandler) {
           window.removeEventListener("resize", desktopResizeHandler);
