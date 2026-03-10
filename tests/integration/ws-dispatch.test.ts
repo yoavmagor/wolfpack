@@ -4,11 +4,7 @@ import type { AddressInfo } from "node:net";
 // Use dynamic import so WOLFPACK_TEST is set before server module evaluation.
 process.env.WOLFPACK_TEST = "1";
 
-const {
-  server,
-  __setTmuxList,
-  __getActivePtySessions,
-} = await import("../../src/server/index.ts");
+const { server, __setTmuxList, __getActivePtySessions, __getPtySpawnAttempts } = await import("../../src/server/index.ts");
 
 // ── Test setup ──
 
@@ -393,6 +389,30 @@ describe("WS /ws/pty state transitions", () => {
 
     // Single-viewer model: immediate teardown on disconnect
     expect(entry.alive).toBe(false);
+  });
+
+  test("attach + immediate resize only triggers one spawn attempt", async () => {
+    const session = "dispatch-session";
+    const ptySessions = __getActivePtySessions();
+    ptySessions.delete(session);
+    const spawnAttempts = __getPtySpawnAttempts();
+    spawnAttempts.delete(session);
+    await wait(50);
+
+    const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
+    ws.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", () => reject(new Error("connect failed")));
+    });
+
+    // During bootstrap, attach and resize can arrive back-to-back.
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
+    ws.send(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
+    await wait(250);
+
+    expect(spawnAttempts.get(session) || 0).toBe(1);
+    await closeWs(ws);
   });
 
   test("second viewer gets conflict, first stays active", async () => {

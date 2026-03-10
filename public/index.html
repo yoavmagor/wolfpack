@@ -1205,9 +1205,44 @@
         background: #0a0a0a;
         overflow: hidden;
       }
+      #desktop-terminal-container.hydrating {
+        background: #0a0a0a;
+      }
+      #desktop-terminal-container.hydrating::before {
+        content: "Loading terminal";
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1.2px;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.32);
+        background:
+          linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0.02) 0%,
+            rgba(255, 255, 255, 0.05) 50%,
+            rgba(255, 255, 255, 0.02) 100%
+          );
+        background-size: 200% 100%;
+        animation: grid-loading-sheen 1.1s linear infinite;
+        pointer-events: none;
+        z-index: 5;
+      }
       #desktop-terminal-container .xterm {
         height: 100%;
         padding: 4px;
+      }
+      #desktop-terminal-container.hydrating .xterm {
+        opacity: 0;
+        visibility: hidden;
+      }
+      #desktop-terminal-container.hydrated .xterm {
+        opacity: 1;
+        visibility: visible;
       }
 
       /* ── Multi-terminal grid ── */
@@ -1250,6 +1285,7 @@
       }
       .grid-cell.grid-loading .xterm {
         opacity: 0;
+        visibility: hidden;
       }
       .grid-cell.grid-focused {
         border-color: rgba(0,255,65,0.6);
@@ -1259,7 +1295,14 @@
         flex: 1;
         min-height: 0;
         overflow: hidden;
-        transition: opacity 0.15s ease;
+      }
+      .grid-cell.hydrating .xterm {
+        opacity: 0;
+        visibility: hidden;
+      }
+      .grid-cell.hydrated .xterm {
+        opacity: 1;
+        visibility: visible;
       }
       .grid-cell-loading {
         position: absolute;
@@ -1283,7 +1326,7 @@
         animation: grid-loading-sheen 1.1s linear infinite;
         pointer-events: none;
       }
-      .grid-cell:not(.grid-loading) .grid-cell-loading {
+      .grid-cell:not(.grid-loading):not(.hydrating) .grid-cell-loading {
         display: none;
       }
       @keyframes grid-loading-sheen {
@@ -2867,10 +2910,22 @@
     <script>
       // ── Settings (persisted to localStorage) ──
       const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:300, debugPanel:false, ralphEnabled:false};
-      const wpSettings = Object.assign({}, wpDefaults, JSON.parse(localStorage.getItem("wp-effects") || "{}"));
+      function loadStoredJson(key, fallback) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) return fallback;
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === "object" ? parsed : fallback;
+        } catch {
+          return fallback;
+        }
+      }
+      const wpSettings = Object.assign({}, wpDefaults, loadStoredJson("wp-effects", {}));
       function toggleSetting(key, val) {
         wpSettings[key] = val;
         localStorage.setItem("wp-effects", JSON.stringify(wpSettings));
+        // Invalidate cached char dimensions on font changes
+        if (key === "termFontSize" || key === "termFont") _charDimCache = { key: "", w: 0, h: 0 };
         applySetting(key, val);
       }
       function applySetting(key, val) {
@@ -2900,12 +2955,12 @@
       }
       const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
       function applyTermToXterm() {
-        if (!desktopTerm) return;
+        if (!desktopController?.term) return;
         const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-        desktopTerm.options.fontSize = p.fontSize;
-        desktopTerm.options.lineHeight = p.lineHeight;
-        desktopTerm.options.fontFamily = getTerminalFontFamily();
-        if (desktopFitAddon) desktopFitAddon.fit();
+        desktopController.term.options.fontSize = p.fontSize;
+        desktopController.term.options.lineHeight = p.lineHeight;
+        desktopController.term.options.fontFamily = getTerminalFontFamily();
+        desktopController.resize();
       }
       function initSettings() {
         Object.entries(wpSettings).forEach(([k, v]) => {
@@ -3046,8 +3101,10 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ session: currentSession, text: cmd.cmd }),
           }, currentMachine);
-          enterFastPoll();
-        } catch {}
+          connectMobileTerminalWs();
+        } catch {
+          wpMetrics.sendFailCount++;
+        }
       }
 
       function renderQuickCmdSettings() {
@@ -3115,13 +3172,9 @@
         overlay.classList.add("visible");
         try {
           const data = await api("/git-status?session=" + encodeURIComponent(currentSession), {}, currentMachine);
-          if (data.error) {
-            overlay.innerHTML = `<div><pre style="color:#cc3333">${esc(data.error)}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
-          } else {
-            overlay.innerHTML = `<div><pre>${esc(data.status || "(clean)")}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
-          }
+          overlay.innerHTML = `<div><pre>${esc(data.status || "(clean)")}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
         } catch (e) {
-          overlay.innerHTML = `<div><pre style="color:#cc3333">${esc(String(e))}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
+          overlay.innerHTML = `<div><pre style="color:#cc3333">${esc(errorMessage(e))}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
         }
       }
 
@@ -3170,6 +3223,589 @@
       const SNAPSHOT_KEY_PREFIX = "wp-snap|";
       const SNAPSHOT_MAX_BYTES = 8192;
       const SNAPSHOT_SAVE_INTERVAL = 2000;
+      const DESKTOP_TERMINAL_SCROLLBACK = 6000;
+      const GRID_TERMINAL_SCROLLBACK = 5000;
+
+      /**
+       * Creates a configured xterm.js Terminal with addons, copy/paste, and stdin wired up.
+       * @param {object} opts
+       * @param {number} opts.fontSize
+       * @param {number} opts.scrollback
+       * @param {boolean} [opts.cursorBlink=true]
+       * @param {boolean} [opts.disableStdin=false]
+       * @param {(data: Uint8Array) => void} opts.sendInput - send raw bytes to the backend
+       * @param {(msg: string) => void} opts.sendMessage - send a string message (e.g. resize JSON)
+       * @param {() => boolean} opts.canAcceptInput - guard for stdin (may include focus check)
+       * @param {() => boolean} [opts.canSendResize] - guard for resize messages (defaults to canAcceptInput)
+       * @returns {{ term: Terminal, fitAddon: FitAddon.FitAddon, searchAddon: SearchAddon.SearchAddon }}
+       */
+      function createXtermInstance({ fontSize, scrollback, cursorBlink = true, disableStdin = false, sendInput, sendMessage, canAcceptInput, canSendResize }) {
+        const shouldSendResize = canSendResize || canAcceptInput;
+        const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+        const termFontFamily = wpSettings.termFont === "alt"
+          ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
+          : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
+        const term = new Terminal({
+          cursorBlink,
+          disableStdin,
+          macOptionClickForcesSelection: true,
+          fontSize: fontSize != null ? fontSize : tp.fontSize,
+          lineHeight: tp.lineHeight,
+          fontFamily: termFontFamily,
+          theme: {
+            background: "#0a0a0a",
+            foreground: "#e0e0e0",
+            cursor: "#e0e0e0",
+            selectionBackground: "rgba(255,255,255,0.2)",
+          },
+          scrollback,
+          allowProposedApi: true,
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        const searchAddon = new SearchAddon.SearchAddon();
+        term.loadAddon(searchAddon);
+        try {
+          const unicodeAddon = new Unicode11Addon.Unicode11Addon();
+          term.loadAddon(unicodeAddon);
+          term.unicode.activeVersion = '11';
+        } catch {}
+
+        // Copy/paste
+        term.attachCustomKeyEventHandler((e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
+            navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+            return false;
+          }
+          if ((e.metaKey || e.ctrlKey) && e.key === "v" && e.type === "keydown") {
+            navigator.clipboard.readText().then(t => {
+              if (t && canAcceptInput()) sendInput(new TextEncoder().encode(t));
+            }).catch(() => {});
+            return false;
+          }
+          return true;
+        });
+
+        // Stdin forwarding
+        term.onData((data) => {
+          if (canAcceptInput()) sendInput(new TextEncoder().encode(data));
+        });
+        term.onBinary((data) => {
+          if (canAcceptInput()) {
+            const buf = new Uint8Array(data.length);
+            for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
+            sendInput(buf);
+          }
+        });
+
+        // Resize forwarding (debounced to prevent resize storms)
+        let _termResizeTimer = null;
+        term.onResize(({ cols, rows }) => {
+          if (!shouldSendResize()) return;
+          if (_termResizeTimer) clearTimeout(_termResizeTimer);
+          _termResizeTimer = setTimeout(() => {
+            _termResizeTimer = null;
+            if (shouldSendResize()) sendMessage(JSON.stringify({ type: "resize", cols, rows }));
+          }, 50);
+        });
+
+        return { term, fitAddon, searchAddon };
+      }
+      const DESKTOP_INITIAL_PREFILL_TIMEOUT_MS = 1000;
+
+      /**
+       * Shared hydration controller for xterm.js terminals.
+       * Owns: pending state, timeout fallback, visibility reveal, scrollToBottom,
+       * optional focus, and a short quiet-period debounce so initial history bursts
+       * can settle before the terminal becomes visible.
+       * @param {{ getElement: () => HTMLElement|null, getTerm: () => Terminal|null, shouldFocus: () => boolean, canFinish?: () => boolean, timeoutMs?: number, settleMs?: number, maxPendingMs?: number }} opts
+       */
+      function createInitialHydrationController(opts) {
+        let _pending = false;
+        let _fallbackTimer = null;
+        let _settleTimer = null;
+        let _startedAt = 0;
+        const timeoutMs = opts.timeoutMs || DESKTOP_INITIAL_PREFILL_TIMEOUT_MS;
+        const settleMs = opts.settleMs || 80;
+        const maxPendingMs = opts.maxPendingMs || 4000;
+
+        function finish() {
+          if (!_pending) return;
+          if (opts.canFinish && !opts.canFinish()) {
+            if (Date.now() - _startedAt >= maxPendingMs) {
+              // Safety valve: avoid infinite loader on very high-throughput sessions.
+            } else {
+              if (_settleTimer) clearTimeout(_settleTimer);
+              _settleTimer = setTimeout(finish, settleMs);
+              return;
+            }
+          }
+          _pending = false;
+          if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+          if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null; }
+          const term = opts.getTerm();
+          if (term) {
+            // Keep terminal hidden while positioning to avoid visible top->bottom jump.
+            try { term.scrollToBottom(); } catch {}
+          }
+          requestAnimationFrame(() => {
+            if (!_pending) {
+              const el = opts.getElement();
+              if (el) {
+                el.classList.remove("hydrating");
+                el.classList.add("hydrated");
+              }
+              if (term && opts.shouldFocus()) term.focus();
+            }
+          });
+        }
+
+        function start() {
+          _pending = true;
+          _startedAt = Date.now();
+          if (_fallbackTimer) clearTimeout(_fallbackTimer);
+          if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null; }
+          _fallbackTimer = setTimeout(finish, timeoutMs);
+        }
+
+        function scheduleFinish() {
+          if (!_pending) return;
+          if (_settleTimer) clearTimeout(_settleTimer);
+          _settleTimer = setTimeout(finish, settleMs);
+        }
+
+        function cancel() {
+          _pending = false;
+          if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+          if (_settleTimer) { clearTimeout(_settleTimer); _settleTimer = null; }
+        }
+
+        return {
+          get pending() { return _pending; },
+          start,
+          scheduleFinish,
+          finish,
+          cancel,
+        };
+      }
+      /**
+       * Shared PTY WebSocket client for xterm.js terminals.
+       * Owns: URL construction, socket lifecycle, binary/text frame dispatch,
+       *       initial attach handshake, reconnect backoff, control message parsing.
+       * @param {object} opts
+       * @param {string} opts.session - tmux session name
+       * @param {string} opts.machine - remote machine URL ("" for local)
+       * @param {boolean} [opts.resetPty] - append &reset=1 on first connect
+       * @param {boolean} [opts.skipInitialPrefill] - ask server to skip first attach prefill
+       * @param {() => {cols:number, rows:number}|null} opts.getTermDimensions
+       * @param {() => void} opts.fitTerminal
+       * @param {(Uint8Array) => void} opts.onBinaryData
+       * @param {() => void} [opts.onOpen]
+       * @param {() => void} [opts.onViewerConflict]
+       * @param {() => void} [opts.onControlGranted]
+       * @param {(number, string) => void} opts.onDisconnected
+       * @param {() => void} [opts.onReconnecting]
+       * @param {() => void} [opts.onReconnectExhausted]
+       * @param {() => boolean} [opts.shouldReconnect]
+       */
+      function createPtySocketClient(opts) {
+        let ws = null;
+        let reconnectTimer = null;
+        let reconnectDelay = RECONNECT_BASE_DELAY_MS;
+        let reconnectStartedAt = 0;
+        let retryBlocked = false;
+        let hasConnected = false;
+        let consumeReset = !!opts.resetPty;
+        let _skipPrefillNextAttach = false;
+        let _skipInitialPrefill = !!opts.skipInitialPrefill;
+        let _attachAckTimer = null;
+        let _awaitingAttachAck = false;
+
+        function buildUrl() {
+          const resetSuffix = consumeReset ? "&reset=1" : "";
+          consumeReset = false;
+          const session = encodeURIComponent(opts.session);
+          if (opts.machine) {
+            const remote = new URL(opts.machine);
+            const proto = remote.protocol === "https:" ? "wss:" : "ws:";
+            return proto + "//" + remote.host + "/ws/pty?session=" + session + resetSuffix;
+          }
+          const proto = location.protocol === "https:" ? "wss:" : "ws:";
+          return proto + "//" + location.host + "/ws/pty?session=" + session + resetSuffix;
+        }
+
+        /** Send one attach handshake to bootstrap PTY spawn on fresh WS open. */
+        function sendAttachHandshake() {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          try { opts.fitTerminal(); } catch {}
+          const dims = opts.getTermDimensions();
+          if (!dims) return;
+          const skipPrefill = _skipInitialPrefill || _skipPrefillNextAttach;
+          _skipInitialPrefill = false;
+          _skipPrefillNextAttach = false;
+          _lastSentResize = dims.cols + "x" + dims.rows;
+          _awaitingAttachAck = true;
+          ws.send(JSON.stringify({ type: "attach", cols: dims.cols, rows: dims.rows, skipPrefill }));
+          if (_attachAckTimer) clearTimeout(_attachAckTimer);
+          // Compatibility fallback: older servers don't implement attach_ack.
+          _attachAckTimer = setTimeout(() => {
+            _attachAckTimer = null;
+            if (!_awaitingAttachAck) return;
+            _awaitingAttachAck = false;
+            _lastSentResize = "";
+            sendFitResize();
+          }, 300);
+        }
+
+        /** Fit terminal + send resize dimensions over the socket (debounced). */
+        let _lastSentResize = "";
+        let _resizeDebounceTimer = null;
+        function sendFitResize() {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          try { opts.fitTerminal(); } catch {}
+          const dims = opts.getTermDimensions();
+          if (!dims) return;
+          const key = dims.cols + "x" + dims.rows;
+          if (key === _lastSentResize) return; // same dimensions, skip
+          // Debounce: collapse rapid resize calls into one
+          if (_resizeDebounceTimer) clearTimeout(_resizeDebounceTimer);
+          _resizeDebounceTimer = setTimeout(() => {
+            _resizeDebounceTimer = null;
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            const d = opts.getTermDimensions();
+            if (!d) return;
+            const msg = JSON.stringify({ type: "resize", cols: d.cols, rows: d.rows });
+            _lastSentResize = d.cols + "x" + d.rows;
+            ws.send(msg);
+          }, 50);
+        }
+
+        function connect() {
+          if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+          if (ws && ws.readyState <= WebSocket.OPEN) return;
+
+          const sock = new WebSocket(buildUrl());
+          sock.binaryType = "arraybuffer";
+          ws = sock;
+
+          sock.onopen = () => {
+            const wasReconnect = hasConnected;
+            hasConnected = true;
+            reconnectDelay = RECONNECT_BASE_DELAY_MS;
+            reconnectStartedAt = 0;
+            retryBlocked = false;
+            _skipPrefillNextAttach = wasReconnect;
+            sendAttachHandshake();
+            if (opts.onOpen) opts.onOpen(wasReconnect);
+          };
+
+          sock.onmessage = (ev) => {
+            if (typeof ev.data === "string") {
+              try {
+                const msg = JSON.parse(ev.data);
+                if (msg.type === "attach_ack") {
+                  _awaitingAttachAck = false;
+                  if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+                } else if (msg.type === "viewer_conflict") {
+                  _awaitingAttachAck = false;
+                  if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+                  if (opts.onViewerConflict) opts.onViewerConflict();
+                } else if (msg.type === "control_granted") {
+                  // Fresh viewer takeover needs a fresh attach bootstrap.
+                  sendAttachHandshake();
+                  if (opts.onControlGranted) opts.onControlGranted();
+                }
+              } catch {}
+              return;
+            }
+            if (opts.onBinaryData) opts.onBinaryData(new Uint8Array(ev.data));
+          };
+
+          sock.onclose = (ev) => {
+            if (ws === sock) ws = null;
+            _awaitingAttachAck = false;
+            if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+            if (opts.onDisconnected) opts.onDisconnected(ev.code, ev.reason);
+          };
+
+          sock.onerror = () => {};
+        }
+
+        function scheduleReconnect() {
+          if (reconnectTimer) return;
+          if (retryBlocked) return;
+          if (opts.shouldReconnect && !opts.shouldReconnect()) return;
+          const now = Date.now();
+          if (!reconnectStartedAt) reconnectStartedAt = now;
+          const elapsed = now - reconnectStartedAt;
+          const remaining = RECONNECT_BUDGET_MS - elapsed;
+          if (remaining <= 0) {
+            retryBlocked = true;
+            if (opts.onReconnectExhausted) opts.onReconnectExhausted();
+            return;
+          }
+          if (opts.onReconnecting) opts.onReconnecting();
+          const jitterMs = Math.floor(Math.random() * 200);
+          const delayMs = Math.min(reconnectDelay + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            if (opts.shouldReconnect && !opts.shouldReconnect()) return;
+            if (!ws || ws.readyState === WebSocket.CLOSED) connect();
+          }, delayMs);
+          reconnectDelay = Math.min(Math.floor(reconnectDelay * 1.8), RECONNECT_MAX_DELAY_MS);
+        }
+
+        function sendResize(cols, rows) {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "resize", cols, rows }));
+          }
+        }
+
+        function sendTakeControl() {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "take_control" }));
+          }
+        }
+
+        function send(data) {
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+        }
+
+        function close() {
+          if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+          _awaitingAttachAck = false;
+          if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+          retryBlocked = true;
+          if (ws) { ws.close(); ws = null; }
+        }
+
+        function resetRetry() {
+          retryBlocked = false;
+          reconnectStartedAt = 0;
+          reconnectDelay = RECONNECT_BASE_DELAY_MS;
+        }
+
+        return {
+          connect,
+          scheduleReconnect,
+          sendFitResize,
+          sendResize,
+          sendTakeControl,
+          send,
+          close,
+          resetRetry,
+          get ws() { return ws; },
+          get isOpen() { return !!(ws && ws.readyState === WebSocket.OPEN); },
+          get retryBlocked() { return retryBlocked; },
+        };
+      }
+
+      /**
+       * createPtyTerminalController — composes xterm, hydration, and WebSocket
+       * helpers into a single PTY terminal lifecycle controller.
+       *
+       * @param {object} opts
+       * @param {string} opts.session - tmux session name
+       * @param {string} [opts.machine=""] - remote machine URL ("" for local)
+       * @param {number} [opts.fontSize] - override font size
+       * @param {number} opts.scrollback - xterm scrollback lines
+       * @param {boolean} [opts.cursorBlink=true]
+       * @param {boolean} [opts.disableStdin=false]
+       * @param {() => boolean} [opts.shouldFocus] - hydration focus decision
+       * @param {number} [opts.hydrationTimeoutMs] - hydration reveal timeout
+       * @param {() => HTMLElement|null} [opts.getHydrationElement] - element to show/hide for hydration (defaults to mount container)
+       * @param {boolean} [opts.resetPty] - append &reset=1 on first connect
+       * @param {boolean} [opts.skipInitialPrefill] - skip server prefill on first attach
+       * @param {() => boolean} [opts.shouldReconnect] - guard for reconnect attempts
+       * @param {() => boolean} [opts.canAcceptInput] - override stdin guard (default: ptyClient.isOpen)
+       * @param {() => boolean} [opts.canSendResize] - override resize guard (default: canAcceptInput)
+       * @param {(Uint8Array) => void} [opts.onOutput] - called after data written to term
+       * @param {(boolean) => void} [opts.onOpen] - WebSocket opened (wasReconnect)
+       * @param {() => void} [opts.onViewerConflict]
+       * @param {() => void} [opts.onControlGranted]
+       * @param {(number, string) => void} [opts.onDisconnected]
+       * @param {() => void} [opts.onReconnecting]
+       * @param {() => void} [opts.onReconnectExhausted]
+       * @returns {{ mount, connect, focus, resize, dispose, scheduleReconnect, sendTakeControl, sendFitResize, send, resetRetry, term, fitAddon, searchAddon, ptyClient, hydration, isConnected, retryBlocked }}
+       */
+      function createPtyTerminalController(opts) {
+        let _container = null;
+        let _term = null;
+        let _fitAddon = null;
+        let _searchAddon = null;
+        let _hydration = null;
+        let _ptyClient = null;
+        let _hydrationStarted = false;
+        let _hydrationWritesInFlight = 0;
+        let _lastHydrationOutputAt = 0;
+        const HYDRATION_QUIET_MS = 120;
+
+        const _canAcceptInput = opts.canAcceptInput || (() => !!(_ptyClient && _ptyClient.isOpen));
+        const _canSendResize = opts.canSendResize || _canAcceptInput;
+        const _getHydrationElement = opts.getHydrationElement || (() => _container);
+
+        function fitTerminalPreserveScroll() {
+          if (!_fitAddon || !_term) return;
+          const buffer = _term.buffer.active;
+          const wasAtBottom = buffer.viewportY >= buffer.baseY;
+          const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY);
+          _fitAddon.fit();
+          if (!wasAtBottom) {
+            const nextBaseY = _term.buffer.active.baseY;
+            const target = Math.max(0, nextBaseY - distanceFromBottom);
+            try { _term.scrollToLine(target); } catch {}
+          }
+        }
+
+        /**
+         * mount(container, { cached }?) — create xterm, open in container, load
+         * CanvasAddon, fit, create hydration controller (not yet started).
+         * Optionally write cached content.
+         */
+        function mount(container, mountOpts) {
+          if (_term) return; // already mounted
+          _container = container;
+
+          const result = createXtermInstance({
+            fontSize: opts.fontSize,
+            scrollback: opts.scrollback,
+            cursorBlink: opts.cursorBlink,
+            disableStdin: opts.disableStdin,
+            sendInput: (data) => _ptyClient && _ptyClient.send(data),
+            sendMessage: (msg) => _ptyClient && _ptyClient.send(msg),
+            canAcceptInput: _canAcceptInput,
+            canSendResize: _canSendResize,
+          });
+          _term = result.term;
+          _fitAddon = result.fitAddon;
+          _searchAddon = result.searchAddon;
+
+          // Mark hydrating before xterm mounts to avoid first-frame flicker.
+          const hydrationEl = _getHydrationElement();
+          if (hydrationEl) { hydrationEl.classList.add("hydrating"); hydrationEl.classList.remove("hydrated"); }
+
+          _term.open(container);
+          try { _term.loadAddon(new WebglAddon.WebglAddon()); } catch (e) { console.warn("webgl addon failed:", e); }
+
+          // Create hydration controller (started in connect())
+          _hydration = createInitialHydrationController({
+            getElement: _getHydrationElement,
+            getTerm: () => _term,
+            shouldFocus: opts.shouldFocus || (() => true),
+            canFinish: () => (
+              _hydrationWritesInFlight === 0 &&
+              (_lastHydrationOutputAt === 0 || Date.now() - _lastHydrationOutputAt >= HYDRATION_QUIET_MS)
+            ),
+            timeoutMs: opts.hydrationTimeoutMs,
+          });
+
+          fitTerminalPreserveScroll();
+          if (mountOpts && mountOpts.cached) {
+            _term.write(mountOpts.cached, () => {
+              try { _term.scrollToBottom(); } catch {}
+            });
+          }
+        }
+
+        /**
+         * connect() — start hydration (first time only), create PTY WebSocket
+         * client, and open the connection.
+         */
+        function connect() {
+          if (_ptyClient && _ptyClient.isOpen) return;
+          if (_ptyClient) _ptyClient.close();
+
+          // Start hydration on first connect
+          if (!_hydrationStarted && _hydration) {
+            _hydration.start();
+            _hydrationStarted = true;
+          }
+
+          // Capture reference to detect stale callbacks from replaced ptyClients
+          let thisClient = null;
+          const isCurrent = () => _ptyClient === thisClient;
+
+          thisClient = _ptyClient = createPtySocketClient({
+            session: opts.session,
+            machine: opts.machine || "",
+            resetPty: opts.resetPty,
+            skipInitialPrefill: opts.skipInitialPrefill,
+            getTermDimensions: () => _term ? { cols: _term.cols, rows: _term.rows } : null,
+            fitTerminal: fitTerminalPreserveScroll,
+            shouldReconnect: opts.shouldReconnect,
+            onOpen: (wasReconnect) => { if (isCurrent() && opts.onOpen) opts.onOpen(wasReconnect); },
+            onBinaryData: (data) => {
+              if (!_term) return;
+              if (_hydration && _hydration.pending) {
+                _lastHydrationOutputAt = Date.now();
+                _hydrationWritesInFlight++;
+                _term.write(data, () => {
+                  _hydrationWritesInFlight = Math.max(0, _hydrationWritesInFlight - 1);
+                  if (_hydration) _hydration.scheduleFinish();
+                  if (opts.onOutput) opts.onOutput(data);
+                });
+              } else {
+                _term.write(data);
+                if (opts.onOutput) opts.onOutput(data);
+              }
+            },
+            onViewerConflict: () => { if (isCurrent() && opts.onViewerConflict) opts.onViewerConflict(); },
+            onControlGranted: () => { if (isCurrent() && opts.onControlGranted) opts.onControlGranted(); },
+            onDisconnected: (code, reason) => { if (isCurrent() && opts.onDisconnected) opts.onDisconnected(code, reason); },
+            onReconnecting: () => { if (isCurrent() && opts.onReconnecting) opts.onReconnecting(); },
+            onReconnectExhausted: () => { if (isCurrent() && opts.onReconnectExhausted) opts.onReconnectExhausted(); },
+          });
+          _ptyClient.connect();
+        }
+
+        function focus() {
+          if (_term) _term.focus();
+        }
+
+        function resize() {
+          fitTerminalPreserveScroll();
+        }
+
+        /**
+         * dispose() — close socket, cancel hydration, dispose addons and terminal.
+         * Does NOT clean up view-specific DOM (containers, overlays, event listeners).
+         */
+        function dispose() {
+          if (_ptyClient) { _ptyClient.close(); _ptyClient = null; }
+          if (_hydration) { _hydration.cancel(); _hydration = null; }
+          _hydrationStarted = false;
+          _hydrationWritesInFlight = 0;
+          _lastHydrationOutputAt = 0;
+          if (_searchAddon) { try { _searchAddon.dispose(); } catch {} _searchAddon = null; }
+          if (_term) { try { _term.dispose(); } catch {} _term = null; }
+          _fitAddon = null;
+          _container = null;
+        }
+
+        return {
+          mount,
+          connect,
+          focus,
+          resize,
+          dispose,
+          // Delegation to pty client
+          scheduleReconnect: () => { if (_ptyClient) _ptyClient.scheduleReconnect(); },
+          sendTakeControl: () => { if (_ptyClient) _ptyClient.sendTakeControl(); },
+          sendFitResize: () => { if (_ptyClient) _ptyClient.sendFitResize(); },
+          send: (data) => { if (_ptyClient) _ptyClient.send(data); },
+          resetRetry: () => { if (_ptyClient) _ptyClient.resetRetry(); },
+          // Accessors
+          get term() { return _term; },
+          get fitAddon() { return _fitAddon; },
+          get searchAddon() { return _searchAddon; },
+          get ptyClient() { return _ptyClient; },
+          get hydration() { return _hydration; },
+          get isConnected() { return !!(_ptyClient && _ptyClient.isOpen); },
+          get retryBlocked() { return _ptyClient ? _ptyClient.retryBlocked : false; },
+        };
+      }
+
       let mobileWs = null;
       let mobileReconnectTimer = null;
       let mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
@@ -3184,11 +3820,9 @@
       let ralphStartMachine = ""; // machine context for ralph-start form
       let ralphLogPollTimer = null;
       let currentRalphPlanFile = "";
-      let desktopTerm = null;       // xterm.js Terminal instance
-      let desktopFitAddon = null;   // FitAddon instance
-      let desktopSearchAddon = null; // SearchAddon instance
-      let desktopWs = null;
+      let desktopController = null;  // createPtyTerminalController instance
       let desktopResizeHandler = null;
+      let desktopResizeTimer = null;
       let useDesktopTerminal = false;
 
       function getTerminalFontFamily() {
@@ -3288,9 +3922,48 @@
         const cell = getGridCellElement(gs);
         if (cell) cell.classList.toggle("grid-loading", loading);
       }
+      let gridRelayoutTransitionId = 0;
+
+      function beginGridRelayoutTransition() {
+        gridRelayoutTransitionId += 1;
+        const transitionId = gridRelayoutTransitionId;
+        for (const gs of gridSessions) setGridCellLoading(gs, true);
+        return transitionId;
+      }
+
+      function isGridRelayoutTransitionCurrent(transitionId) {
+        return transitionId === gridRelayoutTransitionId;
+      }
+
+      function endGridRelayoutTransition(transitionId) {
+        if (!isGridRelayoutTransitionCurrent(transitionId)) return;
+        requestAnimationFrame(() => {
+          if (!isGridRelayoutTransitionCurrent(transitionId)) return;
+          for (const gs of gridSessions) setGridCellLoading(gs, false);
+        });
+      }
+
+      function cancelGridRelayoutTransition() {
+        gridRelayoutTransitionId += 1;
+      }
+
+      /** Run a two-pass relayout while keeping loading overlay visible. */
+      function runGridRelayoutTransition(primaryFit) {
+        if (!isGridActive()) return;
+        const transitionId = beginGridRelayoutTransition();
+        requestAnimationFrame(() => {
+          if (!isGridRelayoutTransitionCurrent(transitionId) || !isGridActive()) return;
+          try { primaryFit(); } catch {}
+          requestAnimationFrame(() => {
+            if (!isGridRelayoutTransitionCurrent(transitionId) || !isGridActive()) return;
+            fitAllGridCells();
+            endGridRelayoutTransition(transitionId);
+          });
+        });
+      }
 
       // ── Multi-terminal grid state ──
-      let gridSessions = [];        // [{session, machine, term, ws, fitAddon, searchAddon, reconnectTimer, reconnectDelay, reconnectStartedAt, retryBlocked}]
+      let gridSessions = [];        // [{session, machine, controller}]
       let gridFocusIndex = 0;       // which cell is interactive
       const MAX_GRID_CELLS = 6;
 
@@ -3320,153 +3993,144 @@
         document.getElementById("kb-accessory").classList.remove("visible");
       }
 
+      function createGridCell(gs, idx) {
+        const cell = document.createElement("div");
+        cell.className = "grid-cell" + (idx === gridFocusIndex ? " grid-focused" : "") + (gs._loading ? " grid-loading" : "");
+        cell.dataset.gridIndex = idx;
+        cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div><div class="grid-cell-loading">Loading terminal</div>';
+        cell.addEventListener("click", (e) => {
+          if (e.target.classList.contains("grid-cell-close")) return;
+          const sel = window.getSelection ? window.getSelection() : null;
+          if (sel && !sel.isCollapsed) return;
+          const i = parseInt(cell.dataset.gridIndex, 10);
+          setGridFocus(i);
+        });
+        cell.querySelector(".grid-cell-close").addEventListener("click", (e) => {
+          e.stopPropagation();
+          const i = parseInt(cell.dataset.gridIndex, 10);
+          removeFromGrid(i);
+        });
+        gs._cellElement = cell;
+        return cell;
+      }
+
+      function mountGridController(gs, cell, idx) {
+        if (gs.controller) return; // already mounted
+        const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+        gs.controller = createPtyTerminalController({
+          session: gs.session,
+          machine: gs.machine || "",
+          fontSize: Math.max(tp.fontSize - 2, 10),
+          scrollback: GRID_TERMINAL_SCROLLBACK,
+          cursorBlink: idx === gridFocusIndex,
+          disableStdin: idx !== gridFocusIndex,
+          resetPty: gs._resetPty,
+          skipInitialPrefill: true,
+          shouldFocus: () => gridSessions[gridFocusIndex] === gs,
+          shouldReconnect: () => gridSessions.includes(gs),
+          canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && gridSessions[gridFocusIndex] === gs),
+          canSendResize: () => !!(gs.controller && gs.controller.isConnected),
+          onViewerConflict: () => showGridCellConflictOverlay(gs),
+          onControlGranted: () => {
+            removeGridCellConflictOverlay(gs);
+            if (gridSessions[gridFocusIndex] === gs) gs.controller.focus();
+          },
+          onDisconnected: (code) => {
+            removeGridCellConflictOverlay(gs);
+            if (!gridSessions.includes(gs)) return;
+            if (code === 4002) {
+              setTimeout(() => {
+                if (gridSessions.includes(gs) && gs.controller && !gs.controller.isConnected) {
+                  gs.controller.connect();
+                }
+              }, 500);
+            } else {
+              gs.controller.scheduleReconnect();
+            }
+          },
+        });
+        delete gs._resetPty;
+        gs.controller.mount(cell);
+        gs._needsConnect = true;
+      }
+
       function renderGridCells() {
         const container = document.getElementById("desktop-grid-container");
-        container.innerHTML = "";
         // Install resize handler if not yet
         if (!gridResizeHandler) {
-          gridResizeHandler = () => { if (isGridActive()) fitAllGridCells(); };
+          gridResizeHandler = () => {
+            if (!isGridActive()) return;
+            runGridRelayoutTransition(() => { fitAllGridCells(); });
+          };
           window.addEventListener("resize", gridResizeHandler);
         }
+        // Build set of current sessions for diffing
+        const existingCells = container.querySelectorAll(".grid-cell");
+        const existingMap = new Map();
+        existingCells.forEach(cell => {
+          const idx = parseInt(cell.dataset.gridIndex, 10);
+          existingMap.set(idx, cell);
+        });
+        // Track which sessions need new cells vs reuse
+        const newCellSessions = [];
         gridSessions.forEach((gs, idx) => {
-          const cell = document.createElement("div");
-          cell.className = "grid-cell" + (idx === gridFocusIndex ? " grid-focused" : "") + (gs._loading ? " grid-loading" : "");
-          cell.dataset.gridIndex = idx;
-          cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div><div class="grid-cell-loading">Loading terminal</div>';
-          cell.addEventListener("click", (e) => {
-            if (e.target.classList.contains("grid-cell-close")) return;
-            setGridFocus(idx);
-          });
-          cell.querySelector(".grid-cell-close").addEventListener("click", (e) => {
-            e.stopPropagation();
-            removeFromGrid(idx);
-          });
-          container.appendChild(cell);
-          // Mount xterm if not yet mounted
-          if (!gs.term) {
-            const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-            const { term, fitAddon, searchAddon } = createConfiguredTerminal({
-              cursorBlink: idx === gridFocusIndex,
-              disableStdin: idx !== gridFocusIndex,
-              fontSize: Math.max(tp.fontSize - 2, 10),
-              lineHeight: tp.lineHeight,
-              scrollback: 3000,
-            });
-            term.open(cell);
-            // Don't fit yet — wait for layout to settle. WS connects after final fit.
-            wireTerminalPty(term, () => gs.ws, () => gridSessions[gridFocusIndex] === gs);
-            gs.term = term;
-            gs.fitAddon = fitAddon;
-            gs.searchAddon = searchAddon;
-            gs._loading = true;
-            gs._needsConnect = true;  // connect after final fit
+          if (gs._cellElement && gs._cellElement.parentNode === container && gs.controller) {
+            // Existing cell — just update index and focus state
+            gs._cellElement.dataset.gridIndex = idx;
+            gs._cellElement.classList.toggle("grid-focused", idx === gridFocusIndex);
           } else {
-            // Re-attach existing terminal to new cell DOM
-            cell.appendChild(gs.term.element);
+            // New cell needed
+            const cell = createGridCell(gs, idx);
+            container.appendChild(cell);
+            mountGridController(gs, cell, idx);
+            newCellSessions.push(gs);
+          }
+        });
+        // Remove orphaned cells (sessions removed from grid)
+        const activeCellElements = new Set(gridSessions.map(gs => gs._cellElement));
+        existingCells.forEach(cell => {
+          if (!activeCellElements.has(cell)) cell.remove();
+        });
+        // Reorder DOM to match gridSessions order
+        gridSessions.forEach(gs => {
+          if (gs._cellElement && gs._cellElement.parentNode === container) {
+            container.appendChild(gs._cellElement);
           }
         });
         updateGridLayout();
-        // Single delayed fit + connect — only send ONE resize to PTY after layout settles
-        requestAnimationFrame(() => {
-          setTimeout(() => {
+        // Add-flow relayout + connect in one transition to avoid visible flicker.
+        if (newCellSessions.length > 0) {
+          runGridRelayoutTransition(() => {
             fitAllGridCells();
-            // Now connect any new WebSockets (PTY gets correct size from the start)
-            gridSessions.forEach(gs => {
+            newCellSessions.forEach(gs => {
               if (gs._needsConnect) {
                 delete gs._needsConnect;
-                connectGridCellWs(gs);
+                gs.controller.connect();
               }
             });
-            scheduleGridStabilizedFit();
-          }, 100);
-        });
-      }
-
-      function connectGridCellWs(gs) {
-        if (gs.ws && gs.ws.readyState <= WebSocket.OPEN) return;
-        const reset = !!gs._resetPty;
-        delete gs._resetPty;
-        const ws = new WebSocket(buildPtyWsUrl(gs.session, gs.machine, reset));
-        ws.binaryType = "arraybuffer";
-        gs.ws = ws;
-        setGridCellLoading(gs, true);
-        ws.onopen = () => {
-          gs.reconnectDelay = RECONNECT_BASE_DELAY_MS;
-          gs.reconnectStartedAt = 0;
-          gs.retryBlocked = false;
-          fitAndSendTerminalResize(gs.term, gs.fitAddon, ws);
-        };
-        ws.onmessage = (ev) => {
-          if (typeof ev.data === "string") {
-            try {
-              const msg = JSON.parse(ev.data);
-              if (msg.type === "viewer_conflict") {
-                showGridCellConflictOverlay(gs, ws);
-              } else if (msg.type === "control_granted") {
-                removeGridCellConflictOverlay(gs);
-                fitAndSendTerminalResize(gs.term, gs.fitAddon, ws, gridSessions[gridFocusIndex] === gs);
-              }
-            } catch {}
-            return;
-          }
-          if (gs.term) {
-            gs.term.write(new Uint8Array(ev.data));
-            if (gs._loading) setGridCellLoading(gs, false);
-          }
-        };
-        ws.onclose = (ev) => {
-          if (gs.ws === ws) gs.ws = null;
-          setGridCellLoading(gs, false);
-          removeGridCellConflictOverlay(gs);
-          // Auto-reconnect on displace (4002) — will get viewer_conflict → "Take Control"
-          // Only reconnect if still in grid
-          if (gridSessions.includes(gs) && !gs.retryBlocked) {
-            if (ev.code === 4002) {
-              // Immediate reconnect, no overlay
-              connectGridCellWs(gs);
-            } else {
-              scheduleGridCellReconnect(gs);
-            }
-          }
-        };
-        ws.onerror = () => {};
-      }
-
-      function scheduleGridCellReconnect(gs) {
-        if (gs.reconnectTimer) return;
-        if (gs.retryBlocked) return;
-        if (!gridSessions.includes(gs)) return;
-        const now = Date.now();
-        if (!gs.reconnectStartedAt) gs.reconnectStartedAt = now;
-        const elapsed = now - gs.reconnectStartedAt;
-        if (elapsed >= RECONNECT_BUDGET_MS) { gs.retryBlocked = true; return; }
-        const jitterMs = Math.floor(Math.random() * 200);
-        const delayMs = Math.min((gs.reconnectDelay || RECONNECT_BASE_DELAY_MS) + jitterMs, RECONNECT_MAX_DELAY_MS);
-        gs.reconnectTimer = setTimeout(() => {
-          gs.reconnectTimer = null;
-          if (gridSessions.includes(gs) && (!gs.ws || gs.ws.readyState === WebSocket.CLOSED)) {
-            connectGridCellWs(gs);
-          }
-        }, delayMs);
-        gs.reconnectDelay = Math.min(Math.floor((gs.reconnectDelay || RECONNECT_BASE_DELAY_MS) * 1.8), RECONNECT_MAX_DELAY_MS);
+          });
+        } else {
+          // No new cells — just refit existing (layout may have changed)
+          requestAnimationFrame(() => { fitAllGridCells(); });
+        }
       }
 
       function getGridCellElement(gs) {
+        if (gs._cellElement) return gs._cellElement;
         const idx = gridSessions.indexOf(gs);
         if (idx < 0) return null;
         return document.querySelector('#desktop-grid-container .grid-cell[data-grid-index="' + idx + '"]');
       }
 
-      function showGridCellConflictOverlay(gs, ws) {
+      function showGridCellConflictOverlay(gs) {
         const cell = getGridCellElement(gs);
         if (!cell) return;
+        // Force hydration complete so overlay is visible (cell may be opacity:0)
+        if (gs.controller && gs.controller.hydration) gs.controller.hydration.finish();
         removeGridCellConflictOverlay(gs);
         const overlay = createConflictOverlay("Active on another device", "Take Control", (e) => {
           e.stopPropagation();
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "take_control" }));
-          }
-          // Don't remove overlay here — wait for control_granted to confirm
+          if (gs.controller) gs.controller.sendTakeControl();
         });
         overlay.dataset.conflictType = "conflict";
         cell.appendChild(overlay);
@@ -3478,32 +4142,16 @@
         cell.querySelectorAll(".viewer-conflict-overlay").forEach(el => el.remove());
       }
 
-      function showGridCellDisplacedOverlay(gs) {
-        const cell = getGridCellElement(gs);
-        if (!cell) return;
-        removeGridCellConflictOverlay(gs);
-        const overlay = createConflictOverlay("Taken over by another viewer", "Reconnect", (e) => {
-          e.stopPropagation();
-          overlay.remove();
-          gs.retryBlocked = false;
-          gs.reconnectStartedAt = 0;
-          gs.reconnectDelay = RECONNECT_BASE_DELAY_MS;
-          connectGridCellWs(gs);
-        });
-        overlay.dataset.conflictType = "displaced";
-        cell.appendChild(overlay);
-      }
-
       function setGridFocus(idx) {
         if (idx < 0 || idx >= gridSessions.length) return;
         const prev = gridFocusIndex;
         gridFocusIndex = idx;
         // Update xterm stdin/cursor for old + new focus
         gridSessions.forEach((gs, i) => {
-          if (!gs.term) return;
+          if (!gs.controller || !gs.controller.term) return;
           const focused = i === idx;
-          gs.term.options.disableStdin = !focused;
-          gs.term.options.cursorBlink = focused;
+          gs.controller.term.options.disableStdin = !focused;
+          gs.controller.term.options.cursorBlink = focused;
         });
         // Update cell border highlights
         const cells = document.querySelectorAll("#desktop-grid-container .grid-cell");
@@ -3517,7 +4165,7 @@
           currentMachine = focusedGs.machine || "";
           renderSidebar();
           // Focus the terminal
-          focusedGs.term?.focus();
+          if (focusedGs.controller) focusedGs.controller.focus();
         }
       }
 
@@ -3527,20 +4175,12 @@
         // Already in grid?
         if (gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
         // Track which session had a full-width PTY (needs reset on grid connect)
-        const singleTermSession = (desktopTerm && currentSession) ? currentSession : null;
+        const singleTermSession = (desktopController?.term && currentSession) ? currentSession : null;
         const singleTermMachine = singleTermSession ? (currentMachine || "") : "";
         const gs = {
           session,
           machine: machine || "",
-          term: null,
-          ws: null,
-          fitAddon: null,
-          searchAddon: null,
-          _loading: true,
-          reconnectTimer: null,
-          reconnectDelay: RECONNECT_BASE_DELAY_MS,
-          reconnectStartedAt: 0,
-          retryBlocked: false,
+          controller: null,
         };
         gridSessions.push(gs);
         // If transitioning from single to grid, add current session too
@@ -3550,10 +4190,7 @@
             gridSessions.unshift({
               session: currentSession,
               machine: currentMachine,
-              term: null, ws: null, fitAddon: null, searchAddon: null,
-              _loading: true,
-              reconnectTimer: null, reconnectDelay: RECONNECT_BASE_DELAY_MS,
-              reconnectStartedAt: 0, retryBlocked: false,
+              controller: null,
             });
           }
         }
@@ -3570,7 +4207,6 @@
           destroyDesktopTerminal();
           gridFocusIndex = gridSessions.length - 1;
           renderGridCells();
-          fitAllGridCells();
           renderSidebar();
         } else {
           // Only 1 session queued — no current session to pair with.
@@ -3583,10 +4219,10 @@
       function removeFromGrid(idx) {
         if (idx < 0 || idx >= gridSessions.length) return;
         const gs = gridSessions[idx];
-        // Cleanup
-        if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
-        if (gs.ws) { try { gs.ws.close(); } catch {} }
-        if (gs.term) { try { gs.term.dispose(); } catch {} }
+        // Remove cell DOM immediately (avoids full rebuild flash)
+        if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
+        // Cleanup controller
+        if (gs.controller) gs.controller.dispose();
         gridSessions.splice(idx, 1);
         // Adjust focus
         if (gridFocusIndex >= gridSessions.length) gridFocusIndex = Math.max(0, gridSessions.length - 1);
@@ -3594,14 +4230,23 @@
           // Exit grid mode → single terminal
           exitGridMode();
         } else {
-          renderGridCells();
-          fitAllGridCells();
+          // Update layout and indices without full renderGridCells
+          gridSessions.forEach((g, i) => {
+            if (g._cellElement) {
+              g._cellElement.dataset.gridIndex = i;
+              g._cellElement.classList.toggle("grid-focused", i === gridFocusIndex);
+            }
+          });
+          updateGridLayout();
+          // Remove-flow relayout while preserving scroll on first fit pass.
+          runGridRelayoutTransition(() => { fitGridCellsPreserveScroll(); });
           setGridFocus(gridFocusIndex);
         }
         renderSidebar();
       }
 
       function exitGridMode() {
+        cancelGridRelayoutTransition();
         // Remove grid resize handler
         if (gridResizeHandler) {
           window.removeEventListener("resize", gridResizeHandler);
@@ -3613,9 +4258,8 @@
         const restoreMachine = remaining ? (remaining.machine || "") : currentMachine;
         // Destroy all grid sessions
         for (const gs of gridSessions) {
-          if (gs.reconnectTimer) clearTimeout(gs.reconnectTimer);
-          if (gs.ws) { try { gs.ws.close(); } catch {} }
-          if (gs.term) { try { gs.term.dispose(); } catch {} }
+          if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
+          if (gs.controller) gs.controller.dispose();
         }
         gridSessions = [];
         gridFocusIndex = 0;
@@ -3628,11 +4272,8 @@
         const dtc = document.getElementById("desktop-terminal-container");
         dtc.style.display = "none";
         dtc.innerHTML = "";
-        // Clear desktopTerm reference in case it's stale
-        desktopTerm = null;
-        desktopFitAddon = null;
-        desktopWs = null;
-        desktopSearchAddon = null;
+        // Clear desktopController reference in case it's stale
+        desktopController = null;
         // Restore single-terminal mode
         if (restoreSession) {
           currentSession = restoreSession;
@@ -3645,20 +4286,30 @@
 
       function fitAllGridCells() {
         for (const gs of gridSessions) {
-          if (gs.fitAddon) {
-            try { gs.fitAddon.fit(); } catch {}
+          if (gs.controller) {
+            try { gs.controller.resize(); } catch {}
+          }
+        }
+      }
+
+      /** Fit grid cells but preserve each terminal's scroll position to avoid visible history jump. */
+      function fitGridCellsPreserveScroll() {
+        for (const gs of gridSessions) {
+          if (!gs.controller || !gs.controller.term) continue;
+          const term = gs.controller.term;
+          const wasAtBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
+          const prevViewportY = term.buffer.active.viewportY;
+          try { gs.controller.resize(); } catch {}
+          // If user was scrolled up, restore their position instead of jumping
+          if (!wasAtBottom) {
+            try { term.scrollToLine(prevViewportY); } catch {}
           }
         }
       }
 
       function scheduleGridStabilizedFit() {
         if (!isGridActive()) return;
-        requestAnimationFrame(() => {
-          fitAllGridCells();
-          setTimeout(() => {
-            if (isGridActive()) fitAllGridCells();
-          }, 180);
-        });
+        runGridRelayoutTransition(() => { fitAllGridCells(); });
       }
 
       let gridResizeHandler = null;
@@ -3755,8 +4406,8 @@
         snapshotTimer = null;
         if (!currentSession) { snapshotPending = null; return; }
         let text;
-        if (useDesktopTerminal && desktopTerm) {
-          text = serializeXtermTail(desktopTerm, 100);
+        if (useDesktopTerminal && desktopController?.term) {
+          text = serializeXtermTail(desktopController.term, 100);
         } else {
           text = snapshotPending;
         }
@@ -3838,15 +4489,29 @@
         } catch {}
       })();
 
+      function errorMessage(err) {
+        if (err && typeof err.message === "string" && err.message) return err.message;
+        return String(err || "unknown error");
+      }
+
       async function api(path, opts, machineUrl) {
         const base = machineUrl ? machineUrl + "/api" : "/api";
         const res = await fetch(base + path, opts);
-        if (!res.ok) {
-          const body = await res.text();
-          try { return JSON.parse(body); } catch {}
-          throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+        const body = await res.text();
+        let data = {};
+        if (body) {
+          try { data = JSON.parse(body); } catch {}
         }
-        return res.json();
+        if (!res.ok) {
+          const message = data && typeof data.error === "string"
+            ? data.error
+            : (body ? body.slice(0, 200) : `HTTP ${res.status}`);
+          const err = new Error(message);
+          err.status = res.status;
+          err.data = data;
+          throw err;
+        }
+        return data;
       }
 
       // set by swipe engine so showView() skips animation after gesture already handled it
@@ -4067,12 +4732,19 @@
 
       // ── Ralph Loop Functions ──
 
-      function renderRalphCardHtml(loop, machineUrl) {
+      function getRalphStatus(loop) {
         const hitLimit = !loop.active && !loop.completed && loop.finished;
-        const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
-        const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
-        const dotClass = loop.active ? "purple" : "gray";
-        const dotTitle = loop.active ? "active" : "idle";
+        return {
+          hitLimit,
+          status: loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle",
+          statusLabel: loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE",
+          dotClass: loop.active ? "purple" : "gray",
+          dotTitle: loop.active ? "active" : "idle",
+        };
+      }
+
+      function renderRalphCardHtml(loop, machineUrl) {
+        const { status, statusLabel, dotClass, dotTitle } = getRalphStatus(loop);
         const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
         const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
         const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
@@ -4094,11 +4766,7 @@
       }
 
       function sidebarRalphCardHtml(loop, machineUrl) {
-        const hitLimit = !loop.active && !loop.completed && loop.finished;
-        const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
-        const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
-        const dotClass = loop.active ? "purple" : "gray";
-        const dotTitle = loop.active ? "active" : "idle";
+        const { status, statusLabel, dotClass, dotTitle } = getRalphStatus(loop);
         const mUrl = escAttr(machineUrl || '');
         return '<div class="ralph-card sidebar-ralph-card ' + status + '" onclick="openRalphDetail(\'' + escAttr(loop.project) + '\', \'' + mUrl + '\')">' +
           '<span class="dot ' + dotClass + '" title="' + dotTitle + '"></span>' +
@@ -4128,9 +4796,7 @@
             actions.innerHTML = '';
             return;
           }
-          const hitLimit = !loop.active && !loop.completed && loop.finished;
-          const status = loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle";
-          const statusLabel = loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE";
+          const { status, statusLabel } = getRalphStatus(loop);
           const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
           const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
           const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
@@ -4247,7 +4913,7 @@
           }, currentRalphMachine);
           refreshRalphDetail();
         } catch (e) {
-          alert("failed to cancel: " + e.message);
+          alert("failed to cancel: " + errorMessage(e));
         }
       }
 
@@ -4397,17 +5063,16 @@
         }
 
         try {
-          const data = await api("/ralph/start", {
+          await api("/ralph/start", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           }, machine);
-          if (data.error) { alert(data.error); return; }
           currentRalphProject = project;
           restartingRalph = false;
           backToSessions();
         } catch (e) {
-          alert("failed to start: " + e.message);
+          alert("failed to start: " + errorMessage(e));
         }
       }
 
@@ -4445,15 +5110,11 @@
             await new Promise(r => setTimeout(r, 1000));
           }
           const deletePlan = confirm("also delete the plan file?");
-          const result = await api("/ralph/dismiss", {
+          await api("/ralph/dismiss", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ project, deletePlan }),
           }, machineUrl);
-          if (result && result.error) {
-            alert(result.error);
-            return;
-          }
           // Stop poll timer to prevent stale in-flight fetches from overwriting fresh data
           if (sidebarRefreshTimer) { clearInterval(sidebarRefreshTimer); sidebarRefreshTimer = null; }
           lastSessionsHtml = "";
@@ -4461,7 +5122,7 @@
           renderSidebar();
           startSidebarRefresh();
         } catch (e) {
-          alert("failed to dismiss: " + e.message);
+          alert("failed to dismiss: " + errorMessage(e));
         }
       }
 
@@ -4480,16 +5141,16 @@
       // Shared session groups cache for switcher reuse
       let lastSessionGroups = [];
 
-      function renderGroupHtml(g) {
-        const mUrl = esc(g.machine.url);
-        const mUrlAttr = escAttr(g.machine.url);
+      function renderMachineGroupHtml(g, multiMachine) {
+        const mUrl = multiMachine ? esc(g.machine.url) : "";
+        const mUrlAttr = multiMachine ? escAttr(g.machine.url) : "";
         const mName = esc(g.machine.name);
-        const statusDot = g.online ? "green" : (g.pending ? "gray" : "red");
-        const statusTitle = g.online ? "online" : (g.pending ? "connecting" : "offline");
-        const versionWarning = g.outdated ? `<span style="color:#ff6600;margin-left:6px;font-size:11px;padding:3px 8px;border:1px solid #00ff41;border-radius:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;letter-spacing:1px" onclick="event.stopPropagation();alert('Running v${escAttr(g.machine.version || "?")} — newer version available on another machine')">⚠ UPDATE</span>` : "";
-        let html = `<div class="machine-group" data-machine="${mUrl}">`;
+        const statusDot = !multiMachine ? "green" : g.online ? "green" : (g.pending ? "gray" : "red");
+        const statusTitle = !multiMachine ? "online" : g.online ? "online" : (g.pending ? "connecting" : "offline");
+        const versionWarning = multiMachine && g.outdated ? `<span style="color:#ff6600;margin-left:6px;font-size:11px;padding:3px 8px;border:1px solid #00ff41;border-radius:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;letter-spacing:1px" onclick="event.stopPropagation();alert('Running v${escAttr(g.machine.version || "?")} — newer version available on another machine')">⚠ UPDATE</span>` : "";
+        let html = multiMachine ? `<div class="machine-group" data-machine="${mUrl}">` : `<div class="machine-group">`;
         html += `<div class="machine-header"><div class="dot ${statusDot}" title="${statusTitle}"></div>${mName}${versionWarning}<div class="machine-header-btns"><button class="machine-ralph-btn" onclick="showRalphStart('${mUrlAttr}')">&#129355;</button><button class="machine-add-btn" onclick="showProjectPicker('${mUrlAttr}')">+</button></div></div>`;
-        if (g.pending) {
+        if (multiMachine && g.pending) {
           html += `<div style="padding:4px 4px;color:#555;font-size:11px">Connecting...</div>`;
         } else if (g.online) {
           if (g.sessions.length) {
@@ -4497,48 +5158,23 @@
               const lastLine = s.lastLine || "";
               const ui = triageUi(s.triage);
               const anim = firstLoad ? "animate-in" : "";
-              return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}', '${mUrlAttr}')">
+              return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}'${mUrlAttr ? ", '" + mUrlAttr + "'" : ''})">
                 <div class="dot ${ui.dot}" title="${ui.title}"></div>
                 <div class="card-info">
                   <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
                   <div class="card-preview">${esc(lastLine)}</div>
                 </div>
-                <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event, '${mUrlAttr}')">&times;</button>
+                <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event${mUrlAttr ? ", '" + mUrlAttr + "'" : ''})">&times;</button>
               </div>`;
             }).join("");
           }
           if (g.loops && g.loops.length) {
-            html += g.loops.map(loop => renderRalphCardHtml(loop, g.machine.url)).join("");
+            html += g.loops.map(loop => renderRalphCardHtml(loop, g.machine.url || "")).join("");
           }
-        } else {
+        } else if (multiMachine) {
           html += `<div style="padding:4px 4px;color:#555;font-size:11px">Offline</div>`;
         }
         html += `</div>`;
-        return html;
-      }
-
-      function renderSingleMachineHtml(g) {
-        let html = `<div class="machine-group">`;
-        html += `<div class="machine-header"><div class="dot green"></div>${esc(g.machine.name)}<div class="machine-header-btns"><button class="machine-ralph-btn" onclick="showRalphStart()">&#129355;</button><button class="machine-add-btn" onclick="showProjectPicker()">+</button></div></div>`;
-        if (g.online && g.sessions.length) {
-          html += g.sessions.map((s, i) => {
-            const lastLine = s.lastLine || "";
-            const ui = triageUi(s.triage);
-            const anim = firstLoad ? "animate-in" : "";
-            return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}')">
-              <div class="dot ${ui.dot}" title="${ui.title}"></div>
-              <div class="card-info">
-                <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
-                <div class="card-preview">${esc(lastLine)}</div>
-              </div>
-              <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event)">&times;</button>
-            </div>`;
-          }).join("");
-        }
-        if (g.online && g.loops && g.loops.length) {
-          html += g.loops.map(loop => renderRalphCardHtml(loop, "")).join("");
-        }
-        html += '</div>';
         return html;
       }
 
@@ -4571,7 +5207,7 @@
           if (myEpoch !== loadSessionsEpoch) return; // stale call, discard
           lastSessionGroups = [g];
           allSessions = g.sessions.map(s => ({ ...s, machineUrl: "", machineName: g.machine.name }));
-          const html = renderSingleMachineHtml(g);
+          const html = renderMachineGroupHtml(g, false);
           if (html !== lastSessionsHtml) { el.innerHTML = html; lastSessionsHtml = html; }
           checkStateTransitions([g]);
           firstLoad = false;
@@ -4587,7 +5223,7 @@
         // Show placeholders on first load
         if (firstLoad) {
           el.innerHTML = allMachines.map(m =>
-            renderGroupHtml({ machine: { ...m.meta, url: m.url }, sessions: [], online: false, pending: true })
+            renderMachineGroupHtml({ machine: { ...m.meta, url: m.url }, sessions: [], online: false, pending: true }, true)
           ).join("");
         }
 
@@ -4603,7 +5239,7 @@
               const existing = el.querySelector(`[data-machine="${esc(m.url)}"]`);
               if (existing) {
                 const tmp = document.createElement("div");
-                tmp.innerHTML = renderGroupHtml(g);
+                tmp.innerHTML = renderMachineGroupHtml(g, true);
                 existing.replaceWith(tmp.firstElementChild);
               }
             }
@@ -4624,9 +5260,26 @@
 
         // Sort by number of open terminals (most first) and do final render
         groups.sort((a, b) => b.sessions.length - a.sessions.length);
-        const html = groups.map(g => renderGroupHtml(g)).join("");
+        const html = groups.map(g => renderMachineGroupHtml(g, true)).join("");
         if (html !== lastSessionsHtml) {
-          el.innerHTML = html;
+          // Incremental per-group update: replace only changed groups
+          const perGroupHtml = groups.map(g => renderMachineGroupHtml(g, true));
+          let didIncrementalUpdate = false;
+          if (!firstLoad && el.children.length === groups.length) {
+            didIncrementalUpdate = true;
+            for (let gi = 0; gi < groups.length; gi++) {
+              const existingChild = el.children[gi];
+              const newHtml = perGroupHtml[gi];
+              if (existingChild && existingChild.outerHTML !== newHtml) {
+                const tmp = document.createElement("div");
+                tmp.innerHTML = newHtml;
+                existingChild.replaceWith(tmp.firstElementChild);
+              }
+            }
+          }
+          if (!didIncrementalUpdate) {
+            el.innerHTML = html;
+          }
           lastSessionsHtml = html;
         }
 
@@ -4705,28 +5358,41 @@
         renderSidebar();
       }
 
-      async function resizePane() {
-        if (!currentSession) return;
-        const term = document.getElementById("terminal");
-        const probe = document.createElement("span");
+      let _charDimCache = { key: "", w: 0, h: 0 };
+      function getCharDimensions() {
         const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+        const key = tp.fontSize + "|" + tp.lineHeight + "|" + wpSettings.termFont;
+        if (_charDimCache.key === key && _charDimCache.w > 0) return _charDimCache;
+        const probe = document.createElement("span");
         probe.style.cssText =
           'position:absolute;visibility:hidden;white-space:pre;font-size:' + tp.fontSize + 'px;line-height:' + tp.lineHeight + ';font-family:inherit';
         probe.textContent = "X";
         document.body.appendChild(probe);
-        const charW = probe.offsetWidth;
-        const charH = probe.offsetHeight;
+        _charDimCache = { key, w: probe.offsetWidth, h: probe.offsetHeight };
         document.body.removeChild(probe);
-        if (!charW || !charH) return;
-        const cols = Math.floor(term.clientWidth / charW);
-        const rows = Math.floor(term.clientHeight / charH);
+        return _charDimCache;
+      }
+
+      async function resizePane() {
+        if (!currentSession) return;
+        const term = document.getElementById("terminal");
+        const dims = getCharDimensions();
+        if (!dims.w || !dims.h) return false;
+        const cols = Math.floor(term.clientWidth / dims.w);
+        const rows = Math.floor(term.clientHeight / dims.h);
         if (cols > 0 && rows > 0) {
-          await api("/resize", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session: currentSession, cols, rows }),
-          }, currentMachine);
+          try {
+            await api("/resize", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ session: currentSession, cols, rows }),
+            }, currentMachine);
+            return true;
+          } catch {
+            return false;
+          }
         }
+        return false;
       }
 
       // ── Project picker ──
@@ -4853,7 +5519,7 @@
           input.value = "";
           showAgentPicker();
         } catch (e) {
-          alert("Failed to add command: " + (e.message || "error"));
+          alert("Failed to add command: " + errorMessage(e));
         }
       }
 
@@ -4867,7 +5533,7 @@
           }, projectMachine);
           showAgentPicker();
         } catch (e) {
-          alert("Failed to delete command: " + (e.message || "error"));
+          alert("Failed to delete command: " + errorMessage(e));
         }
       }
 
@@ -4892,7 +5558,10 @@
             useDesktopTerminal = isDesktop();
             // Refresh session list in background so it doesn't block terminal init
             loadSessions().then(() => { loadSessionSwitcher(); renderSidebar(); });
-            if (useDesktopTerminal) {
+            if (useDesktopTerminal && isGridActive()) {
+              // Grid is active — add new session to grid instead of single-terminal
+              addToGrid(data.session, machine);
+            } else if (useDesktopTerminal) {
               destroyDesktopTerminal();
               initDesktopTerminal();
             } else {
@@ -4900,13 +5569,12 @@
               startPolling();
             }
           } else {
-            const msg = data.error || "Server returned no session (is wolfpack up to date?)";
-            alert("Failed to create session: " + msg);
+            alert("Failed to create session: Server returned no session (is wolfpack up to date?)");
             showView("sessions");
             loadSessions();
           }
         } catch (e) {
-          alert("Failed to create session: " + (e.message || "network error"));
+          alert("Failed to create session: " + errorMessage(e));
           showView("sessions");
           loadSessions();
         }
@@ -4914,110 +5582,19 @@
 
       // ── Desktop Terminal (xterm.js + /ws/pty binary WS) ──
 
-      let desktopReconnectTimer = null;
-      let desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
-      let desktopReconnectStartedAt = 0;
-      let desktopRetryBlocked = false;
-
       function connectDesktopWs() {
-        if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
-        if (desktopRetryBlocked) return;
-        if (desktopWs && desktopWs.readyState <= WebSocket.OPEN) return;
-        const ws = new WebSocket(buildPtyWsUrl(currentSession, currentMachine));
-        ws.binaryType = "arraybuffer";
-        desktopWs = ws;
-
-        ws.onopen = () => {
-          if (desktopReconnectStartedAt > 0) wpMetrics.reconnectCount++;
-          desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
-          desktopReconnectStartedAt = 0;
-          desktopRetryBlocked = false;
-          setConnState("live");
-          fitAndSendTerminalResize(desktopTerm, desktopFitAddon, ws);
-        };
-
-        ws.onmessage = (ev) => {
-          wpMetrics.wsMessagesReceived++;
-          // JSON text frames (viewer_conflict, etc.)
-          if (typeof ev.data === "string") {
-            try {
-              const msg = JSON.parse(ev.data);
-              if (msg.type === "viewer_conflict") {
-                showDesktopConflictOverlay(ws);
-              } else if (msg.type === "control_granted") {
-                removeDesktopConflictOverlay();
-                fitAndSendTerminalResize(desktopTerm, desktopFitAddon, ws, true);
-              }
-            } catch {}
-            return;
-          }
-          if (desktopTerm) {
-            const t0 = performance.now();
-            desktopTerm.write(new Uint8Array(ev.data));
-            wpMetrics.recordLatency(performance.now() - t0);
-            scheduleSnapshotSave(null);
-          }
-        };
-
-        ws.onclose = (ev) => {
-          const isCurrent = desktopWs === ws;
-          if (isCurrent) desktopWs = null;
-          removeDesktopConflictOverlay();
-          if (isCurrent) {
-            if (ev.code === 4002) {
-              setConnState("displaced");
-              return;
-            }
-            if (ev.code === 4001) {
-              setConnState("session-ended");
-              const statusEl = document.getElementById("conn-status");
-              if (statusEl) statusEl.textContent = "session unavailable \u2014 use \u2190 to go back";
-              return;
-            }
-            if (ev.code === 1000 && ev.reason === "pty exited") {
-              setConnState("session-ended");
-              return;
-            }
-            scheduleDesktopReconnect();
-          }
-        };
-
-        ws.onerror = () => {};
+        if (!desktopController) return;
+        desktopController.connect();
       }
 
-      function scheduleDesktopReconnect() {
-        if (desktopReconnectTimer) return;
-        if (!useDesktopTerminal || !desktopTerm) return;
-        if (desktopRetryBlocked) return;
-        const now = Date.now();
-        if (!desktopReconnectStartedAt) desktopReconnectStartedAt = now;
-        const elapsed = now - desktopReconnectStartedAt;
-        const remaining = RECONNECT_BUDGET_MS - elapsed;
-        if (remaining <= 0) {
-          desktopRetryBlocked = true;
-          setConnState("offline");
-          return;
-        }
-        setConnState("reconnecting");
-        const jitterMs = Math.floor(Math.random() * 200);
-        const delayMs = Math.min(desktopReconnectDelay + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
-        desktopReconnectTimer = setTimeout(() => {
-          desktopReconnectTimer = null;
-          if (useDesktopTerminal && (!desktopWs || desktopWs.readyState === WebSocket.CLOSED)) {
-            connectDesktopWs();
-          }
-        }, delayMs);
-        desktopReconnectDelay = Math.min(Math.floor(desktopReconnectDelay * 1.8), RECONNECT_MAX_DELAY_MS);
-      }
-
-      function showDesktopConflictOverlay(ws) {
+      function showDesktopConflictOverlay() {
         const container = document.getElementById("desktop-terminal-container");
         if (!container) return;
+        // Force hydration complete so overlay is visible (container may be opacity:0)
+        if (desktopController && desktopController.hydration) desktopController.hydration.finish();
         removeDesktopConflictOverlay();
         const overlay = createConflictOverlay("Session active on another device", "Take Control", () => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "take_control" }));
-          }
+          if (desktopController) desktopController.sendTakeControl();
           // Don't remove overlay here — wait for control_granted to confirm
         });
         overlay.id = "desktop-conflict-overlay";
@@ -5030,10 +5607,12 @@
       }
 
       function initDesktopTerminal(cached) {
-        if (desktopTerm) return;
+        if (desktopController) return;
         const container = document.getElementById("desktop-terminal-container");
         container.style.display = "block";
         container.innerHTML = "";
+        container.classList.add("hydrating");
+        container.classList.remove("hydrated");
         document.getElementById("terminal").style.display = "none";
         document.getElementById("kb-accessory").classList.remove("visible");
         document.getElementById("kb-toggle")?.classList.remove("active");
@@ -5042,26 +5621,56 @@
         document.getElementById("cmd-palette").style.display = "none";
         document.getElementById("msg-preview").style.display = "none";
 
-        const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-        const { term, fitAddon, searchAddon } = createConfiguredTerminal({
-          cursorBlink: true,
-          fontSize: tp.fontSize,
-          lineHeight: tp.lineHeight,
-          scrollback: 5000,
+        desktopController = createPtyTerminalController({
+          session: currentSession,
+          machine: currentMachine || "",
+          scrollback: DESKTOP_TERMINAL_SCROLLBACK,
+          getHydrationElement: () => document.getElementById("desktop-terminal-container"),
+          shouldFocus: () => true,
+          shouldReconnect: () => useDesktopTerminal && !!desktopController?.term,
+          onOpen: (wasReconnect) => {
+            if (wasReconnect) wpMetrics.reconnectCount++;
+            setConnState("live");
+          },
+          onOutput: (data) => {
+            wpMetrics.wsMessagesReceived++;
+            scheduleSnapshotSave(null);
+          },
+          onViewerConflict: () => showDesktopConflictOverlay(),
+          onControlGranted: () => {
+            removeDesktopConflictOverlay();
+            if (desktopController) desktopController.focus();
+          },
+          onDisconnected: (code, reason) => {
+            removeDesktopConflictOverlay();
+            if (code === 4002) {
+              setConnState("displaced");
+              return;
+            }
+            if (code === 4001) {
+              setConnState("session-ended");
+              const statusEl = document.getElementById("conn-status");
+              if (statusEl) statusEl.textContent = "session unavailable \u2014 use \u2190 to go back";
+              return;
+            }
+            if (code === 1000 && reason === "pty exited") {
+              setConnState("session-ended");
+              return;
+            }
+            desktopController.scheduleReconnect();
+          },
+          onReconnecting: () => setConnState("reconnecting"),
+          onReconnectExhausted: () => setConnState("offline"),
         });
-        desktopTerm = term;
-        desktopFitAddon = fitAddon;
-        desktopSearchAddon = searchAddon;
 
-        term.open(container);
-        fitAddon.fit();
-        if (cached) term.write(cached);
-        term.focus();
-
-        wireTerminalPty(term, () => desktopWs);
+        desktopController.mount(container, { cached });
 
         const onResize = () => {
-          if (desktopFitAddon) desktopFitAddon.fit();
+          if (desktopResizeTimer) clearTimeout(desktopResizeTimer);
+          desktopResizeTimer = setTimeout(() => {
+            desktopResizeTimer = null;
+            if (desktopController) desktopController.resize();
+          }, 60);
         };
         window.addEventListener("resize", onResize);
         desktopResizeHandler = onResize;
@@ -5085,17 +5694,8 @@
 
       function destroyDesktopTerminal() {
         if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
-        if (desktopReconnectTimer) {
-          clearTimeout(desktopReconnectTimer);
-          desktopReconnectTimer = null;
-        }
-        desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
-        desktopReconnectStartedAt = 0;
-        desktopRetryBlocked = false;
-        if (desktopWs) {
-          desktopWs.close();
-          desktopWs = null;
-        }
+        if (desktopResizeTimer) { clearTimeout(desktopResizeTimer); desktopResizeTimer = null; }
+        if (desktopController) { desktopController.dispose(); desktopController = null; }
         if (desktopResizeHandler) {
           window.removeEventListener("resize", desktopResizeHandler);
           desktopResizeHandler = null;
@@ -5105,16 +5705,8 @@
           document.removeEventListener("keydown", container._onKeyDown);
           container._onKeyDown = null;
         }
-        if (desktopSearchAddon) {
-          try { desktopSearchAddon.dispose(); } catch {}
-          desktopSearchAddon = null;
-        }
-        if (desktopTerm) {
-          try { desktopTerm.dispose(); } catch {}
-          desktopTerm = null;
-        }
-        desktopFitAddon = null;
         container.style.display = "none";
+        container.classList.remove("hydrating", "hydrated");
         container.innerHTML = "";
         document.getElementById("terminal").style.display = "";
         document.getElementById("input-bar").style.display = "";
@@ -5130,7 +5722,7 @@
       function setConnState(state) {
         const statusEl = document.getElementById("conn-status");
         if (!statusEl) return;
-        const active = useDesktopTerminal ? !!desktopTerm : mobileStreamingActive;
+        const active = useDesktopTerminal ? !!desktopController?.term : mobileStreamingActive;
         if (currentView !== "terminal" || !active || state === "live") {
           statusEl.style.display = "none";
           statusEl.style.background = "#cc3333";
@@ -5333,10 +5925,6 @@
         connectMobileTerminalWs();
       }
 
-      function enterFastPoll() {
-        connectMobileTerminalWs();
-      }
-
       function stopPolling() {
         if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
         mobileStreamingActive = false;
@@ -5375,12 +5963,7 @@
       }
 
       function retryDesktopConnection() {
-        if (!useDesktopTerminal || !desktopTerm) return;
-        desktopRetryBlocked = false;
-        desktopReconnectStartedAt = 0;
-        desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
-        if (desktopReconnectTimer) { clearTimeout(desktopReconnectTimer); desktopReconnectTimer = null; }
-        if (desktopWs) { desktopWs.close(); desktopWs = null; }
+        if (!useDesktopTerminal || !desktopController?.term) return;
         setConnState("reconnecting");
         connectDesktopWs();
       }
@@ -5388,10 +5971,6 @@
       function retryConnection() {
         if (useDesktopTerminal) retryDesktopConnection();
         else retryTerminalConnection();
-      }
-
-      async function poll() {
-        startPolling(false);
       }
 
       let enterRetryTimer = null;
@@ -5419,7 +5998,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ session: currentSession, text: text.replace(/\n/g, " ") }),
           }, currentMachine);
-          enterFastPoll();
+          connectMobileTerminalWs();
 
           // Enter retry: if output hasn't changed within 800ms, Enter may have been dropped.
           // Timer is cleared on any pane change, so this only fires if truly stuck.
@@ -5436,7 +6015,9 @@
         } catch {
           wpMetrics.sendFailCount++;
           input.value = saved;
+          saveDraft();
           autoResizeInput();
+          updatePreview();
         }
       }
 
@@ -5460,7 +6041,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ session: currentSession, key }),
           }, currentMachine);
-          enterFastPoll();
+          connectMobileTerminalWs();
         } catch {
           wpMetrics.sendFailCount++;
         }
@@ -5469,11 +6050,16 @@
       async function killSession(name, e, machineUrl) {
         e.stopPropagation();
         if (!confirm(`Kill session "${name}"?`)) return;
-        await api("/kill", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session: name }),
-        }, machineUrl || "");
+        try {
+          await api("/kill", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session: name }),
+          }, machineUrl || "");
+        } catch (e) {
+          alert("Failed to kill session: " + errorMessage(e));
+          return;
+        }
         const wasCurrentSession = name === currentSession && (machineUrl || "") === currentMachine;
         if (wasCurrentSession && currentView === "terminal") {
           if (useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
@@ -5733,10 +6319,7 @@
         }
         if (name === currentSession && machineUrl === currentMachine) {
           // Same session — but reconnect if WS is dead/blocked
-          if (useDesktopTerminal && (!desktopWs || desktopWs.readyState !== WebSocket.OPEN)) {
-            desktopRetryBlocked = false;
-            desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
-            desktopReconnectStartedAt = 0;
+          if (useDesktopTerminal && desktopController && !desktopController.isConnected) {
             connectDesktopWs();
           }
           return;
@@ -5852,6 +6435,9 @@
       // Recover terminal stream on foreground; manage session refresh
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
+          if (isDesktop() && !sidebarRefreshTimer) {
+            startSidebarRefresh();
+          }
           // Restart session refresh if on sessions view
           if (currentView === "sessions" && !sessionRefreshTimer) {
             loadSessions();
@@ -5859,11 +6445,15 @@
           }
           if (currentSession && currentView === "terminal") {
             if (useDesktopTerminal) {
-              // Desktop: reset budget and reconnect if WS is dead (but not during grid view)
-              if (desktopTerm && !isGridActive()) {
-                desktopRetryBlocked = false;
-                desktopReconnectStartedAt = 0;
-                desktopReconnectDelay = RECONNECT_BASE_DELAY_MS;
+              // Desktop: reset retry budget and reconnect current terminal context.
+              if (isGridActive()) {
+                for (const gs of gridSessions) {
+                  if (!gs.controller) continue;
+                  gs.controller.resetRetry();
+                  if (!gs.controller.isConnected) gs.controller.connect();
+                }
+              } else if (desktopController?.term) {
+                desktopController.resetRetry();
                 connectDesktopWs();
               }
             } else {
@@ -5876,6 +6466,10 @@
           if (sessionRefreshTimer) {
             clearInterval(sessionRefreshTimer);
             sessionRefreshTimer = null;
+          }
+          if (sidebarRefreshTimer) {
+            clearInterval(sidebarRefreshTimer);
+            sidebarRefreshTimer = null;
           }
         }
       });
@@ -6123,9 +6717,9 @@
           e.stopPropagation();
           if (isGridActive()) {
             const gs = gridSessions[gridFocusIndex];
-            if (gs && gs.term) gs.term.clear();
-          } else if (desktopTerm) {
-            desktopTerm.clear();
+            if (gs && gs.controller && gs.controller.term) gs.controller.term.clear();
+          } else if (desktopController?.term) {
+            desktopController.term.clear();
           }
           return;
         }
@@ -6191,11 +6785,6 @@
         statusEl.style.color = "#555";
         try {
           const data = await api("/discover");
-          if (data.error) {
-            statusEl.textContent = data.error;
-            statusEl.style.color = "#cc3333";
-            return;
-          }
           const peers = data.peers || [];
           if (!peers.length) {
             statusEl.textContent = "No wolfpack instances found on tailnet";
@@ -6229,8 +6818,8 @@
           if (!added && !pruned) parts.push("all up to date");
           statusEl.textContent = parts.join(", ");
           statusEl.style.color = "#00ff41";
-        } catch {
-          statusEl.textContent = "Discovery failed";
+        } catch (e) {
+          statusEl.textContent = errorMessage(e);
           statusEl.style.color = "#cc3333";
         }
       }
@@ -6263,8 +6852,8 @@
         document.getElementById("search-input").value = "";
         document.getElementById("search-count").textContent = "";
         if (useDesktopTerminal) {
-          if (desktopSearchAddon) desktopSearchAddon.clearDecorations();
-          if (desktopTerm) desktopTerm.focus();
+          if (desktopController?.searchAddon) desktopController.searchAddon.clearDecorations();
+          if (desktopController) desktopController.focus();
         } else {
           const term = document.getElementById("terminal");
           if (lastRawPane) term.textContent = lastRawPane;
@@ -6276,7 +6865,7 @@
         if (!searchTerm) {
           document.getElementById("search-count").textContent = "";
           if (useDesktopTerminal) {
-            if (desktopSearchAddon) desktopSearchAddon.clearDecorations();
+            if (desktopController?.searchAddon) desktopController.searchAddon.clearDecorations();
           } else {
             const term = document.getElementById("terminal");
             if (lastRawPane) term.textContent = lastRawPane;
@@ -6285,8 +6874,8 @@
           searchIndex = -1;
           return;
         }
-        if (useDesktopTerminal && desktopSearchAddon) {
-          desktopSearchAddon.findNext(searchTerm, { caseSensitive: false, decorations: {
+        if (useDesktopTerminal && desktopController?.searchAddon) {
+          desktopController.searchAddon.findNext(searchTerm, { caseSensitive: false, decorations: {
             matchOverviewRuler: "#6e5c00",
             activeMatchColorOverviewRuler: "#ff6600",
           }});
@@ -6321,8 +6910,8 @@
       // Desktop search is handled by xterm-addon-search (see doSearch/nextMatch/prevMatch)
 
       function nextMatch() {
-        if (useDesktopTerminal && desktopSearchAddon && searchTerm) {
-          desktopSearchAddon.findNext(searchTerm, { caseSensitive: false });
+        if (useDesktopTerminal && desktopController?.searchAddon && searchTerm) {
+          desktopController.searchAddon.findNext(searchTerm, { caseSensitive: false });
           return;
         }
         if (searchMatches.length === 0) return;
@@ -6331,8 +6920,8 @@
       }
 
       function prevMatch() {
-        if (useDesktopTerminal && desktopSearchAddon && searchTerm) {
-          desktopSearchAddon.findPrevious(searchTerm, { caseSensitive: false });
+        if (useDesktopTerminal && desktopController?.searchAddon && searchTerm) {
+          desktopController.searchAddon.findPrevious(searchTerm, { caseSensitive: false });
           return;
         }
         if (searchMatches.length === 0) return;
@@ -6535,8 +7124,20 @@
       let sessionsExpanded = true; // default to expanded sessions view
 
       let sidebarInitialRender = false;
+      let _sidebarRafId = null;
+      let _lastSidebarHtml = "";
+
       function renderSidebar() {
         if (!isDesktop()) return;
+        // Coalesce multiple calls per frame
+        if (_sidebarRafId) return;
+        _sidebarRafId = requestAnimationFrame(() => {
+          _sidebarRafId = null;
+          _renderSidebarNow();
+        });
+      }
+
+      function _renderSidebarNow() {
         const el = document.getElementById("sidebar-session-list");
         if (!el) return;
         const groups = lastSessionGroups;
@@ -6582,6 +7183,9 @@
             html += '</div>';
           }
         }
+        // Skip DOM update if nothing changed
+        if (html === _lastSidebarHtml) return;
+        _lastSidebarHtml = html;
         el.innerHTML = html;
       }
 
@@ -6703,8 +7307,8 @@
           if (e.propertyName === "margin-left" && !sidebarAutoExpanded) {
             if (isGridActive()) {
               scheduleGridStabilizedFit();
-            } else if (desktopFitAddon) {
-              desktopFitAddon.fit();
+            } else if (desktopController) {
+              desktopController.resize();
             }
           }
         });

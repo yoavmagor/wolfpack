@@ -7,7 +7,12 @@ import {
   removeFromGridState,
   gridTemplate,
   gridArrowNav,
+  canAcceptInput,
+  canSendResize,
+  canAcceptInputDefault,
+  computeInputGate,
   type GridSession,
+  type InputGateState,
 } from "../../src/grid-logic";
 
 describe("gridLayoutClass", () => {
@@ -226,5 +231,119 @@ describe("gridArrowNav", () => {
     expect(gridArrowNav("down", 0, 3)).toBe(2);
     expect(gridArrowNav("down", 1, 3)).toBe(1); // 1+2=3, OOB
     expect(gridArrowNav("up", 2, 3)).toBe(0);
+  });
+});
+
+// ─── Input-Gating Logic ───────────────────────────────────────────
+
+describe("canAcceptInput", () => {
+  test("accepts when controller exists, connected, and focused", () => {
+    expect(canAcceptInput({ hasController: true, isConnected: true, isFocused: true })).toBe(true);
+  });
+
+  test("rejects when no controller", () => {
+    expect(canAcceptInput({ hasController: false, isConnected: true, isFocused: true })).toBe(false);
+  });
+
+  test("rejects when not connected", () => {
+    expect(canAcceptInput({ hasController: true, isConnected: false, isFocused: true })).toBe(false);
+  });
+
+  test("rejects when not focused", () => {
+    expect(canAcceptInput({ hasController: true, isConnected: true, isFocused: false })).toBe(false);
+  });
+
+  test("rejects when all false", () => {
+    expect(canAcceptInput({ hasController: false, isConnected: false, isFocused: false })).toBe(false);
+  });
+
+  test("rejects when connected but no controller and not focused", () => {
+    expect(canAcceptInput({ hasController: false, isConnected: true, isFocused: false })).toBe(false);
+  });
+});
+
+describe("canSendResize", () => {
+  test("allows when connected with controller, regardless of focus", () => {
+    expect(canSendResize({ hasController: true, isConnected: true, isFocused: false })).toBe(true);
+    expect(canSendResize({ hasController: true, isConnected: true, isFocused: true })).toBe(true);
+  });
+
+  test("rejects when not connected", () => {
+    expect(canSendResize({ hasController: true, isConnected: false, isFocused: true })).toBe(false);
+  });
+
+  test("rejects when no controller", () => {
+    expect(canSendResize({ hasController: false, isConnected: true, isFocused: true })).toBe(false);
+  });
+});
+
+describe("canAcceptInputDefault (non-grid / single terminal)", () => {
+  test("accepts when pty client exists and socket is open", () => {
+    expect(canAcceptInputDefault(true, true)).toBe(true);
+  });
+
+  test("rejects when no pty client", () => {
+    expect(canAcceptInputDefault(false, true)).toBe(false);
+  });
+
+  test("rejects when socket is closed", () => {
+    expect(canAcceptInputDefault(true, false)).toBe(false);
+  });
+
+  test("rejects when both missing", () => {
+    expect(canAcceptInputDefault(false, false)).toBe(false);
+  });
+});
+
+describe("computeInputGate", () => {
+  const sessions: GridSession[] = [
+    { session: "a", machine: "" },
+    { session: "b", machine: "" },
+    { session: "c", machine: "" },
+  ];
+
+  test("focused cell gets isFocused=true", () => {
+    const gate = computeInputGate(sessions, 1, 1, true);
+    expect(gate).toEqual({ hasController: true, isConnected: true, isFocused: true });
+  });
+
+  test("unfocused cell gets isFocused=false", () => {
+    const gate = computeInputGate(sessions, 0, 2, true);
+    expect(gate).toEqual({ hasController: true, isConnected: true, isFocused: false });
+  });
+
+  test("disconnected cell", () => {
+    const gate = computeInputGate(sessions, 1, 1, false);
+    expect(gate).toEqual({ hasController: true, isConnected: false, isFocused: true });
+  });
+
+  test("out-of-bounds cellIndex is never focused", () => {
+    const gate = computeInputGate(sessions, 0, 5, true);
+    expect(gate.isFocused).toBe(false);
+  });
+
+  test("negative cellIndex is never focused", () => {
+    const gate = computeInputGate(sessions, 0, -1, true);
+    expect(gate.isFocused).toBe(false);
+  });
+
+  test("composes with canAcceptInput — focused + connected = accepts", () => {
+    const gate = computeInputGate(sessions, 2, 2, true);
+    expect(canAcceptInput(gate)).toBe(true);
+  });
+
+  test("composes with canAcceptInput — unfocused = rejects", () => {
+    const gate = computeInputGate(sessions, 0, 2, true);
+    expect(canAcceptInput(gate)).toBe(false);
+  });
+
+  test("composes with canSendResize — unfocused but connected = allows resize", () => {
+    const gate = computeInputGate(sessions, 0, 2, true);
+    expect(canSendResize(gate)).toBe(true);
+  });
+
+  test("composes with canSendResize — disconnected = rejects resize", () => {
+    const gate = computeInputGate(sessions, 2, 2, false);
+    expect(canSendResize(gate)).toBe(false);
   });
 });

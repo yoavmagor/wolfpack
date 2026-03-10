@@ -9,6 +9,7 @@ import {
 } from "../validation.js";
 import {
   TMUX,
+  DESKTOP_PREFILL_HISTORY_LINES,
   exec,
   tmuxSend,
   tmuxSendKey,
@@ -16,6 +17,22 @@ import {
   capturePane,
 } from "./tmux.js";
 import { isAllowedSession } from "./http.js";
+
+/** Token bucket rate limiter. */
+function createRateLimiter(rate: number) {
+  let tokens = rate;
+  let last = Date.now();
+  return {
+    allow(): boolean {
+      const now = Date.now();
+      tokens = Math.min(rate, tokens + ((now - last) / 1000) * rate);
+      last = now;
+      if (tokens < 1) return false;
+      tokens--;
+      return true;
+    },
+  };
+}
 
 // ── PTY session tracking ──
 
@@ -30,6 +47,15 @@ export const activePtySessions = new Map<string, {
 export function __getActivePtySessions(): Map<string, { viewer: any; alive: boolean }> {
   if (!process.env.WOLFPACK_TEST) throw new Error("__getActivePtySessions() is only available in test mode (WOLFPACK_TEST=1)");
   return activePtySessions as any;
+}
+
+const ptySpawnAttempts = new Map<string, number>();
+const DESKTOP_PREFILL_MAX_BYTES = 256 * 1024;
+
+/** Test hook: expose PTY spawn-attempt counts per session */
+export function __getPtySpawnAttempts(): Map<string, number> {
+  if (!process.env.WOLFPACK_TEST) throw new Error("__getPtySpawnAttempts() is only available in test mode (WOLFPACK_TEST=1)");
+  return ptySpawnAttempts;
 }
 
 const PREFILL_OVERLAP_LIMIT = 32 * 1024;
@@ -117,15 +143,10 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
     }
   }, 25000);
 
-  let rlTokens = 60;
-  let rlLast = Date.now();
+  const rl = createRateLimiter(60);
 
   ws.on("message", async (raw) => {
-    const now = Date.now();
-    rlTokens = Math.min(60, rlTokens + ((now - rlLast) / 1000) * 60);
-    rlLast = now;
-    if (rlTokens < 1) return;
-    rlTokens--;
+    if (!rl.allow()) return;
 
     try {
       const str = String(raw);
@@ -281,126 +302,180 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
     alive: true,
   };
   activePtySessions.set(session, entry as any);
+  let spawning = false;
+  let latestRequestedSize: { cols: number; rows: number } | null = null;
+  let pendingSkipPrefill = false;
 
-  async function spawnPty(cols: number, rows: number) {
-    if (entry.proc) return;
+  async function spawnPty(
+    cols: number,
+    rows: number,
+    options?: { skipPrefill?: boolean },
+  ) {
+    if (options?.skipPrefill === true) pendingSkipPrefill = true;
+    latestRequestedSize = { cols, rows };
+    if (entry.proc || spawning) return;
+    spawning = true;
+    if (process.env.WOLFPACK_TEST) {
+      ptySpawnAttempts.set(session, (ptySpawnAttempts.get(session) || 0) + 1);
+    }
+    const skipPrefill = pendingSkipPrefill;
+    pendingSkipPrefill = false;
     let prefill = Buffer.alloc(0);
     let pendingAttach = Buffer.alloc(0);
     let shouldDedupeInitialAttach = false;
 
     try {
-      await exec(TMUX, ["has-session", "-t", session], { timeout: 2000 });
-    } catch {
-      entry.alive = false;
-      activePtySessions.delete(session);
-      if (entry.viewer) {
-        try { entry.viewer.close(4001, "session unavailable"); } catch {}
-        entry.viewer = null;
-      }
-      return;
-    }
-
-    // Override window-size so resize-window works
-    await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 }).catch(() => {});
-
-    if (!entry.alive) return;
-
-    // Pre-fill viewer with tmux scrollback so xterm.js has content to scroll through.
-    // The attach path can replay part of the visible pane, so strip any overlap from
-    // the first PTY bytes only after the prefill has been delivered successfully.
-    try {
-      const { stdout } = await exec(TMUX, [
-        "capture-pane", "-t", session, "-p", "-e", "-S", "-2000",
-      ], { timeout: 3000 });
-      if (stdout && entry.viewer && entry.viewer.readyState === 1) {
-        prefill = Buffer.from(stdout);
-        try {
-          entry.viewer.send(prefill);
-          shouldDedupeInitialAttach = true;
-        } catch (err: any) {
-          console.error(`PTY prefill send failed [${session}]:`, err?.message || err);
+      try {
+        await exec(TMUX, ["has-session", "-t", session], { timeout: 2000 });
+      } catch {
+        entry.alive = false;
+        activePtySessions.delete(session);
+        if (entry.viewer) {
+          try { entry.viewer.close(4001, "session unavailable"); } catch {}
+          entry.viewer = null;
         }
+        return;
       }
-    } catch {}
 
-    const spawnedAt = Date.now();
-    entry.proc = Bun.spawn([TMUX, "attach-session", "-t", session], {
-      env: { ...process.env, TERM: "xterm-256color", LANG: "en_US.UTF-8" },
-      terminal: {
-        cols,
-        rows,
-        data(_terminal: unknown, data: Buffer) {
-          if (!entry.alive) return;
-          if (shouldDedupeInitialAttach) {
-            pendingAttach = pendingAttach.length
-              ? Buffer.concat([pendingAttach, data])
-              : Buffer.from(data);
-            const next = __stripInitialPtyOverlap(prefill, pendingAttach);
-            if (next.awaitingMore) return;
-            shouldDedupeInitialAttach = false;
-            pendingAttach = Buffer.alloc(0);
-            data = next.data;
-            if (!data.length) return;
+      // Override window-size so resize-window works
+      await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 }).catch(() => {});
+
+      if (!entry.alive || activePtySessions.get(session) !== entry || entry.viewer !== ws) return;
+
+      // Pre-fill viewer with tmux scrollback so xterm.js has content to scroll through.
+      // The attach path can replay part of the visible pane, so strip any overlap from
+      // the first PTY bytes only after the prefill has been delivered successfully.
+      if (!skipPrefill) {
+        try {
+          const { stdout } = await exec(TMUX, [
+            "capture-pane", "-t", session, "-p", "-e", "-S", `-${DESKTOP_PREFILL_HISTORY_LINES}`,
+          ], { timeout: 3000 });
+          if (stdout && entry.viewer && entry.viewer.readyState === 1) {
+            const rawPrefill = Buffer.from(stdout);
+            if (rawPrefill.length > DESKTOP_PREFILL_MAX_BYTES) {
+              // Keep only the most recent chunk to avoid long first-frame paint stalls.
+              let start = rawPrefill.length - DESKTOP_PREFILL_MAX_BYTES;
+              while (start < rawPrefill.length && rawPrefill[start] !== 0x0a) start++;
+              if (start < rawPrefill.length) start++;
+              prefill = rawPrefill.subarray(start);
+            } else {
+              prefill = rawPrefill;
+            }
+            try {
+              entry.viewer.send(prefill);
+              shouldDedupeInitialAttach = true;
+            } catch (err: any) {
+              console.error(`PTY prefill send failed [${session}]:`, err?.message || err);
+            }
           }
-          if (entry.viewer && entry.viewer.readyState === 1) {
-            try { entry.viewer.send(data); } catch {}
-          }
-        },
-        exit(_terminal: unknown, _code: number, _signal?: number) {
-          if (!entry.alive) return;
-          entry.alive = false;
-          activePtySessions.delete(session);
-          const rapid = Date.now() - spawnedAt < 3000;
-          const code = rapid ? 4001 : 1000;
-          const reason = rapid ? "session unavailable" : "pty exited";
-          if (entry.viewer) {
-            try { entry.viewer.close(code, reason); } catch {}
-            entry.viewer = null;
-          }
-          if (entry.pendingViewer) {
-            try { entry.pendingViewer.close(code, reason); } catch {}
-            entry.pendingViewer = null;
-          }
-        },
-      },
-    });
-    activePtySessions.set(session, entry as any);
-    setTimeout(async () => {
-      if (!entry.alive || !entry.proc) return;
-      try {
-        // Re-force latest in case Claude Code re-applied manual during spawn
-        await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 });
-        await exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 });
-      } catch {}
-      try {
-        entry.proc.terminal!.resize(cols, rows);
-      } catch {}
-    }, 100);
+        } catch {}
+      }
+
+      if (!entry.alive || activePtySessions.get(session) !== entry || entry.viewer !== ws) return;
+
+      const initialSize = latestRequestedSize || { cols, rows };
+      const spawnedAt = Date.now();
+      entry.proc = Bun.spawn([TMUX, "attach-session", "-t", session], {
+        env: { ...process.env, TERM: "xterm-256color", LANG: "en_US.UTF-8" },
+        terminal: {
+          cols: initialSize.cols,
+          rows: initialSize.rows,
+          data(_terminal: unknown, data: Buffer) {
+            if (!entry.alive) return;
+            if (shouldDedupeInitialAttach) {
+              pendingAttach = pendingAttach.length
+                ? Buffer.concat([pendingAttach, data])
+                : Buffer.from(data);
+              const next = __stripInitialPtyOverlap(prefill, pendingAttach);
+              if (next.awaitingMore) return;
+              shouldDedupeInitialAttach = false;
+              pendingAttach = Buffer.alloc(0);
+              data = next.data;
+              if (!data.length) return;
+            }
+            if (entry.viewer && entry.viewer.readyState === 1) {
+              try { entry.viewer.send(data); } catch {}
+            }
+          },
+          exit(_terminal: unknown, _code: number, _signal?: number) {
+            if (!entry.alive) return;
+            entry.alive = false;
+            activePtySessions.delete(session);
+            const rapid = Date.now() - spawnedAt < 3000;
+            const code = rapid ? 4001 : 1000;
+            const reason = rapid ? "session unavailable" : "pty exited";
+            if (entry.viewer) {
+              try { entry.viewer.close(code, reason); } catch {}
+              entry.viewer = null;
+            }
+            if (entry.pendingViewer) {
+              try { entry.pendingViewer.close(code, reason); } catch {}
+              entry.pendingViewer = null;
+            }
+          },
+        }
+      });
+      activePtySessions.set(session, entry as any);
+      setTimeout(async () => {
+        if (!entry.alive || !entry.proc) return;
+        const latestSize = latestRequestedSize || initialSize;
+        try {
+          // Re-force latest in case Claude Code re-applied manual during spawn
+          await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 });
+          await exec(TMUX, ["resize-window", "-t", session, "-x", String(latestSize.cols), "-y", String(latestSize.rows)], { timeout: 2000 });
+        } catch {}
+        try {
+          entry.proc.terminal!.resize(latestSize.cols, latestSize.rows);
+        } catch {}
+      }, 100);
+    } finally {
+      spawning = false;
+    }
   }
 
-  let rlTokens = 60;
-  let rlLast = Date.now();
+  const rl = createRateLimiter(60);
+  let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
-  ws.on("message", (raw: Buffer | string) => {
+  ws.on("message", (raw: Buffer | string, isBinary: boolean) => {
     if (!entry.alive) return;
-    const now = Date.now();
-    rlTokens = Math.min(60, rlTokens + ((now - rlLast) / 1000) * 60);
-    rlLast = now;
-    if (rlTokens < 1) return;
-    rlTokens--;
+    if (!rl.allow()) return;
     try {
-      if (typeof raw === "string" || (Buffer.isBuffer(raw) && raw[0] === 0x7b)) {
+      if (!isBinary) {
         const msg = JSON.parse(String(raw));
-        if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
+        if (
+          msg.type === "attach" &&
+          typeof msg.cols === "number" &&
+          typeof msg.rows === "number"
+        ) {
+          // Attach handshake is a one-time bootstrap for a fresh WS viewer.
+          // It spawns the PTY without forcing an extra tmux resize if dims are unchanged.
+          latestRequestedSize = { cols: clampCols(msg.cols), rows: clampRows(msg.rows) };
+          if (!entry.proc) {
+            spawnPty(latestRequestedSize.cols, latestRequestedSize.rows, {
+              skipPrefill: msg.skipPrefill === true,
+            });
+          }
+          if (entry.viewer && entry.viewer.readyState === 1) {
+            try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch {}
+          }
+        } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           const cols = clampCols(msg.cols);
           const rows = clampRows(msg.rows);
+          latestRequestedSize = { cols, rows };
           if (!entry.proc) {
+            // Backward compatibility: older clients still bootstrap PTY via first resize.
             spawnPty(cols, rows);
           } else {
-            entry.proc.terminal!.resize(cols, rows);
-            exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 })
-              .then(() => exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 }))
-              .catch(() => {});
+            // Debounce resize to prevent storms crashing TUI apps
+            if (resizeTimer) clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+              resizeTimer = null;
+              if (!entry.alive || !entry.proc) return;
+              entry.proc.terminal!.resize(cols, rows);
+              exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 })
+                .then(() => exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 }))
+                .catch(() => {});
+            }, 80);
           }
         }
       } else if (entry.proc) {

@@ -4,13 +4,7 @@ import type { AddressInfo } from "node:net";
 // Use dynamic import so WOLFPACK_TEST is set before server module evaluation.
 process.env.WOLFPACK_TEST = "1";
 
-const {
-  server,
-  __setTmuxList,
-  __setTmuxSend,
-  __setTmuxSendKey,
-  __getActivePtySessions,
-} = await import("../../src/server/index.ts");
+const { server, __setTmuxList, __setTmuxSend, __setTmuxSendKey, __getActivePtySessions } = await import("../../src/server/index.ts");
 
 // ── Test setup ──
 
