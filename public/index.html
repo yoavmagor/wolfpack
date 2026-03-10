@@ -110,15 +110,16 @@
         background: #1a1a1a;
         border: 1px solid #2a2a2a;
         color: #999;
-        font-size: 10px;
+        font-size: 11px;
         font-family: inherit;
         text-transform: uppercase;
         letter-spacing: 1px;
         cursor: pointer;
-        padding: 6px 12px;
-        border-radius: 10px;
+        padding: 8px 14px;
+        border-radius: 6px;
         transition: transform 0.1s ease, box-shadow 0.1s ease;
-        min-height: 34px;
+        min-height: 38px;
+        min-width: 60px;
         -webkit-tap-highlight-color: transparent;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       }
@@ -186,8 +187,8 @@
         .view.animating {
           transition: opacity 0.15s ease;
         }
-        #kb-accessory { display: none !important; }
-        #kb-toggle { display: none !important; }
+        #kb-accessory { display: none; }
+        #kb-toggle { display: none; }
       }
 
       .list {
@@ -352,11 +353,11 @@
         margin-bottom: 6px;
       }
       .session-name-label {
-        font-size: 9px;
+        font-size: 10px;
         color: #555;
         text-transform: uppercase;
         letter-spacing: 2.5px;
-        margin-bottom: 6px;
+        margin-bottom: 8px;
         display: flex;
         align-items: center;
         gap: 6px;
@@ -371,11 +372,11 @@
         width: 100%;
         background: #0e0e0e;
         border: 1px solid #222;
-        border-radius: 4px;
-        padding: 9px 10px;
+        border-radius: 8px;
+        padding: 12px;
         color: #00ff41;
         font-family: 'JetBrains Mono', 'Fira Code', monospace;
-        font-size: 13px;
+        font-size: 14px;
         letter-spacing: 0.8px;
         outline: none;
         caret-color: #00ff41;
@@ -404,21 +405,23 @@
       .session-name-error.visible { display: block; }
 
       .new-btn {
-        background: #1a1a1a;
-        border: 1px solid rgba(0, 255, 65, 0.4);
-        border-radius: 10px;
-        padding: 10px 14px;
-        margin-bottom: 4px;
+        background: linear-gradient(145deg, #1a1a1a 0%, #151515 100%);
+        border: 1px solid rgba(0, 255, 65, 0.3);
+        border-radius: 6px;
+        padding: 14px 16px;
+        margin-bottom: 8px;
         display: flex;
         align-items: center;
+        justify-content: center;
         gap: 12px;
         cursor: pointer;
         color: #00ff41;
-        font-size: 13px;
-        font-weight: 500;
+        font-size: 14px;
+        font-weight: 600;
         font-family: inherit;
         text-transform: uppercase;
-        letter-spacing: 1px;
+        letter-spacing: 1.5px;
+        min-height: 52px;
         -webkit-tap-highlight-color: transparent;
         transition: transform 0.1s ease, box-shadow 0.1s ease;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
@@ -427,7 +430,7 @@
         transform: scale(0.97);
         background: #00ff41;
         color: #0a0a0a;
-        box-shadow: 0 0 12px rgba(0, 255, 65, 0.3);
+        box-shadow: 0 0 16px rgba(0, 255, 65, 0.3);
       }
 
       #terminal {
@@ -476,8 +479,8 @@
 
       #cmd-palette {
         display: none;
-        gap: 5px;
-        padding: 5px 10px 3px;
+        gap: 6px;
+        padding: 6px 10px 4px;
         background: #111;
         border-top: 1px solid #1a1a1a;
         flex-shrink: 0;
@@ -491,11 +494,11 @@
         flex-shrink: 0;
         background: linear-gradient(145deg, #1a1a1a 0%, #151515 100%);
         border: 1px solid rgba(0, 170, 255, 0.3);
-        border-radius: 8px;
-        padding: 6px 12px;
-        min-height: 32px;
+        border-radius: 10px;
+        padding: 6px 14px;
+        min-height: 36px;
         color: #66ccff;
-        font-size: 11px;
+        font-size: 12px;
         font-family: inherit;
         font-weight: 600;
         letter-spacing: 0.3px;
@@ -517,8 +520,8 @@
 
       #kb-accessory {
         display: none;
-        gap: 6px;
-        padding: 5px 8px 3px;
+        gap: 5px;
+        padding: 6px 10px 4px;
         background: #111;
         border-top: 1px solid #1a1a1a;
         flex-shrink: 0;
@@ -535,12 +538,12 @@
         flex-shrink: 0;
         background: linear-gradient(145deg, #222 0%, #1a1a1a 100%);
         border: 1px solid #333;
-        border-radius: 6px;
-        padding: 6px 10px;
-        min-width: 36px;
-        min-height: 32px;
+        border-radius: 8px;
+        padding: 6px 12px;
+        min-width: 40px;
+        min-height: 36px;
         color: #ccc;
-        font-size: 12px;
+        font-size: 13px;
         font-family: inherit;
         font-weight: 600;
         cursor: pointer;
@@ -570,11 +573,11 @@
       .kb-key.kb-danger {
         color: #cc3333;
         border-color: rgba(204, 51, 51, 0.3);
-        min-width: 58px;
-        min-height: 38px;
-        font-size: 15px;
+        min-width: 72px;
+        min-height: 42px;
+        font-size: 16px;
         font-weight: 700;
-        padding: 8px 16px;
+        padding: 10px 20px;
       }
       .kb-key.kb-danger:active {
         background: #cc3333;
@@ -603,9 +606,9 @@
       }
       #input-bar {
         display: flex;
-        gap: 6px;
-        padding: 6px 8px;
-        padding-bottom: max(6px, env(safe-area-inset-bottom));
+        gap: 8px;
+        padding: 8px 10px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
         background: #111;
         border-top: 1px solid #1a1a1a;
         flex-shrink: 0;
@@ -614,21 +617,23 @@
         flex: 1;
         background: #0a0a0a;
         border: 1px solid #1e1e1e;
-        border-radius: 10px;
-        padding: 5px 8px;
+        border-radius: 12px;
+        padding: 10px 12px;
         color: #e0e0e0;
-        font-size: 15px;
+        font-size: 16px;
         font-family: inherit;
         outline: none;
         resize: none;
         overflow-y: auto;
         line-height: 1.4;
         max-height: 120px;
+        min-height: 44px;
+        caret-color: #00ff41;
         transition: border-color 0.15s ease, box-shadow 0.15s ease;
       }
       #input-bar textarea:focus {
         border-color: #00ff41;
-        box-shadow: 0 0 4px #00ff4140;
+        box-shadow: 0 0 0 2px rgba(0,255,65,0.08), 0 0 12px rgba(0,255,65,0.06);
       }
       #kb-toggle {
         display: none;
@@ -651,15 +656,15 @@
       #msg-preview {
         display: none;
         position: fixed;
-        bottom: 52px;
-        left: 8px;
-        right: 8px;
+        bottom: 60px;
+        left: 10px;
+        right: 10px;
         background: #111;
         border: 1px solid #1e1e1e;
-        border-radius: 3px;
-        padding: 10px;
+        border-radius: 8px;
+        padding: 12px;
         color: #b0b0b0;
-        font-size: 13px;
+        font-size: 14px;
         font-family: inherit;
         white-space: pre-wrap;
         max-height: 50vh;
@@ -669,11 +674,11 @@
       #input-bar button {
         background: #1a1a1a;
         border: 1px solid rgba(0, 255, 65, 0.4);
-        border-radius: 10px;
-        width: 40px;
-        height: 40px;
+        border-radius: 12px;
+        width: 44px;
+        height: 44px;
         color: #00ff41;
-        font-size: 18px;
+        font-size: 20px;
         cursor: pointer;
         flex-shrink: 0;
         align-self: flex-end;
@@ -713,8 +718,8 @@
       }
       .new-project-row {
         display: flex;
-        gap: 6px;
-        padding: 8px;
+        gap: 8px;
+        padding: 10px;
         background: #111;
         border-bottom: 1px solid #1a1a1a;
       }
@@ -722,29 +727,32 @@
         flex: 1;
         background: #0a0a0a;
         border: 1px solid #1e1e1e;
-        border-radius: 3px;
-        padding: 6px 10px;
+        border-radius: 8px;
+        padding: 10px 12px;
         color: #e0e0e0;
-        font-size: 13px;
+        font-size: 15px;
         font-family: inherit;
         outline: none;
+        min-height: 44px;
+        caret-color: #00ff41;
         transition: border-color 0.15s ease, box-shadow 0.15s ease;
       }
       .new-project-row input:focus {
         border-color: #00ff41;
-        box-shadow: 0 0 4px #00ff4140;
+        box-shadow: 0 0 0 2px rgba(0,255,65,0.08), 0 0 12px rgba(0,255,65,0.06);
       }
       .new-project-row button {
         background: none;
         border: 1px solid #00ff41;
-        border-radius: 3px;
-        padding: 6px 12px;
+        border-radius: 8px;
+        padding: 10px 16px;
         color: #00ff41;
-        font-size: 11px;
+        font-size: 12px;
         font-family: inherit;
         text-transform: uppercase;
         letter-spacing: 1px;
         cursor: pointer;
+        min-height: 44px;
         transition: all 0.15s ease;
       }
       .new-project-row button:active {
@@ -777,14 +785,21 @@
       }
 
       .settings-section {
-        padding: 6px;
+        padding: 10px 8px;
+      }
+      .settings-section label {
+        display: flex;
+        align-items: center;
+        padding: 8px 0;
+        font-size: 14px;
+        min-height: 44px;
       }
       .settings-label {
-        font-size: 10px;
+        font-size: 11px;
         color: #555;
-        margin-bottom: 6px;
+        margin-bottom: 10px;
         text-transform: uppercase;
-        letter-spacing: 1.5px;
+        letter-spacing: 2px;
       }
       .kill-btn {
         background: none;
@@ -869,13 +884,13 @@
       .settings-gear {
         background: #1a1a1a;
         border: 1px solid #2a2a2a;
-        border-radius: 10px;
+        border-radius: 6px;
         color: #777;
-        font-size: 18px;
+        font-size: 20px;
         cursor: pointer;
         padding: 6px;
-        min-width: 36px;
-        min-height: 36px;
+        min-width: 40px;
+        min-height: 40px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -909,8 +924,8 @@
         z-index: 20;
         background: #111;
         border-bottom: 1px solid #1a1a1a;
-        padding: 5px 8px;
-        gap: 5px;
+        padding: 8px 10px;
+        gap: 6px;
         align-items: center;
       }
       #search-bar.visible {
@@ -920,26 +935,29 @@
         flex: 1;
         background: #0a0a0a;
         border: 1px solid #1e1e1e;
-        border-radius: 10px;
-        padding: 4px 8px;
+        border-radius: 6px;
+        padding: 8px 10px;
         color: #e0e0e0;
-        font-size: 12px;
+        font-size: 16px;
         font-family: inherit;
         outline: none;
+        min-height: 40px;
+        caret-color: #00ff41;
         transition: border-color 0.15s ease, box-shadow 0.15s ease;
       }
       #search-bar input:focus {
         border-color: #00ff41;
-        box-shadow: 0 0 4px #00ff4140;
+        box-shadow: 0 0 0 2px rgba(0,255,65,0.08), 0 0 12px rgba(0,255,65,0.06);
       }
       #search-bar button {
         background: #1a1a1a;
         border: 1px solid #2a2a2a;
-        border-radius: 10px;
+        border-radius: 6px;
         color: #999;
-        font-size: 12px;
+        font-size: 14px;
         padding: 4px 10px;
-        min-height: 32px;
+        min-width: 40px;
+        min-height: 40px;
         cursor: pointer;
         transition: transform 0.1s ease, box-shadow 0.1s ease;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
@@ -1005,12 +1023,12 @@
       .machine-add-btn {
         background: #1a1a1a;
         border: 1px solid rgba(0, 255, 65, 0.4);
-        border-radius: 10px;
+        border-radius: 6px;
         color: #00ff41;
-        font-size: 18px;
+        font-size: 22px;
         font-weight: 700;
-        width: 34px;
-        height: 34px;
+        width: 40px;
+        height: 40px;
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -1024,11 +1042,11 @@
       .machine-ralph-btn {
         background: #1a1a1a;
         border: 1px solid rgba(155, 89, 182, 0.6);
-        border-radius: 10px;
+        border-radius: 6px;
         color: #9b59b6;
-        font-size: 16px;
-        width: 34px;
-        height: 34px;
+        font-size: 20px;
+        width: 40px;
+        height: 40px;
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -1054,23 +1072,26 @@
       .machine-item {
         display: flex;
         align-items: center;
-        gap: 6px;
-        padding: 5px 8px;
+        gap: 8px;
+        padding: 8px 10px;
         background: #111;
         border: 1px solid #1a1a1a;
-        border-radius: 3px;
+        border-radius: 6px;
         margin-bottom: 3px;
+        min-height: 44px;
       }
       .machine-item .dot { width: 6px; height: 6px; }
-      .machine-item-name { flex: 1; font-size: 12px; color: #b0b0b0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+      .machine-item-name { flex: 1; font-size: 14px; color: #b0b0b0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
       .machine-item-url { font-size: 10px; color: #444; margin-left: 4px; }
       .machine-remove-btn {
         background: none;
         border: none;
         color: #cc3333;
-        font-size: 16px;
+        font-size: 20px;
         cursor: pointer;
-        padding: 2px 4px;
+        padding: 4px 8px;
+        min-width: 36px;
+        min-height: 36px;
         -webkit-tap-highlight-color: transparent;
       }
       .machine-remove-btn:active { color: #ff4444; }
@@ -1082,11 +1103,11 @@
 
       /* Ralph loop styles */
       .ralph-card {
-        background: #111;
+        background: linear-gradient(145deg, #111 0%, #0c0c0c 100%);
         border: 1px solid #1a1a1a;
-        border-radius: 3px;
-        padding: 6px 8px;
-        margin-bottom: 3px;
+        border-radius: 4px;
+        padding: 10px 12px;
+        margin-bottom: 6px;
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
         transition: all 0.15s ease;
@@ -1110,7 +1131,7 @@
         margin-bottom: 5px;
       }
       .ralph-card-name {
-        font-size: 12px;
+        font-size: 13px;
         color: #e0e0e0;
         flex: 1;
         overflow: hidden;
@@ -1189,7 +1210,7 @@
       .ralph-iter-card {
         margin: 4px 10px;
         border: 1px solid #1a1a1a;
-        border-radius: 4px;
+        border-radius: 4px; /* overhaul value, already correct */
         overflow: hidden;
       }
       .ralph-iter-card.active { border-left: 3px solid #00ff41; }
@@ -1198,21 +1219,22 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 10px 12px;
+        padding: 12px 14px;
         background: #111;
         cursor: pointer;
+        min-height: 50px;
         -webkit-tap-highlight-color: transparent;
       }
       .ralph-iter-header:active { background: #161616; }
       .ralph-iter-title {
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 700;
         color: #00ff41;
         text-transform: uppercase;
         letter-spacing: 1px;
       }
       .ralph-iter-task {
-        font-size: 11px;
+        font-size: 12px;
         color: #888;
         margin-top: 2px;
         overflow: hidden;
@@ -1246,18 +1268,19 @@
       }
       .ralph-actions {
         display: flex;
-        gap: 6px;
-        padding: 6px 10px;
+        gap: 8px;
+        padding: 8px 12px;
         border-top: 1px solid #1a1a1a;
       }
       .ralph-actions button {
         flex: 1;
-        padding: 7px;
+        padding: 10px;
         border: 1px solid #282828;
-        border-radius: 3px;
+        border-radius: 8px;
         background: #111;
         color: #888;
-        font-size: 11px;
+        font-size: 13px;
+        min-height: 44px;
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
       }
@@ -1265,41 +1288,47 @@
       .ralph-actions button.danger { border-color: #cc3333; color: #cc3333; }
       .ralph-actions button.danger:active { background: #1a0a0a; }
       .ralph-start-form {
-        padding: 10px;
+        padding: 14px;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 12px;
       }
       .ralph-start-form label {
-        font-size: 10px;
+        font-size: 12px;
         color: #555;
         text-transform: uppercase;
         letter-spacing: 1px;
+        margin-bottom: 2px;
       }
       .ralph-start-form select,
       .ralph-start-form input {
         width: 100%;
-        padding: 7px;
+        padding: 10px;
         background: #111;
         border: 1px solid #282828;
-        border-radius: 3px;
+        border-radius: 8px;
         color: #e0e0e0;
-        font-size: 13px;
+        font-size: 15px;
+        min-height: 44px;
+        caret-color: #00ff41;
         box-sizing: border-box;
       }
       .ralph-start-form select:focus,
       .ralph-start-form input:focus {
         border-color: #9b59b6;
+        box-shadow: 0 0 0 2px rgba(155,89,182,0.08), 0 0 12px rgba(155,89,182,0.06);
         outline: none;
       }
       .ralph-launch-btn {
-        padding: 10px;
+        padding: 14px;
         background: #9b59b6;
         border: none;
-        border-radius: 10px;
+        border-radius: 12px;
         color: #fff;
-        font-size: 12px;
+        font-size: 14px;
         font-weight: bold;
+        letter-spacing: 1.5px;
+        margin: 8px;
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
         transition: transform 0.1s ease, box-shadow 0.1s ease;
@@ -1694,86 +1723,14 @@
 
       /* ══════════════════════════════════════════════════════════
          WOLFPACK COMMAND CENTER — VISUAL OVERHAUL
+         (buttons/inputs/forms/kb/toggles/ralph merged into base above)
          ══════════════════════════════════════════════════════════ */
 
-      /* ── Button refinement — consistent radius, better tactile feel ── */
-      .new-btn,
-      .back-btn,
-      .settings-gear,
-      .machine-ralph-btn,
-      .machine-add-btn,
-      .kb-key,
-      #input-bar button,
-      #search-bar button,
-      #session-chip,
-      .ralph-launch-btn {
+      /* ── Session chip ── */
+      #session-chip {
         border-radius: 6px !important;
-      }
-      .new-btn {
-        font-weight: 600 !important;
-        letter-spacing: 1.5px !important;
-        background: linear-gradient(145deg, #1a1a1a 0%, #151515 100%) !important;
-        border-color: rgba(0,255,65,0.3) !important;
-      }
-      .new-btn:active {
-        box-shadow: 0 0 16px rgba(0,255,65,0.3) !important;
-      }
-      /* ── Input fields — green caret, better focus ── */
-      #input-bar textarea,
-      .new-project-row input,
-      .ralph-start-form input,
-      .ralph-start-form select,
-      #search-bar input,
-      #custom-cmd-input {
-        caret-color: #00ff41;
-        border-radius: 6px !important;
-      }
-      #input-bar textarea:focus,
-      .new-project-row input:focus,
-      #search-bar input:focus {
-        border-color: #00ff41 !important;
-        box-shadow: 0 0 0 2px rgba(0,255,65,0.08), 0 0 12px rgba(0,255,65,0.06) !important;
-      }
-      .ralph-start-form select:focus,
-      .ralph-start-form input:focus {
-        border-color: #9b59b6 !important;
-        box-shadow: 0 0 0 2px rgba(155,89,182,0.08), 0 0 12px rgba(155,89,182,0.06) !important;
-      }
-
-      /* ── Settings — custom toggle switches ── */
-      .settings-section input[type="checkbox"] {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 34px;
-        height: 18px;
-        background: #1a1a1a;
-        border-radius: 9px;
-        position: relative;
-        cursor: pointer;
-        transition: background 0.2s ease;
-        border: 1px solid #2a2a2a;
-        flex-shrink: 0;
-        vertical-align: middle;
-      }
-      .settings-section input[type="checkbox"]::after {
-        content: '';
-        position: absolute;
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        background: #444;
-        top: 2px;
-        left: 2px;
-        transition: transform 0.2s ease, background 0.2s ease;
-      }
-      .settings-section input[type="checkbox"]:checked {
-        background: rgba(0,255,65,0.15);
-        border-color: rgba(0,255,65,0.3);
-      }
-      .settings-section input[type="checkbox"]:checked::after {
-        transform: translateX(16px);
-        background: #00ff41;
-        box-shadow: 0 0 6px rgba(0,255,65,0.4);
+        font-weight: 700 !important;
+        letter-spacing: 2px !important;
       }
 
       /* ── Session drawer ── */
@@ -1786,24 +1743,6 @@
       }
       .drawer-item-name {
         font-weight: 700 !important;
-      }
-
-      /* ── Ralph cards ── */
-      .ralph-card {
-        border-radius: 4px !important;
-        background: linear-gradient(145deg, #111 0%, #0c0c0c 100%) !important;
-      }
-      .ralph-iter-card {
-        border-radius: 4px !important;
-      }
-      .ralph-launch-btn {
-        letter-spacing: 1.5px !important;
-      }
-
-      /* ── Session chip ── */
-      #session-chip {
-        font-weight: 700 !important;
-        letter-spacing: 2px !important;
       }
 
       /* ── Subtle hover states for desktop ── */
@@ -1836,6 +1775,203 @@
           color: #b07cc8 !important;
           background: rgba(155, 89, 182, 0.1) !important;
           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 10px rgba(155, 89, 182, 0.2) !important;
+        }
+      }
+
+      /* ── Desktop component overrides (undo mobile-first sizing) ── */
+      @media (min-width: 769px) {
+        .new-btn {
+          padding: 10px 14px;
+          margin-bottom: 4px;
+          font-size: 13px;
+          min-height: 0;
+          justify-content: flex-start;
+        }
+        .back-btn {
+          font-size: 10px;
+          padding: 6px 12px;
+          min-height: 34px;
+          min-width: auto;
+        }
+        .settings-gear {
+          font-size: 18px;
+          min-width: 36px;
+          min-height: 36px;
+        }
+        .machine-add-btn {
+          width: 34px;
+          height: 34px;
+          font-size: 18px;
+        }
+        .machine-ralph-btn {
+          font-size: 16px;
+          width: 34px;
+          height: 34px;
+        }
+        #cmd-palette {
+          gap: 5px;
+          padding: 5px 10px 3px;
+        }
+        .cmd-chip {
+          border-radius: 8px;
+          padding: 6px 12px;
+          min-height: 32px;
+          font-size: 11px;
+        }
+        #input-bar {
+          gap: 6px;
+          padding: 6px 8px;
+          padding-bottom: max(6px, env(safe-area-inset-bottom));
+        }
+        #input-bar textarea {
+          border-radius: 6px;
+          padding: 5px 8px;
+          font-size: 15px;
+          min-height: 0;
+        }
+        #input-bar button {
+          border-radius: 6px;
+          width: 40px;
+          height: 40px;
+          font-size: 18px;
+        }
+        #search-bar {
+          padding: 5px 8px;
+          gap: 5px;
+        }
+        #search-bar input {
+          border-radius: 10px;
+          padding: 4px 8px;
+          font-size: 12px;
+          min-height: 0;
+        }
+        #search-bar button {
+          border-radius: 10px;
+          font-size: 12px;
+          min-width: auto;
+          min-height: 32px;
+        }
+        .new-project-row {
+          gap: 6px;
+          padding: 8px;
+        }
+        .new-project-row input {
+          border-radius: 6px;
+          padding: 6px 10px;
+          font-size: 13px;
+          min-height: 0;
+        }
+        .new-project-row button {
+          border-radius: 3px;
+          padding: 6px 12px;
+          font-size: 11px;
+          min-height: 0;
+        }
+        .settings-section {
+          padding: 6px;
+        }
+        .settings-section label {
+          padding: 4px 0;
+          font-size: inherit;
+          min-height: 0;
+        }
+        .settings-label {
+          font-size: 10px;
+          margin-bottom: 6px;
+          letter-spacing: 1.5px;
+        }
+        .settings-section input[type="checkbox"] {
+          width: 34px;
+          height: 18px;
+          border-radius: 9px;
+        }
+        .settings-section input[type="checkbox"]::after {
+          width: 12px;
+          height: 12px;
+        }
+        .settings-section input[type="checkbox"]:checked::after {
+          transform: translateX(16px);
+        }
+        .session-name-input {
+          border-radius: 4px;
+          padding: 9px 10px;
+          font-size: 13px;
+        }
+        .session-name-label {
+          font-size: 9px;
+          margin-bottom: 6px;
+        }
+        .ralph-card {
+          padding: 6px 8px;
+          margin-bottom: 3px;
+        }
+        .ralph-card-name {
+          font-size: 12px;
+        }
+        .ralph-launch-btn {
+          padding: 10px;
+          font-size: 12px;
+          border-radius: 6px;
+          letter-spacing: normal;
+          margin: 0;
+        }
+        .ralph-start-form {
+          padding: 10px;
+          gap: 8px;
+        }
+        .ralph-start-form label {
+          font-size: 10px;
+          margin-bottom: 0;
+        }
+        .ralph-start-form select,
+        .ralph-start-form input {
+          padding: 7px;
+          font-size: 13px;
+          border-radius: 3px;
+          min-height: 0;
+        }
+        .ralph-iter-header {
+          padding: 10px 12px;
+          min-height: 0;
+        }
+        .ralph-iter-title {
+          font-size: 13px;
+        }
+        .ralph-iter-task {
+          font-size: 11px;
+        }
+        .ralph-actions {
+          gap: 6px;
+          padding: 6px 10px;
+        }
+        .ralph-actions button {
+          padding: 7px;
+          font-size: 11px;
+          border-radius: 3px;
+          min-height: 0;
+        }
+        .machine-item {
+          gap: 6px;
+          padding: 5px 8px;
+          border-radius: 3px;
+          min-height: 0;
+        }
+        .machine-item-name {
+          font-size: 12px;
+        }
+        .machine-remove-btn {
+          font-size: 16px;
+          padding: 2px 4px;
+          min-width: auto;
+          min-height: auto;
+        }
+        #msg-preview {
+          bottom: 52px;
+          left: 8px;
+          right: 8px;
+          border-radius: 3px;
+          padding: 10px;
+          font-size: 13px;
         }
       }
 
@@ -2179,81 +2315,10 @@
 
       /* ══════════════════════════════════════════════════════════
          MOBILE-SPECIFIC PASS
+         (buttons/inputs/forms/kb/toggles/ralph merged into base above)
          ══════════════════════════════════════════════════════════ */
       @media (max-width: 768px) {
-
-        /* ── New session button — prominent CTA ── */
-        .new-btn {
-          padding: 14px 16px !important;
-          margin-bottom: 8px !important;
-          font-size: 14px !important;
-          min-height: 52px !important;
-          justify-content: center;
-        }
-
-        .machine-add-btn {
-          width: 40px !important;
-          height: 40px !important;
-          font-size: 22px !important;
-        }
-
-        /* ── Command palette — larger on mobile ── */
-        #cmd-palette { gap: 6px !important; padding: 6px 10px 4px !important; }
-        .cmd-chip { min-height: 36px !important; font-size: 12px !important; padding: 6px 14px !important; border-radius: 10px !important; }
-
-        /* ── Keyboard accessory row — larger keys on mobile ── */
-        #kb-accessory {
-          gap: 5px !important;
-          padding: 6px 10px 4px !important;
-        }
-        .kb-key {
-          min-height: 36px !important;
-          min-width: 40px !important;
-          font-size: 13px !important;
-          padding: 6px 12px !important;
-          border-radius: 8px !important;
-        }
-        .kb-key.kb-danger {
-          min-width: 72px !important;
-          min-height: 42px !important;
-          font-size: 16px !important;
-          padding: 10px 20px !important;
-        }
-
-        #kb-toggle { display: flex !important; }
-
-        /* ── Input bar — thumb-friendly ── */
-        #input-bar {
-          gap: 8px !important;
-          padding: 8px 10px !important;
-          padding-bottom: max(8px, env(safe-area-inset-bottom)) !important;
-        }
-        #input-bar textarea {
-          font-size: 16px !important;
-          padding: 10px 12px !important;
-          border-radius: 12px !important;
-          min-height: 44px !important;
-        }
-        #input-bar button {
-          width: 44px !important;
-          height: 44px !important;
-          font-size: 20px !important;
-          border-radius: 12px !important;
-        }
-
-        /* ── Header buttons — 44px min touch targets ── */
-        .back-btn {
-          min-height: 38px !important;
-          min-width: 60px !important;
-          padding: 8px 14px !important;
-          font-size: 11px !important;
-        }
-        .settings-gear,
-        .machine-ralph-btn {
-          min-width: 40px !important;
-          min-height: 40px !important;
-          font-size: 20px !important;
-        }
+        #kb-toggle { display: flex; }
 
         /* ── Session chip — easier to tap ── */
         #session-chip {
@@ -2278,186 +2343,6 @@
           height: 10px !important;
         }
         .drawer-item-name {
-          font-size: 14px !important;
-        }
-
-        /* ── Search bar — better mobile sizing ── */
-        #search-bar {
-          padding: 8px 10px !important;
-          gap: 6px !important;
-        }
-        #search-bar input {
-          font-size: 16px !important;
-          padding: 8px 10px !important;
-          min-height: 40px;
-        }
-        #search-bar button {
-          min-width: 40px;
-          min-height: 40px !important;
-          font-size: 14px !important;
-        }
-
-        /* ── Settings — more spacious on mobile ── */
-        .settings-section {
-          padding: 10px 8px !important;
-        }
-        .settings-label {
-          font-size: 11px !important;
-          margin-bottom: 10px !important;
-          letter-spacing: 2px !important;
-        }
-        .settings-section label {
-          padding: 8px 0 !important;
-          font-size: 14px !important;
-          min-height: 44px;
-          display: flex !important;
-          align-items: center !important;
-        }
-        .settings-section input[type="checkbox"] {
-          width: 40px !important;
-          height: 22px !important;
-          border-radius: 11px !important;
-        }
-        .settings-section input[type="checkbox"]::after {
-          width: 16px !important;
-          height: 16px !important;
-          top: 2px !important;
-          left: 2px !important;
-        }
-        .settings-section input[type="checkbox"]:checked::after {
-          transform: translateX(18px) !important;
-        }
-
-        /* ── Ralph cards — mobile touch targets ── */
-        .ralph-card {
-          padding: 10px 12px !important;
-          margin-bottom: 6px !important;
-        }
-        .ralph-card-name {
-          font-size: 13px !important;
-        }
-        .ralph-launch-btn {
-          padding: 14px !important;
-          font-size: 14px !important;
-          margin: 8px !important;
-          border-radius: 12px !important;
-        }
-
-        /* ── Ralph start form — better spacing ── */
-        .ralph-start-form {
-          padding: 14px !important;
-          gap: 12px !important;
-        }
-        .ralph-start-form label {
-          font-size: 12px !important;
-          margin-bottom: 2px !important;
-        }
-        .ralph-start-form select,
-        .ralph-start-form input {
-          padding: 10px !important;
-          font-size: 15px !important;
-          min-height: 44px;
-          border-radius: 8px !important;
-        }
-
-        /* ── New project row ── */
-        .new-project-row {
-          padding: 10px !important;
-          gap: 8px !important;
-        }
-        .new-project-row input {
-          padding: 10px 12px !important;
-          font-size: 15px !important;
-          min-height: 44px;
-          border-radius: 8px !important;
-        }
-        .new-project-row button {
-          padding: 10px 16px !important;
-          font-size: 12px !important;
-          min-height: 44px;
-          border-radius: 8px !important;
-        }
-
-        /* ── Session name field in agent view ── */
-        .session-name-input {
-          padding: 12px 12px !important;
-          font-size: 14px !important;
-          border-radius: 8px !important;
-        }
-        .session-name-label {
-          font-size: 10px !important;
-          margin-bottom: 8px !important;
-        }
-
-        /* ── Custom cmd input in agent view ── */
-        #custom-cmd-input {
-          padding: 10px 12px !important;
-          font-size: 14px !important;
-          min-height: 44px;
-          border-radius: 8px !important;
-        }
-
-        /* ── Ralph iteration cards ── */
-        .ralph-iter-header {
-          padding: 12px 14px !important;
-          min-height: 50px;
-        }
-        .ralph-iter-title {
-          font-size: 14px !important;
-        }
-        .ralph-iter-task {
-          font-size: 12px !important;
-        }
-
-        /* ── Ralph actions bar ── */
-        .ralph-actions {
-          padding: 8px 12px !important;
-          gap: 8px !important;
-        }
-        .ralph-actions button {
-          padding: 10px !important;
-          font-size: 13px !important;
-          min-height: 44px;
-          border-radius: 8px !important;
-        }
-
-        /* ── Connection status bar ── */
-        #conn-status {
-          padding: 6px !important;
-          font-size: 11px !important;
-        }
-
-        /* ── Discover button ── */
-        .settings-section button[onclick="discoverMachines()"] {
-          min-height: 44px !important;
-          font-size: 13px !important;
-          border-radius: 8px !important;
-        }
-
-        /* ── Machine items ── */
-        .machine-item {
-          padding: 8px 10px !important;
-          min-height: 44px;
-          gap: 8px !important;
-          border-radius: 6px !important;
-        }
-        .machine-item-name {
-          font-size: 14px !important;
-        }
-        .machine-remove-btn {
-          font-size: 20px !important;
-          padding: 4px 8px !important;
-          min-width: 36px;
-          min-height: 36px;
-        }
-
-        /* ── Message preview — better positioning ── */
-        #msg-preview {
-          left: 10px !important;
-          right: 10px !important;
-          bottom: 60px !important;
-          border-radius: 8px !important;
-          padding: 12px !important;
           font-size: 14px !important;
         }
       }
@@ -2554,7 +2439,7 @@
       <div id="agent-list" class="list"></div>
       <div style="padding:6px;display:flex;gap:6px">
         <input id="custom-cmd-input" type="text" placeholder="custom command…"
-          style="flex:1;background:#111;border:1px solid #333;border-radius:4px;padding:8px 10px;color:#00ff41;font-family:inherit;font-size:12px;outline:none"
+          style="flex:1;background:#111;border:1px solid #333;border-radius:8px;padding:10px 12px;color:#00ff41;font-family:inherit;font-size:14px;outline:none;min-height:44px;caret-color:#00ff41"
           onkeydown="if(event.key==='Enter')addCustomCmd()">
         <button onclick="addCustomCmd()"
           style="background:#1a1a1a;border:1px solid rgba(0,255,65,0.4);border-radius:4px;padding:8px 12px;color:#00ff41;font-size:11px;font-family:inherit;cursor:pointer;white-space:nowrap">+ Add</button>
@@ -2679,8 +2564,8 @@
           background: #cc3333;
           color: #fff;
           text-align: center;
-          padding: 4px;
-          font-size: 10px;
+          padding: 6px;
+          font-size: 11px;
           font-family: inherit;
           text-transform: uppercase;
           letter-spacing: 1px;

@@ -163,3 +163,20 @@
 - Removed ~130 lines of overhaul duplicates, ~35 lines of mobile-pass duplicates
 - Regenerated `src/public-assets.ts`
 - All 660 tests pass (4 pre-existing Playwright config failures unrelated)
+
+## Task 5b: CSS Merge — Buttons + Inputs + Forms + Keyboard + Settings + Ralph — DONE
+- Merged 3 CSS layers (base, visual overhaul, mobile pass) into mobile-first base with desktop @media overrides
+- Zero `!important` in merged selectors for all components in scope
+- **Buttons:** `.new-btn`, `.back-btn`, `.settings-gear`, `.machine-add-btn`, `.machine-ralph-btn`, `#input-bar button`, `#search-bar button`, `.cmd-chip`, `.ralph-launch-btn`, `.ralph-actions button` — all mobile-first with desktop overrides
+- **Inputs:** `#input-bar textarea`, `#search-bar input`, `.new-project-row input`, `.ralph-start-form input/select`, `.session-name-input`, `#custom-cmd-input` — caret-color, enhanced focus rings, mobile-first sizing
+- **Forms:** `#input-bar`, `#search-bar`, `.new-project-row`, `.ralph-start-form` — mobile-first gap/padding
+- **Keyboard row:** `#kb-accessory`, `.kb-key` variants, `#kb-toggle` — mobile values as base (hidden on desktop)
+- **Settings toggles:** checkbox toggle (40x22/16px dot mobile, 34x18/12px desktop), `.settings-section label` (new flex base)
+- **Ralph components:** `.ralph-card` (gradient bg, 4px radius), iter cards, actions, start form, launch button
+- **Misc:** `.machine-item`, `.machine-remove-btn`, `#msg-preview`, `#conn-status`
+- Removed overhaul section: button group, .new-btn, input caret/focus, settings toggles, ralph overrides
+- Removed mobile pass: ~200 lines of `!important` overrides
+- Added desktop @media: ~150 lines of undo overrides
+- Net: ~115 lines saved (7229 → 7114)
+- Regenerated `src/public-assets.ts`
+- All 660 tests pass (4 pre-existing Playwright config failures unrelated)
