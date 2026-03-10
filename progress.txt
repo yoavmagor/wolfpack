@@ -262,3 +262,11 @@
 - Removed 4 stale state properties: `mobileReconnectTimer`, `mobileReconnectDelayMs`, `mobileReconnectStartedAt`, `mobileRetryBlocked`
 - Net savings: ~45 lines (20-line `scheduleMobileReconnect` + 22-line `scheduleReconnect` + state vars → 30-line factory + 3-line delegations)
 - All 660 tests pass (4 pre-existing Playwright config failures unrelated)
+
+## Cleanup Pass — DONE
+- Removed 4 dead frontend functions (~71 lines): `buildPtyWsUrl`, `fitAndSendTerminalResize`, `createConfiguredTerminal`, `wireTerminalPty` — all replaced by `createPtyTerminalController` during Phases 2-7
+- Removed unused `peerPort` variable in `tests/integration/ralph-aggregation.test.ts`
+- Removed unused `beforeEach` import in `tests/integration/prompt-reconnect.test.ts`
+- Removed unused `wss` import in `tests/integration/ws-terminal.test.ts`
+- Server-side files (index.ts, tmux.ts, websocket.ts, auth.ts, http.ts) — all clean, no dead code found
+- All 660 tests pass (4 pre-existing Playwright config failures unrelated)
