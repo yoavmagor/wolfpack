@@ -2771,28 +2771,26 @@
         return [];
       }
 
-      let quickCmds = loadQuickCmds();
-
       function saveQuickCmds() {
-        localStorage.setItem(QC_STORAGE_KEY, JSON.stringify(quickCmds));
+        localStorage.setItem(QC_STORAGE_KEY, JSON.stringify(state.quickCmds));
       }
 
       function renderCmdPalette() {
         const el = document.getElementById("cmd-palette");
         if (!el) return;
-        if (quickCmds.length === 0) {
+        if (state.quickCmds.length === 0) {
           el.classList.remove("visible");
           el.innerHTML = "";
           return;
         }
-        el.innerHTML = quickCmds.map((c, i) =>
+        el.innerHTML = state.quickCmds.map((c, i) =>
           `<button class="cmd-chip" onclick="sendQuickCmd(${i})">${esc(c.label)}</button>`
         ).join("");
         el.classList.toggle("visible", kbAccessoryOpen);
       }
 
       async function sendQuickCmd(index) {
-        const cmd = quickCmds[index];
+        const cmd = state.quickCmds[index];
         if (!cmd || !state.currentSession) return;
         haptic([30]);
         try {
@@ -2810,12 +2808,12 @@
       function renderQuickCmdSettings() {
         const list = document.getElementById("quick-cmds-list");
         if (!list) return;
-        list.innerHTML = quickCmds.map((c, i) => `
+        list.innerHTML = state.quickCmds.map((c, i) => `
           <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#0a0a0a;border:1px solid #1e1e1e;border-radius:8px">
             <span style="color:#66ccff;font-size:12px;font-weight:600;min-width:60px">${esc(c.label)}</span>
             <span style="flex:1;color:#555;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.cmd)}</span>
             ${i > 0 ? `<button onclick="moveQuickCmd(${i},-1)" style="background:none;border:none;color:#555;font-size:14px;cursor:pointer;padding:2px 4px" title="Move up">&#9650;</button>` : '<span style="width:24px"></span>'}
-            ${i < quickCmds.length - 1 ? `<button onclick="moveQuickCmd(${i},1)" style="background:none;border:none;color:#555;font-size:14px;cursor:pointer;padding:2px 4px" title="Move down">&#9660;</button>` : '<span style="width:24px"></span>'}
+            ${i < state.quickCmds.length - 1 ? `<button onclick="moveQuickCmd(${i},1)" style="background:none;border:none;color:#555;font-size:14px;cursor:pointer;padding:2px 4px" title="Move down">&#9660;</button>` : '<span style="width:24px"></span>'}
             <button onclick="editQuickCmd(${i})" style="background:none;border:none;color:#888;font-size:12px;cursor:pointer;padding:2px 4px" title="Edit">&#9998;</button>
             <button onclick="deleteQuickCmd(${i})" style="background:none;border:none;color:#cc3333;font-size:14px;cursor:pointer;padding:2px 4px" title="Delete">&#10005;</button>
           </div>
@@ -2827,27 +2825,27 @@
         if (!label || !label.trim()) return;
         const cmd = prompt("Command (sent to terminal):");
         if (!cmd || !cmd.trim()) return;
-        quickCmds.push({ label: label.trim(), cmd: cmd.trim() });
+        state.quickCmds.push({ label: label.trim(), cmd: cmd.trim() });
         saveQuickCmds();
         renderQuickCmdSettings();
         renderCmdPalette();
       }
 
       function editQuickCmd(index) {
-        const c = quickCmds[index];
+        const c = state.quickCmds[index];
         if (!c) return;
         const label = prompt("Label:", c.label);
         if (!label || !label.trim()) return;
         const cmd = prompt("Command:", c.cmd);
         if (!cmd || !cmd.trim()) return;
-        quickCmds[index] = { label: label.trim(), cmd: cmd.trim() };
+        state.quickCmds[index] = { label: label.trim(), cmd: cmd.trim() };
         saveQuickCmds();
         renderQuickCmdSettings();
         renderCmdPalette();
       }
 
       function deleteQuickCmd(index) {
-        quickCmds.splice(index, 1);
+        state.quickCmds.splice(index, 1);
         saveQuickCmds();
         renderQuickCmdSettings();
         renderCmdPalette();
@@ -2855,10 +2853,10 @@
 
       function moveQuickCmd(index, direction) {
         const target = index + direction;
-        if (target < 0 || target >= quickCmds.length) return;
-        const tmp = quickCmds[index];
-        quickCmds[index] = quickCmds[target];
-        quickCmds[target] = tmp;
+        if (target < 0 || target >= state.quickCmds.length) return;
+        const tmp = state.quickCmds[index];
+        state.quickCmds[index] = state.quickCmds[target];
+        state.quickCmds[target] = tmp;
         saveQuickCmds();
         renderQuickCmdSettings();
         renderCmdPalette();
@@ -2899,17 +2897,15 @@
         return [];
       }
 
-      let sessionRecents = loadRecents();
-
       function saveRecents() {
-        localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(sessionRecents));
+        localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(state.sessionRecents));
       }
 
       function recordRecent(machine, name) {
         const key = sessionKey(machine, name);
-        sessionRecents = sessionRecents.filter(r => r.key !== key);
-        sessionRecents.unshift({ key, name, machine: machine || "", ts: Date.now() });
-        if (sessionRecents.length > MAX_RECENTS) sessionRecents.length = MAX_RECENTS;
+        state.sessionRecents = state.sessionRecents.filter(r => r.key !== key);
+        state.sessionRecents.unshift({ key, name, machine: machine || "", ts: Date.now() });
+        if (state.sessionRecents.length > MAX_RECENTS) state.sessionRecents.length = MAX_RECENTS;
         saveRecents();
       }
 
@@ -2918,6 +2914,24 @@
         currentSession: null,
         currentMachine: "", // "" = self, URL string = remote
         viewBeforePicker: "sessions", // stashed view to return to on Escape from project/agent picker
+        // session/data state
+        allSessions: [],
+        lastSessionGroups: [],
+        firstLoad: true,
+        lastSessionsHtml: "",
+        loadSessionsEpoch: 0,
+        selfName: "",
+        selfVersion: "",
+        sessionRecents: loadRecents(),
+        quickCmds: loadQuickCmds(),
+        // ralph state
+        currentRalphProject: null,
+        currentRalphMachine: "",
+        ralphStartMachine: "",
+        ralphLogPollTimer: null,
+        currentRalphPlanFile: "",
+        restartingRalph: false,
+        currentRalphAgent: "",
       };
       function setState(patch) { Object.assign(state, patch); }
       const RECONNECT_BUDGET_MS = 2 * 60 * 1000;
@@ -3516,13 +3530,7 @@
       let mobileRetryBlocked = false;
       let mobileStreamingActive = false;
       let termFollowMode = true;
-      let allSessions = [];
       let sessionRefreshTimer = null;
-      let currentRalphProject = null;
-      let currentRalphMachine = ""; // "" = self, URL string = remote
-      let ralphStartMachine = ""; // machine context for ralph-start form
-      let ralphLogPollTimer = null;
-      let currentRalphPlanFile = "";
       let desktopController = null;  // createPtyTerminalController instance
       let desktopResizeHandler = null;
       let desktopResizeTimer = null;
@@ -4149,18 +4157,16 @@
       }
 
       // Self info, fetched once
-      let selfName = "";
-      let selfVersion = "";
       (async () => {
         try {
           const resp = await fetch("/api/info");
           const info = await resp.json();
-          selfName = info.name || "this machine";
-          selfVersion = info.version || "";
+          state.selfName = info.name || "this machine";
+          state.selfVersion = info.version || "";
           // Show version in header
           const vEl = document.getElementById("settings-version");
-          if (vEl && selfVersion) vEl.textContent = "wolfpack v" + selfVersion;
-        } catch { selfName = "this machine"; }
+          if (vEl && state.selfVersion) vEl.textContent = "wolfpack v" + state.selfVersion;
+        } catch { state.selfName = "this machine"; }
         // Auto-discover wolfpack peers on tailnet
         try {
           const d = await api("/discover");
@@ -4311,7 +4317,7 @@
 
         // Stop timers immediately (don't defer these)
         if (sessionRefreshTimer) { clearInterval(sessionRefreshTimer); sessionRefreshTimer = null; }
-        if (ralphLogPollTimer) { clearInterval(ralphLogPollTimer); ralphLogPollTimer = null; }
+        if (state.ralphLogPollTimer) { clearInterval(state.ralphLogPollTimer); state.ralphLogPollTimer = null; }
 
         // Desktop: skip all header manipulation, handle view-specific logic only
         if (!isMobile) {
@@ -4333,7 +4339,7 @@
             renderQuickCmdSettings();
           } else if (effectiveName === "ralph-detail") {
             refreshRalphDetail();
-            ralphLogPollTimer = setInterval(refreshRalphDetail, 2000);
+            state.ralphLogPollTimer = setInterval(refreshRalphDetail, 2000);
           } else if (effectiveName === "ralph-start") {
             loadRalphStartForm();
           }
@@ -4402,7 +4408,7 @@
             if (getMachines().length > 0) {
               const mName = state.currentMachine
                 ? (getMachines().find(m => m.url === state.currentMachine)?.name || "remote")
-                : (selfName || "local");
+                : (state.selfName || "local");
               hml.textContent = mName;
               hml.style.display = "";
             }
@@ -4410,13 +4416,13 @@
             back.style.display = "block";
             back.onclick = () => { backToSessions(); };
             gear.style.display = "none";
-            const ralphMachineSuffix = currentRalphMachine
-              ? " @ " + (getMachines().find(m => m.url === currentRalphMachine)?.name || "remote")
+            const ralphMachineSuffix = state.currentRalphMachine
+              ? " @ " + (getMachines().find(m => m.url === state.currentRalphMachine)?.name || "remote")
               : "";
-            title.textContent = (currentRalphProject || "ralph") + ralphMachineSuffix;
+            title.textContent = (state.currentRalphProject || "ralph") + ralphMachineSuffix;
 
             refreshRalphDetail();
-            ralphLogPollTimer = setInterval(refreshRalphDetail, 2000);
+            state.ralphLogPollTimer = setInterval(refreshRalphDetail, 2000);
           } else if (name === "ralph-start") {
             back.style.display = "block";
             back.onclick = () => { backToSessions(); };
@@ -4477,19 +4483,19 @@
       }
 
       function openRalphDetail(project, machineUrl) {
-        currentRalphProject = project;
-        currentRalphMachine = machineUrl || "";
+        state.currentRalphProject = project;
+        state.currentRalphMachine = machineUrl || "";
         showView("ralph-detail");
       }
 
       async function refreshRalphDetail() {
-        if (!currentRalphProject) return;
+        if (!state.currentRalphProject) return;
         const header = document.getElementById("ralph-detail-header");
         const logEl = document.getElementById("ralph-log");
         const actions = document.getElementById("ralph-actions");
         try {
-          const data = await api("/ralph", undefined, currentRalphMachine);
-          const loop = (data.loops || []).find(l => l.project === currentRalphProject);
+          const data = await api("/ralph", undefined, state.currentRalphMachine);
+          const loop = (data.loops || []).find(l => l.project === state.currentRalphProject);
           if (!loop) {
             header.innerHTML = '<span class="ralph-status failed">NOT FOUND</span>';
             logEl.textContent = "no ralph log for this project";
@@ -4523,9 +4529,9 @@
           }
 
           // stop polling if loop finished
-          if (!loop.active && ralphLogPollTimer) {
-            clearInterval(ralphLogPollTimer);
-            ralphLogPollTimer = null;
+          if (!loop.active && state.ralphLogPollTimer) {
+            clearInterval(state.ralphLogPollTimer);
+            state.ralphLogPollTimer = null;
           }
         } catch {
           header.innerHTML = '<span class="ralph-status failed">ERROR</span>';
@@ -4533,7 +4539,7 @@
 
         // fetch log and render iteration cards
         try {
-          const logData = await api("/ralph/log?project=" + encodeURIComponent(currentRalphProject), undefined, currentRalphMachine);
+          const logData = await api("/ralph/log?project=" + encodeURIComponent(state.currentRalphProject), undefined, state.currentRalphMachine);
           if (logData.log != null) {
             const container = document.getElementById("ralph-log-container");
             const wasScrolled = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
@@ -4603,14 +4609,14 @@
       }
 
       async function cancelRalph() {
-        if (!currentRalphProject) return;
-        if (!confirm("cancel ralph loop for " + currentRalphProject + "?")) return;
+        if (!state.currentRalphProject) return;
+        if (!confirm("cancel ralph loop for " + state.currentRalphProject + "?")) return;
         try {
           await api("/ralph/cancel", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ project: currentRalphProject }),
-          }, currentRalphMachine);
+            body: JSON.stringify({ project: state.currentRalphProject }),
+          }, state.currentRalphMachine);
           refreshRalphDetail();
         } catch (e) {
           alert("failed to cancel: " + errorMessage(e));
@@ -4618,20 +4624,20 @@
       }
 
       function getStartMachine() {
-        return ralphStartMachine || undefined;
+        return state.ralphStartMachine || undefined;
       }
 
       async function loadRalphStartForm() {
         // Show machine label if multi-machine
         const machines = getMachines();
         const picker = document.getElementById("ralph-machine-picker");
-        if (machines.length > 0 && ralphStartMachine) {
-          const mName = machines.find(m => m.url === ralphStartMachine)?.name || "remote";
+        if (machines.length > 0 && state.ralphStartMachine) {
+          const mName = machines.find(m => m.url === state.ralphStartMachine)?.name || "remote";
           picker.style.display = "";
           picker.innerHTML = '<span style="color:#666;font-size:11px">Machine: <strong style="color:#999">' + esc(mName) + '</strong></span>';
         } else if (machines.length > 0) {
           picker.style.display = "";
-          picker.innerHTML = '<span style="color:#666;font-size:11px">Machine: <strong style="color:#999">' + esc(selfName || "this machine") + '</strong></span>';
+          picker.innerHTML = '<span style="color:#666;font-size:11px">Machine: <strong style="color:#999">' + esc(state.selfName || "this machine") + '</strong></span>';
         } else {
           picker.style.display = "none";
         }
@@ -4645,8 +4651,8 @@
           const data = await api("/projects", undefined, machine);
           const projects = data.projects || [];
           sel.innerHTML = projects.map(p => '<option value="' + esc(p) + '">' + esc(p) + '</option>').join("");
-          if (currentRalphProject && projects.includes(currentRalphProject)) {
-            sel.value = currentRalphProject;
+          if (state.currentRalphProject && projects.includes(state.currentRalphProject)) {
+            sel.value = state.currentRalphProject;
           }
         } catch {
           sel.innerHTML = '<option value="">failed to load projects</option>';
@@ -4661,13 +4667,13 @@
         document.getElementById("ralph-branch-toggle").checked = false;
         document.getElementById("ralph-branch-fields").style.display = "none";
         await loadPlanFiles(sel.value);
-        if (currentRalphPlanFile) {
-          document.getElementById("ralph-plan-select").value = currentRalphPlanFile;
-          currentRalphPlanFile = "";
+        if (state.currentRalphPlanFile) {
+          document.getElementById("ralph-plan-select").value = state.currentRalphPlanFile;
+          state.currentRalphPlanFile = "";
         }
-        if (currentRalphAgent) {
-          document.getElementById("ralph-agent-select").value = currentRalphAgent;
-          currentRalphAgent = "";
+        if (state.currentRalphAgent) {
+          document.getElementById("ralph-agent-select").value = state.currentRalphAgent;
+          state.currentRalphAgent = "";
         }
       }
 
@@ -4768,28 +4774,26 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           }, machine);
-          currentRalphProject = project;
-          restartingRalph = false;
+          state.currentRalphProject = project;
+          state.restartingRalph = false;
           backToSessions();
         } catch (e) {
           alert("failed to start: " + errorMessage(e));
         }
       }
 
-      let restartingRalph = false;
-      let currentRalphAgent = "";
       function restartRalph(planFile, agent) {
-        currentRalphPlanFile = planFile || "";
-        currentRalphAgent = agent || "";
-        restartingRalph = true;
-        ralphStartMachine = currentRalphMachine;
+        state.currentRalphPlanFile = planFile || "";
+        state.currentRalphAgent = agent || "";
+        state.restartingRalph = true;
+        state.ralphStartMachine = state.currentRalphMachine;
         showView("ralph-start");
       }
 
       function showRalphStart(machineUrl) {
         if (!wpSettings.ralphEnabled) return;
-        ralphStartMachine = machineUrl || "";
-        restartingRalph = false;
+        state.ralphStartMachine = machineUrl || "";
+        state.restartingRalph = false;
         showView("ralph-start");
       }
 
@@ -4817,7 +4821,7 @@
           }, machineUrl);
           // Stop poll timer to prevent stale in-flight fetches from overwriting fresh data
           if (sidebarRefreshTimer) { clearInterval(sidebarRefreshTimer); sidebarRefreshTimer = null; }
-          lastSessionsHtml = "";
+          state.lastSessionsHtml = "";
           await loadSessions();
           renderSidebar();
           startSidebarRefresh();
@@ -4839,8 +4843,6 @@
       }
 
       // Shared session groups cache for switcher reuse
-      let lastSessionGroups = [];
-
       function renderMachineGroupHtml(g, multiMachine) {
         const mUrl = multiMachine ? esc(g.machine.url) : "";
         const mUrlAttr = multiMachine ? escAttr(g.machine.url) : "";
@@ -4857,8 +4859,8 @@
             html += g.sessions.map((s, i) => {
               const lastLine = s.lastLine || "";
               const ui = triageUi(s.triage);
-              const anim = firstLoad ? "animate-in" : "";
-              return `<div class="card card-stagger ${anim} ${ui.card}" style="${firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}'${mUrlAttr ? ", '" + mUrlAttr + "'" : ''})">
+              const anim = state.firstLoad ? "animate-in" : "";
+              return `<div class="card card-stagger ${anim} ${ui.card}" style="${state.firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}'${mUrlAttr ? ", '" + mUrlAttr + "'" : ''})">
                 <div class="dot ${ui.dot}" title="${ui.title}"></div>
                 <div class="card-info">
                   <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
@@ -4891,37 +4893,33 @@
           }));
       }
 
-      let firstLoad = true;
-      let lastSessionsHtml = "";
-      let loadSessionsEpoch = 0;
-
       async function loadSessions() {
-        const myEpoch = ++loadSessionsEpoch;
+        const myEpoch = ++state.loadSessionsEpoch;
         const el = document.getElementById("session-list");
         const machines = getMachines();
         const multiMachine = machines.length > 0;
 
         // Single-machine: just fetch and render
         if (!multiMachine) {
-          const g = await fetchMachine("", { name: selfName || "this machine" });
-          if (myEpoch !== loadSessionsEpoch) return; // stale call, discard
-          lastSessionGroups = [g];
-          allSessions = g.sessions.map(s => ({ ...s, machineUrl: "", machineName: g.machine.name }));
+          const g = await fetchMachine("", { name: state.selfName || "this machine" });
+          if (myEpoch !== state.loadSessionsEpoch) return; // stale call, discard
+          state.lastSessionGroups = [g];
+          state.allSessions = g.sessions.map(s => ({ ...s, machineUrl: "", machineName: g.machine.name }));
           const html = renderMachineGroupHtml(g, false);
-          if (html !== lastSessionsHtml) { el.innerHTML = html; lastSessionsHtml = html; }
+          if (html !== state.lastSessionsHtml) { el.innerHTML = html; state.lastSessionsHtml = html; }
           checkStateTransitions([g]);
-          firstLoad = false;
+          state.firstLoad = false;
           return;
         }
 
         // Multi-machine
         const allMachines = [
-          { url: "", meta: { name: selfName || "this machine" } },
+          { url: "", meta: { name: state.selfName || "this machine" } },
           ...machines.map(m => ({ url: m.url, meta: m })),
         ];
 
         // Show placeholders on first load
-        if (firstLoad) {
+        if (state.firstLoad) {
           el.innerHTML = allMachines.map(m =>
             renderMachineGroupHtml({ machine: { ...m.meta, url: m.url }, sessions: [], online: false, pending: true }, true)
           ).join("");
@@ -4934,8 +4932,8 @@
         const promises = allMachines.map((m, i) =>
           fetchMachine(m.url, m.meta).then(g => {
             groups[i] = g;
-            lastSessionGroups = groups.filter(Boolean);
-            if (firstLoad) {
+            state.lastSessionGroups = groups.filter(Boolean);
+            if (state.firstLoad) {
               const existing = el.querySelector(`[data-machine="${esc(m.url)}"]`);
               if (existing) {
                 const tmp = document.createElement("div");
@@ -4947,7 +4945,7 @@
         );
 
         await Promise.all(promises);
-        if (myEpoch !== loadSessionsEpoch) return; // stale call, discard
+        if (myEpoch !== state.loadSessionsEpoch) return; // stale call, discard
 
         // Version outdated check (needs all machines resolved)
         const versions = groups.filter(g => g.online && g.machine.version).map(g => g.machine.version);
@@ -4961,11 +4959,11 @@
         // Sort by number of open terminals (most first) and do final render
         groups.sort((a, b) => b.sessions.length - a.sessions.length);
         const html = groups.map(g => renderMachineGroupHtml(g, true)).join("");
-        if (html !== lastSessionsHtml) {
+        if (html !== state.lastSessionsHtml) {
           // Incremental per-group update: replace only changed groups
           const perGroupHtml = groups.map(g => renderMachineGroupHtml(g, true));
           let didIncrementalUpdate = false;
-          if (!firstLoad && el.children.length === groups.length) {
+          if (!state.firstLoad && el.children.length === groups.length) {
             didIncrementalUpdate = true;
             for (let gi = 0; gi < groups.length; gi++) {
               const existingChild = el.children[gi];
@@ -4980,13 +4978,13 @@
           if (!didIncrementalUpdate) {
             el.innerHTML = html;
           }
-          lastSessionsHtml = html;
+          state.lastSessionsHtml = html;
         }
 
-        firstLoad = false;
-        lastSessionGroups = groups;
-        allSessions = [];
-        groups.forEach(g => g.sessions.forEach(s => allSessions.push({ ...s, machineUrl: g.machine.url, machineName: g.machine.name })));
+        state.firstLoad = false;
+        state.lastSessionGroups = groups;
+        state.allSessions = [];
+        groups.forEach(g => g.sessions.forEach(s => state.allSessions.push({ ...s, machineUrl: g.machine.url, machineName: g.machine.name })));
         checkStateTransitions(groups);
       }
 
@@ -5776,7 +5774,7 @@
       let drawerDragging = false;
 
       function renderDrawerList() {
-        const groups = lastSessionGroups;
+        const groups = state.lastSessionGroups;
         const list = document.getElementById("drawer-list");
         const multiMachine = getMachines().length > 0;
 
@@ -6040,7 +6038,7 @@
         if (getMachines().length > 0) {
           const mName = machineUrl
             ? (getMachines().find(m => m.url === machineUrl)?.name || "remote")
-            : (selfName || "local");
+            : (state.selfName || "local");
           hml.textContent = mName;
           hml.style.display = "";
         }
@@ -6388,13 +6386,13 @@
             setGridFocus(next);
             return;
           }
-          if (!allSessions.length) return;
-          let curIdx = allSessions.findIndex(s => s.name === state.currentSession && (s.machineUrl || "") === state.currentMachine);
-          if (curIdx === -1) curIdx = e.key === "ArrowDown" ? -1 : allSessions.length;
+          if (!state.allSessions.length) return;
+          let curIdx = state.allSessions.findIndex(s => s.name === state.currentSession && (s.machineUrl || "") === state.currentMachine);
+          if (curIdx === -1) curIdx = e.key === "ArrowDown" ? -1 : state.allSessions.length;
           const next = e.key === "ArrowDown"
-            ? (curIdx + 1) % allSessions.length
-            : (curIdx - 1 + allSessions.length) % allSessions.length;
-          const s = allSessions[next];
+            ? (curIdx + 1) % state.allSessions.length
+            : (curIdx - 1 + state.allSessions.length) % state.allSessions.length;
+          const s = state.allSessions[next];
           openSession(s.name, s.machineUrl || undefined);
           return;
         }
@@ -6836,7 +6834,7 @@
       function _renderSidebarNow() {
         const el = document.getElementById("sidebar-session-list");
         if (!el) return;
-        const groups = lastSessionGroups;
+        const groups = state.lastSessionGroups;
         // Don't wipe sidebar with empty content if sessions haven't loaded yet
         if (!groups.length && sidebarInitialRender) return;
         if (groups.length) sidebarInitialRender = true;

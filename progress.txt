@@ -214,3 +214,14 @@
 - Coordinated pairs (currentSession + currentMachine) batched into single `setState()` calls
 - Regenerated `src/public-assets.ts`
 - All 660 tests pass (4 pre-existing Playwright config failures unrelated)
+
+## Task 8: Migrate Session/Data + Ralph State Into State Object — DONE
+- Migrated 16 globals into centralized `state` object:
+  - **Session/data (9):** `allSessions`, `lastSessionGroups`, `firstLoad`, `lastSessionsHtml`, `loadSessionsEpoch`, `selfName`, `selfVersion`, `sessionRecents`, `quickCmds`
+  - **Ralph (7):** `currentRalphProject`, `currentRalphMachine`, `ralphStartMachine`, `ralphLogPollTimer`, `currentRalphPlanFile`, `restartingRalph`, `currentRalphAgent`
+- 120 references updated via word-boundary regex replacement
+- Removed 16 standalone `let` declarations scattered across file
+- Added all 16 properties to `const state = { ... }` initializer with correct defaults
+- `sessionRecents` and `quickCmds` initialized via `loadRecents()` / `loadQuickCmds()` (functions defined before state)
+- No function names mangled (camelCase capitalization prevents substring matches)
+- All 660 tests pass (4 pre-existing Playwright config failures unrelated)
