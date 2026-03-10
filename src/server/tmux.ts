@@ -37,7 +37,8 @@ function assertTestMode(hook: string): void {
 
 // ── tmuxList ──
 
-/** Maps session name → project directory (populated by tmuxList and tmuxNewSession) */
+/** Maps session name → project directory. Set at creation time by tmuxNewSession(),
+ *  backfilled by tmuxList() only for pre-existing sessions (never overwrites). */
 export const sessionDirMap = new Map<string, string>();
 
 async function _realTmuxList(): Promise<string[]> {
@@ -57,7 +58,7 @@ async function _realTmuxList(): Promise<string[]> {
       const dir = line.substring(idx + SEP.length);
       if (!dir.startsWith(DEV_DIR) || name.startsWith("wp_")) continue;
       sessions.push(name);
-      sessionDirMap.set(name, dir);
+      if (!sessionDirMap.has(name)) sessionDirMap.set(name, dir);
     }
     return sessions;
   } catch {
