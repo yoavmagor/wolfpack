@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 // Use dynamic import so WOLFPACK_TEST is set before server module evaluation.
 process.env.WOLFPACK_TEST = "1";
 
-const { server, wss, __setTestOverrides, __getTestState } = await import("../../src/server/index.ts");
+const { server, __setTestOverrides, __getTestState } = await import("../../src/server/index.ts");
 const { activePtySessions: __activePtySessions } = __getTestState();
 
 // ── Test setup ──

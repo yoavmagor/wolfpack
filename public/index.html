@@ -3628,24 +3628,6 @@
         return buf;
       }
 
-      function buildPtyWsUrl(session, machine, reset = false) {
-        const resetSuffix = reset ? "&reset=1" : "";
-        if (machine) {
-          const remote = new URL(machine);
-          const proto = remote.protocol === "https:" ? "wss:" : "ws:";
-          return proto + "//" + remote.host + "/ws/pty?session=" + encodeURIComponent(session) + resetSuffix;
-        }
-        const proto = location.protocol === "https:" ? "wss:" : "ws:";
-        return proto + "//" + location.host + "/ws/pty?session=" + encodeURIComponent(session) + resetSuffix;
-      }
-
-      function fitAndSendTerminalResize(term, fitAddon, ws, focus = false) {
-        if (!term || !fitAddon || !ws || ws.readyState !== WebSocket.OPEN) return;
-        try { fitAddon.fit(); } catch {}
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-        if (focus) term.focus();
-      }
-
       function createConflictOverlay(message, buttonLabel, onClick) {
         const overlay = document.createElement("div");
         overlay.className = "viewer-conflict-overlay";
@@ -3653,59 +3635,6 @@
         overlay.querySelector(".conflict-btn").addEventListener("click", onClick);
         overlay.addEventListener("click", (e) => e.stopPropagation());
         return overlay;
-      }
-
-      function createConfiguredTerminal(options) {
-        const term = new Terminal({
-          allowProposedApi: true,
-          macOptionClickForcesSelection: true,
-          fontFamily: getTerminalFontFamily(),
-          theme: {
-            background: "#0a0a0a",
-            foreground: "#e0e0e0",
-            cursor: "#e0e0e0",
-            selectionBackground: "rgba(255,255,255,0.2)",
-          },
-          ...options,
-        });
-
-        const fitAddon = new FitAddon.FitAddon();
-        term.loadAddon(fitAddon);
-
-        const searchAddon = new SearchAddon.SearchAddon();
-        term.loadAddon(searchAddon);
-
-        try {
-          const unicodeAddon = new Unicode11Addon.Unicode11Addon();
-          term.loadAddon(unicodeAddon);
-          term.unicode.activeVersion = "11";
-        } catch {}
-
-        try { term.loadAddon(new WebglAddon.WebglAddon()); } catch {}
-
-        try { term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch {}
-
-        return { term, fitAddon, searchAddon };
-      }
-
-      function wireTerminalPty(term, getWs, shouldSendInput = () => true) {
-        term.onData((data) => {
-          const ws = getWs();
-          if (!shouldSendInput() || !ws || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(new TextEncoder().encode(data));
-        });
-
-        term.onBinary((data) => {
-          const ws = getWs();
-          if (!shouldSendInput() || !ws || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(encodeTerminalBinary(data));
-        });
-
-        term.onResize(({ cols, rows }) => {
-          const ws = getWs();
-          if (!ws || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(JSON.stringify({ type: "resize", cols, rows }));
-        });
       }
 
       function setGridCellLoading(gs, loading) {

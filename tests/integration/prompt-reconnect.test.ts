@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeAll, afterAll, beforeEach } from "bun:test";
+import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import type { AddressInfo } from "node:net";
 
 // Use dynamic import so WOLFPACK_TEST is set before server module evaluation.

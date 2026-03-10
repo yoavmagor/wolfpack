@@ -27,7 +27,6 @@ const FAKE_PEER_LOOPS = [
 ];
 
 let peerServer: ReturnType<typeof createServer>;
-let peerPort: number;
 
 function startPeerServer(): Promise<void> {
   return new Promise((resolve) => {
@@ -45,7 +44,6 @@ function startPeerServer(): Promise<void> {
       }
     });
     peerServer.listen(0, "127.0.0.1", () => {
-      peerPort = (peerServer.address() as AddressInfo).port;
       resolve();
     });
   });
