@@ -4141,29 +4141,19 @@
       /** Fit grid cells but preserve each terminal's scroll position to avoid visible history jump. */
       function fitGridCellsPreserveScroll() {
         for (const gs of state.gridSessions) {
-          if (!gs.controller || !gs.controller.term) continue;
-          const term = gs.controller.term;
-          const wasAtBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
-          const prevViewportY = term.buffer.active.viewportY;
+          if (!gs.controller) continue;
+          // controller.resize() already preserves distance-from-bottom internally.
+          // Do not apply an additional absolute scroll restore here (it can drift down).
           try { gs.controller.resize(); } catch {}
-          // If user was scrolled up, restore their position instead of jumping
-          if (!wasAtBottom) {
-            try { term.scrollToLine(prevViewportY); } catch {}
-          }
         }
       }
 
       function scheduleGridStabilizedFit() {
         if (!isGridActive()) return;
         // Sidebar open/close should feel instant: refit without grid loading overlays.
-        // Double-rAF keeps sizing stable after CSS transition while preserving scroll.
         requestAnimationFrame(() => {
           if (!isGridActive()) return;
           fitGridCellsPreserveScroll();
-          requestAnimationFrame(() => {
-            if (!isGridActive()) return;
-            fitGridCellsPreserveScroll();
-          });
         });
       }
 
