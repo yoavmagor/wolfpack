@@ -5103,8 +5103,7 @@
           });
         }
 
-        // Sort by number of open terminals (most first) and do final render
-        groups.sort((a, b) => b.sessions.length - a.sessions.length);
+        // Render groups in stable order (no reordering)
         const html = groups.map(g => renderMachineGroupHtml(g, true)).join("");
         if (html !== state.lastSessionsHtml) {
           // Incremental per-group update: replace only changed groups
