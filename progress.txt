@@ -126,3 +126,12 @@
 - Deleted 3 test files: `tests/unit/grid-relayout-logic.test.ts` (130 lines), `tests/unit/hydration-logic.test.ts` (251 lines), `tests/unit/reconnect-logic.test.ts` (168 lines)
 - ~815 lines removed, zero risk — frontend inlines its own copies
 - All 695 tests pass (4 pre-existing Playwright config failures unrelated)
+
+## Task 2: Remove JWT Auth Layer — DONE
+- Gutted `src/auth.ts` from 213 lines to 28-line stub: `validateRequestJwt()` always returns `{ ok: true }`
+- Stub warns at startup if `WOLFPACK_JWT_SECRET` is set (tells user to install `jose`/`jsonwebtoken`)
+- Kept auth wiring in `src/server/index.ts` as no-op hook points (zero behavior change, trivial to re-enable)
+- Kept `shouldAuthenticateApiPath`/`writeUnauthorized` in `src/server/http.ts` (part of wiring, 6 lines each)
+- Deleted `tests/integration/auth-middleware.test.ts` (452 lines, 31 tests)
+- Savings: ~637 lines (185 auth.ts + 452 tests)
+- All 664 tests pass (4 pre-existing Playwright config failures unrelated)
