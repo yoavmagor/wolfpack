@@ -119,3 +119,10 @@
 - `computeInputGate`: derives InputGateState from grid array + focus/cell indices + connection state
 - Added 19 new tests in `tests/unit/grid-logic.test.ts` across 4 describe blocks
 - All 47 grid-logic tests pass (was 28, now 47)
+
+## Task 1: Delete Unused Extracted Logic Modules — DONE
+- Verified no production imports of `grid-relayout-logic`, `hydration-logic`, or `reconnect-logic` — only their own test files reference them
+- Deleted 3 source modules: `src/grid-relayout-logic.ts` (84 lines), `src/hydration-logic.ts` (85 lines), `src/reconnect-logic.ts` (97 lines)
+- Deleted 3 test files: `tests/unit/grid-relayout-logic.test.ts` (130 lines), `tests/unit/hydration-logic.test.ts` (251 lines), `tests/unit/reconnect-logic.test.ts` (168 lines)
+- ~815 lines removed, zero risk — frontend inlines its own copies
+- All 695 tests pass (4 pre-existing Playwright config failures unrelated)
