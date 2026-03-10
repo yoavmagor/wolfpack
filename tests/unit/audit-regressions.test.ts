@@ -5,39 +5,34 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 
 // ── 1. Path containment boundary (audit finding: prefix check too weak) ──
+// Set DEV_DIR before importing so the module-level constant picks it up.
+process.env.WOLFPACK_DEV_DIR = "/Users/home/Dev";
+const { isUnderDevDir } = await import("../../src/server/tmux.js");
 
 describe("isUnderDevDir — path containment boundary", () => {
-  // We test the logic directly since the real function depends on DEV_DIR env.
-  // Replicate the exact predicate used in tmux.ts isUnderDevDir().
-  function isUnderDevDir(dir: string, devDir: string): boolean {
-    return dir === devDir || dir.startsWith(devDir + "/");
-  }
-
-  const DEV = "/Users/home/Dev";
-
   test("exact match on DEV_DIR itself", () => {
-    expect(isUnderDevDir("/Users/home/Dev", DEV)).toBe(true);
+    expect(isUnderDevDir("/Users/home/Dev")).toBe(true);
   });
 
   test("child directory matches", () => {
-    expect(isUnderDevDir("/Users/home/Dev/wolfpack", DEV)).toBe(true);
-    expect(isUnderDevDir("/Users/home/Dev/foo/bar/baz", DEV)).toBe(true);
+    expect(isUnderDevDir("/Users/home/Dev/wolfpack")).toBe(true);
+    expect(isUnderDevDir("/Users/home/Dev/foo/bar/baz")).toBe(true);
   });
 
   test("rejects sibling path that shares string prefix", () => {
     // This was the original bug — /Users/home/Developer matched /Users/home/Dev
-    expect(isUnderDevDir("/Users/home/Developer", DEV)).toBe(false);
-    expect(isUnderDevDir("/Users/home/DevOps", DEV)).toBe(false);
-    expect(isUnderDevDir("/Users/home/Dev2", DEV)).toBe(false);
+    expect(isUnderDevDir("/Users/home/Developer")).toBe(false);
+    expect(isUnderDevDir("/Users/home/DevOps")).toBe(false);
+    expect(isUnderDevDir("/Users/home/Dev2")).toBe(false);
   });
 
   test("rejects unrelated paths", () => {
-    expect(isUnderDevDir("/tmp/something", DEV)).toBe(false);
-    expect(isUnderDevDir("/Users/other/Dev/project", DEV)).toBe(false);
+    expect(isUnderDevDir("/tmp/something")).toBe(false);
+    expect(isUnderDevDir("/Users/other/Dev/project")).toBe(false);
   });
 
   test("rejects partial prefix with no separator", () => {
-    expect(isUnderDevDir("/Users/home/Devious", DEV)).toBe(false);
+    expect(isUnderDevDir("/Users/home/Devious")).toBe(false);
   });
 });
 
@@ -50,9 +45,9 @@ describe("sessionDirMap pruning", () => {
     sessionDirMap.set("alive-session", "/Users/home/Dev/alive");
     sessionDirMap.set("dead-session", "/Users/home/Dev/dead");
 
-    const liveSessions = ["alive-session"];
+    const liveSet = new Set(["alive-session"]);
     for (const key of sessionDirMap.keys()) {
-      if (!liveSessions.includes(key)) sessionDirMap.delete(key);
+      if (!liveSet.has(key)) sessionDirMap.delete(key);
     }
 
     expect(sessionDirMap.has("alive-session")).toBe(true);

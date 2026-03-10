@@ -78,11 +78,12 @@ async function _realTmuxList(): Promise<string[]> {
       }
     }
     // prune stale entries for sessions that no longer exist
+    const liveSet = new Set(sessions);
     for (const key of sessionDirMap.keys()) {
-      if (!sessions.includes(key)) sessionDirMap.delete(key);
+      if (!liveSet.has(key)) sessionDirMap.delete(key);
     }
     for (const key of _triageCacheMap.keys()) {
-      if (!sessions.includes(key)) _triageCacheMap.delete(key);
+      if (!liveSet.has(key)) _triageCacheMap.delete(key);
     }
     return sessions;
   } catch {
