@@ -4,7 +4,8 @@ import type { AddressInfo } from "node:net";
 // Use dynamic import so WOLFPACK_TEST is set before server module evaluation.
 process.env.WOLFPACK_TEST = "1";
 
-const { server, wss, __setTmuxList, __getActivePtySessions } = await import("../../src/server/index.ts");
+const { server, wss, __setTestOverrides, __getTestState } = await import("../../src/server/index.ts");
+const { activePtySessions: __activePtySessions } = __getTestState();
 
 // ── Test setup ──
 
@@ -13,7 +14,7 @@ let baseWsUrl: string;
 
 // Fake tmuxList returns a known session list (mutated in-place by tests)
 const FAKE_SESSIONS = ["test-session", "another-session"];
-__setTmuxList(async () => [...FAKE_SESSIONS]);
+__setTestOverrides({ tmuxList: async () => [...FAKE_SESSIONS] });
 
 // Suppress expected tmux errors (no real tmux session in CI/test)
 const _realConsoleError = console.error;
@@ -397,7 +398,7 @@ describe("WS /ws/pty single-viewer teardown", () => {
       ws1.addEventListener("error", () => reject(new Error("ws/pty connect failed")));
     });
 
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     expect(ptySessions.has("test-session")).toBe(true);
     const entry = ptySessions.get("test-session")!;
     expect(entry.alive).toBe(true);
@@ -412,7 +413,7 @@ describe("WS /ws/pty single-viewer teardown", () => {
 
   test("reconnect after teardown creates fresh entry", async () => {
     const session = "another-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -452,7 +453,7 @@ describe("WS /ws/pty single-viewer teardown", () => {
 describe("WS /ws/pty input routing", () => {
   test("binary stdin beginning with '{' is forwarded to the PTY", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -494,7 +495,7 @@ describe("WS /ws/pty input routing", () => {
 describe("WS /ws/pty viewer conflict", () => {
   test("second viewer gets viewer_conflict message", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -539,7 +540,7 @@ describe("WS /ws/pty viewer conflict", () => {
 
   test("take_control displaces original viewer", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -588,7 +589,7 @@ describe("WS /ws/pty viewer conflict", () => {
 
 describe("WS /ws/pty rapid spawn failure edge cases", () => {
   test("first viewer to dead session gets 4001, second gets conflict", async () => {
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete("test-session");
     await wait(50);
 
@@ -612,7 +613,7 @@ describe("WS /ws/pty rapid spawn failure edge cases", () => {
   });
 
   test("spawn failure cleans up PTY entry", async () => {
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete("test-session");
     await wait(50);
 
@@ -645,7 +646,7 @@ describe("WS /ws/pty rapid spawn failure edge cases", () => {
   });
 
   test("viewer that disconnects before spawn completes is handled gracefully", async () => {
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete("test-session");
     await wait(50);
 
@@ -674,7 +675,7 @@ describe("WS /ws/pty rapid spawn failure edge cases", () => {
 describe("WS /ws/pty displaced viewer reconnect prevention", () => {
   test("displaced viewer receives close code 4002 (not 1000 or 4001)", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -722,7 +723,7 @@ describe("WS /ws/pty displaced viewer reconnect prevention", () => {
 
   test("third pending viewer displaces second pending viewer with 4002", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -777,7 +778,7 @@ describe("WS /ws/pty displaced viewer reconnect prevention", () => {
 describe("WS /ws/terminal concurrent with /ws/pty", () => {
   test("mobile terminal works while PTY viewer is active", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -819,7 +820,7 @@ describe("WS /ws/terminal concurrent with /ws/pty", () => {
 
   test("mobile terminal resize does NOT resize PTY-owned session", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -853,7 +854,7 @@ describe("WS /ws/terminal concurrent with /ws/pty", () => {
 
   test("closing mobile terminal does NOT tear down PTY", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -889,7 +890,7 @@ describe("WS /ws/terminal concurrent with /ws/pty", () => {
 describe("WS /ws/pty reset=1 reconnect", () => {
   test("reset=1 tears down existing entry and creates a fresh one", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -936,7 +937,7 @@ describe("WS /ws/pty reset=1 reconnect", () => {
 
   test("reset=1 with no existing entry creates normally", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -959,7 +960,7 @@ describe("WS /ws/pty reset=1 reconnect", () => {
 
   test("old detach handler does NOT tear down new entry after reset=1", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -994,7 +995,7 @@ describe("WS /ws/pty reset=1 reconnect", () => {
 
   test("multiple sequential reset=1 reconnects work correctly", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -1031,7 +1032,7 @@ describe("WS /ws/pty reset=1 reconnect", () => {
 
   test("reset=1 also cleans up pending viewer on old entry", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -1092,7 +1093,7 @@ describe("WS /ws/pty reset=1 reconnect", () => {
 describe("WS /ws/pty take-control protocol completeness", () => {
   test("control_granted message is sent after take_control", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -1147,7 +1148,7 @@ describe("WS /ws/pty take-control protocol completeness", () => {
 
   test("pending viewer disconnect without take_control does not affect active viewer", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -1195,7 +1196,7 @@ describe("WS /ws/pty take-control protocol completeness", () => {
 
   test("take_control creates fresh PTY entry (old entry replaced)", async () => {
     const session = "test-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 

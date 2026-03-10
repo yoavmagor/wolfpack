@@ -5,11 +5,11 @@ import type { AddressInfo } from "node:net";
 // Use dynamic import so WOLFPACK_TEST is set before server module evaluation.
 process.env.WOLFPACK_TEST = "1";
 
-const { server, __setTmuxList } = await import("../../src/server/index.ts");
+const { server, __setTestOverrides } = await import("../../src/server/index.ts");
 
 // ── Fake tmux list (no real tmux needed) ──
 
-__setTmuxList(async () => []);
+__setTestOverrides({ tmuxList: async () => [] });
 
 // ── Fake peer server (simulates a remote wolfpack instance) ──
 

@@ -12,11 +12,7 @@ process.env.WOLFPACK_TEST = "1";
 
 const {
   server,
-  __setTmuxList,
-  __setTmuxSend,
-  __setTmuxSendKey,
-  __setTmuxResize,
-  __setCapturePane,
+  __setTestOverrides,
 } = await import("../../src/server/index.ts");
 
 // ── Mock tmux ──
@@ -36,14 +32,16 @@ const paneContent: Record<string, string> = {
   "error-project": "$ bun test\nError: 3 tests failed\n",
 };
 
-__setTmuxList(async () => [...fakeSessions]);
-__setTmuxSend(async (session, text) => {
-  // Simulate command echo + output
-  paneContent[session] = (paneContent[session] || "") + `$ ${text}\ncommand-output\n`;
+__setTestOverrides({
+  tmuxList: async () => [...fakeSessions],
+  tmuxSend: async (session, text) => {
+    // Simulate command echo + output
+    paneContent[session] = (paneContent[session] || "") + `$ ${text}\ncommand-output\n`;
+  },
+  tmuxSendKey: async () => {},
+  tmuxResize: async () => {},
+  capturePane: async (session) => paneContent[session] || "",
 });
-__setTmuxSendKey(async () => {});
-__setTmuxResize(async () => {});
-__setCapturePane(async (session) => paneContent[session] || "");
 
 // Suppress expected tmux noise
 const origError = console.error;

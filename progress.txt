@@ -144,3 +144,11 @@
 - Risk: minor visual duplicate on PTY attach (barely noticeable, ~2KB repeat)
 - Savings: ~50 lines code + 37 lines tests
 - All 660 tests pass (4 pre-existing Playwright config failures unrelated)
+
+## Task 4: Consolidate Test Hooks Into Single Injection Point — DONE
+- Replaced 5 individual `__set*` functions in `src/server/tmux.ts` with one `__setTestOverrides({...})` accepting partial override object
+- Replaced 2 individual `__get*` functions in `src/server/websocket.ts` with one `__getTestState()` returning `{ activePtySessions, ptySpawnAttempts }`
+- Updated re-exports in `src/server/index.ts` (7 exports → 2)
+- Updated 5 test files: `test-server.ts`, `ws-dispatch.test.ts`, `prompt-reconnect.test.ts`, `ws-terminal.test.ts`, `ralph-aggregation.test.ts`
+- Savings: ~40 lines (7 hook functions → 2, cleaner call sites)
+- All 652 unit+integration tests pass, 0 failures

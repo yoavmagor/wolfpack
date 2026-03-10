@@ -43,19 +43,13 @@ export const activePtySessions = new Map<string, {
   alive: boolean;
 }>();
 
-/** Test hook: expose activePtySessions for assertions */
-export function __getActivePtySessions(): Map<string, { viewer: any; alive: boolean }> {
-  if (!process.env.WOLFPACK_TEST) throw new Error("__getActivePtySessions() is only available in test mode (WOLFPACK_TEST=1)");
-  return activePtySessions as any;
-}
-
 const ptySpawnAttempts = new Map<string, number>();
 const DESKTOP_PREFILL_MAX_BYTES = 256 * 1024;
 
-/** Test hook: expose PTY spawn-attempt counts per session */
-export function __getPtySpawnAttempts(): Map<string, number> {
-  if (!process.env.WOLFPACK_TEST) throw new Error("__getPtySpawnAttempts() is only available in test mode (WOLFPACK_TEST=1)");
-  return ptySpawnAttempts;
+/** Test hook: expose PTY internal state for assertions */
+export function __getTestState(): { activePtySessions: Map<string, { viewer: any; alive: boolean }>; ptySpawnAttempts: Map<string, number> } {
+  if (!process.env.WOLFPACK_TEST) throw new Error("__getTestState() is only available in test mode (WOLFPACK_TEST=1)");
+  return { activePtySessions: activePtySessions as any, ptySpawnAttempts };
 }
 
 // ── Terminal WS handler (mobile — capture-pane polling) ──

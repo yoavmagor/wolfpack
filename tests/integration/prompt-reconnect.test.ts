@@ -4,7 +4,8 @@ import type { AddressInfo } from "node:net";
 // Use dynamic import so WOLFPACK_TEST is set before server module evaluation.
 process.env.WOLFPACK_TEST = "1";
 
-const { server, __setTmuxList, __setTmuxSend, __setTmuxSendKey, __getActivePtySessions } = await import("../../src/server/index.ts");
+const { server, __setTestOverrides, __getTestState } = await import("../../src/server/index.ts");
+const { activePtySessions: __activePtySessions } = __getTestState();
 
 // ── Test setup ──
 
@@ -13,13 +14,14 @@ let baseUrl: string;
 let baseWsUrl: string;
 
 const FAKE_SESSIONS = ["prompt-sess", "reconnect-sess"];
-__setTmuxList(async () => [...FAKE_SESSIONS]);
-
 // Mock tmux send/key to avoid requiring real tmux sessions
 const sendLog: { session: string; text: string; noEnter?: boolean }[] = [];
 const keyLog: { session: string; key: string }[] = [];
-__setTmuxSend(async (session, text, noEnter) => { sendLog.push({ session, text, noEnter }); });
-__setTmuxSendKey(async (session, key) => { keyLog.push({ session, key }); });
+__setTestOverrides({
+  tmuxList: async () => [...FAKE_SESSIONS],
+  tmuxSend: async (session, text, noEnter) => { sendLog.push({ session, text, noEnter }); },
+  tmuxSendKey: async (session, key) => { keyLog.push({ session, key }); },
+});
 
 const _realConsoleError = console.error;
 
@@ -310,7 +312,7 @@ describe("Reconnect — PTY /ws/pty close codes", () => {
 
 describe("Reconnect — PTY single-viewer state transitions", () => {
   test("viewer disconnect → immediate teardown → reconnect creates fresh entry", async () => {
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete("prompt-sess");
     await wait(50);
 
@@ -348,7 +350,7 @@ describe("Reconnect — PTY single-viewer state transitions", () => {
   });
 
   test("viewer disconnect tears down immediately (no grace period)", async () => {
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete("reconnect-sess");
     await wait(50);
 

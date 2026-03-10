@@ -4,7 +4,8 @@ import type { AddressInfo } from "node:net";
 // Use dynamic import so WOLFPACK_TEST is set before server module evaluation.
 process.env.WOLFPACK_TEST = "1";
 
-const { server, __setTmuxList, __getActivePtySessions, __getPtySpawnAttempts } = await import("../../src/server/index.ts");
+const { server, __setTestOverrides, __getTestState } = await import("../../src/server/index.ts");
+const { activePtySessions: __activePtySessions, ptySpawnAttempts: __ptySpawnAttempts } = __getTestState();
 
 // ── Test setup ──
 
@@ -13,7 +14,7 @@ let baseUrl: string;
 let baseWsUrl: string;
 
 const FAKE_SESSIONS = ["dispatch-session", "reconnect-session"];
-__setTmuxList(async () => [...FAKE_SESSIONS]);
+__setTestOverrides({ tmuxList: async () => [...FAKE_SESSIONS] });
 
 const _realConsoleError = console.error;
 
@@ -261,7 +262,7 @@ describe("WS close code semantics (backoff decision drivers)", () => {
   });
 
   test("PTY spawn failure yields 4001 (prevents reconnect loop)", async () => {
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete("dispatch-session");
     await wait(50);
 
@@ -366,7 +367,7 @@ describe("WS terminal state machine transitions", () => {
 describe("WS /ws/pty state transitions", () => {
   test("entry created on first connect, torn down on disconnect", async () => {
     const session = "dispatch-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -393,9 +394,9 @@ describe("WS /ws/pty state transitions", () => {
 
   test("attach + immediate resize only triggers one spawn attempt", async () => {
     const session = "dispatch-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
-    const spawnAttempts = __getPtySpawnAttempts();
+    const spawnAttempts = __ptySpawnAttempts;
     spawnAttempts.delete(session);
     await wait(50);
 
@@ -417,7 +418,7 @@ describe("WS /ws/pty state transitions", () => {
 
   test("second viewer gets conflict, first stays active", async () => {
     const session = "dispatch-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
@@ -461,7 +462,7 @@ describe("WS /ws/pty state transitions", () => {
 
   test("rapid connect/disconnect cycles don't leak entries", async () => {
     const session = "dispatch-session";
-    const ptySessions = __getActivePtySessions();
+    const ptySessions = __activePtySessions;
     ptySessions.delete(session);
     await wait(50);
 
