@@ -152,3 +152,14 @@
 - Updated 5 test files: `test-server.ts`, `ws-dispatch.test.ts`, `prompt-reconnect.test.ts`, `ws-terminal.test.ts`, `ralph-aggregation.test.ts`
 - Savings: ~40 lines (7 hook functions → 2, cleaner call sites)
 - All 652 unit+integration tests pass, 0 failures
+
+## Task 5a: CSS Merge — Foundation + Layout + Cards + Status Indicators — DONE
+- Merged 3 CSS layers (base, visual overhaul, mobile pass) into mobile-first base with desktop @media
+- Zero `!important` in merged selectors (remaining `!important` are behavioral kill switches or future sub-task scope)
+- **Foundation:** `body` (font-family, dot-grid background), `body::after` (watermark), scrollbar, `:focus-visible`, `::selection` — moved from overhaul to base
+- **Layout:** `header` (gradient bg, green border, box-shadow, min-height 46px), `header h1` (800 weight, 4px spacing), `#view-container::after` (vignette), `.view::before` (mobile-first green swipe glow, desktop black), `#terminal` (mobile padding 6px 10px, desktop 4px 8px), `.empty` (merged position/uppercase/letter-spacing), `#session-list:empty::after` (wolf icon placeholder), `.machine-header` (mobile-first sizes, desktop smaller)
+- **Cards:** `.card` (gradient bg, 3px radius, mobile padding/gap/min-height, desktop dense), `.card:active` (gradient hover), `.card.active-session/.attention/.idle-session` (merged box-shadow), `.card-name` (1.8px spacing, enhanced text-shadow), `.card-preview` (12px, color #444, margin-top 2px), `.card-stagger.animate-in` (fadeSlideIn), `.kill-btn` (mobile-first 22px/44px min-size, desktop smaller)
+- **Status:** `.dot` (mobile 10px, desktop 7px), `.dot.green` (dot-breathe replaces dot-glow), `.dot.yellow` (dot-alert replaces dot-pulse), `.dot.red` (added glow + alert animation), `.dot.purple` (double box-shadow), `.loading-text` (12px, cursor blink ::after), keyframes consolidated (dot-breathe, dot-alert, fadeSlideIn, terminal-blink added to base)
+- Removed ~130 lines of overhaul duplicates, ~35 lines of mobile-pass duplicates
+- Regenerated `src/public-assets.ts`
+- All 660 tests pass (4 pre-existing Playwright config failures unrelated)
