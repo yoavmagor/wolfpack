@@ -225,3 +225,17 @@
 - `sessionRecents` and `quickCmds` initialized via `loadRecents()` / `loadQuickCmds()` (functions defined before state)
 - No function names mangled (camelCase capitalization prevents substring matches)
 - All 660 tests pass (4 pre-existing Playwright config failures unrelated)
+
+## Task 9a: Migrate Desktop/Grid/Sidebar Globals Into State Object — DONE
+- Migrated 12 globals into centralized `state` object:
+  - **Desktop (4):** `desktopController`, `useDesktopTerminal`, `desktopResizeHandler`, `desktopResizeTimer`
+  - **Grid (4):** `gridSessions`, `gridFocusIndex`, `gridResizeHandler`, `gridRelayoutTransitionId`
+  - **Sidebar (4):** `sidebarPinned`, `sidebarCollapsed`, `sidebarAutoExpanded`, `sessionsExpanded`
+- 220 references updated via word-boundary regex replacement (script-assisted)
+- Removed 12 standalone `let` declarations across the file
+- Added all 12 properties to `const state = { ... }` initializer with correct defaults
+- Extracted `loadSidebarPinned()` helper (replaces IIFE) + `_initSidebarPinned` temp for cross-dependency (`sidebarCollapsed: !_initSidebarPinned`)
+- Writes use `state.X = value` (functionally equivalent to `setState()` since no side effects)
+- Array mutations (push/splice/unshift) work via reference: `state.gridSessions.push(...)` etc.
+- Regenerated `src/public-assets.ts`
+- All 660 tests pass (4 pre-existing Playwright config failures unrelated)

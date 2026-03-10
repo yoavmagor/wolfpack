@@ -2655,12 +2655,12 @@
       }
       const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
       function applyTermToXterm() {
-        if (!desktopController?.term) return;
+        if (!state.desktopController?.term) return;
         const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-        desktopController.term.options.fontSize = p.fontSize;
-        desktopController.term.options.lineHeight = p.lineHeight;
-        desktopController.term.options.fontFamily = getTerminalFontFamily();
-        desktopController.resize();
+        state.desktopController.term.options.fontSize = p.fontSize;
+        state.desktopController.term.options.lineHeight = p.lineHeight;
+        state.desktopController.term.options.fontFamily = getTerminalFontFamily();
+        state.desktopController.resize();
       }
       function initSettings() {
         Object.entries(wpSettings).forEach(([k, v]) => {
@@ -2909,6 +2909,16 @@
         saveRecents();
       }
 
+      function loadSidebarPinned() {
+        const v = localStorage.getItem("wolfpack-sidebar-pinned");
+        if (v !== null) return v !== "0";
+        const old = localStorage.getItem("wolfpack-sidebar-collapsed");
+        if (old === "1") return false;
+        return true;
+      }
+
+      const _initSidebarPinned = loadSidebarPinned();
+
       const state = {
         currentView: "sessions",
         currentSession: null,
@@ -2932,6 +2942,20 @@
         currentRalphPlanFile: "",
         restartingRalph: false,
         currentRalphAgent: "",
+        // desktop/grid terminal state
+        desktopController: null,
+        useDesktopTerminal: false,
+        desktopResizeHandler: null,
+        desktopResizeTimer: null,
+        gridSessions: [],
+        gridFocusIndex: 0,
+        gridResizeHandler: null,
+        gridRelayoutTransitionId: 0,
+        // sidebar state
+        sidebarPinned: _initSidebarPinned,
+        sidebarCollapsed: !_initSidebarPinned,
+        sidebarAutoExpanded: false,
+        sessionsExpanded: true,
       };
       function setState(patch) { Object.assign(state, patch); }
       const RECONNECT_BUDGET_MS = 2 * 60 * 1000;
@@ -3531,11 +3555,6 @@
       let mobileStreamingActive = false;
       let termFollowMode = true;
       let sessionRefreshTimer = null;
-      let desktopController = null;  // createPtyTerminalController instance
-      let desktopResizeHandler = null;
-      let desktopResizeTimer = null;
-      let useDesktopTerminal = false;
-
       function getTerminalFontFamily() {
         return wpSettings.termFont === "alt"
           ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
@@ -3633,29 +3652,28 @@
         const cell = getGridCellElement(gs);
         if (cell) cell.classList.toggle("grid-loading", loading);
       }
-      let gridRelayoutTransitionId = 0;
 
       function beginGridRelayoutTransition() {
-        gridRelayoutTransitionId += 1;
-        const transitionId = gridRelayoutTransitionId;
-        for (const gs of gridSessions) setGridCellLoading(gs, true);
+        state.gridRelayoutTransitionId += 1;
+        const transitionId = state.gridRelayoutTransitionId;
+        for (const gs of state.gridSessions) setGridCellLoading(gs, true);
         return transitionId;
       }
 
       function isGridRelayoutTransitionCurrent(transitionId) {
-        return transitionId === gridRelayoutTransitionId;
+        return transitionId === state.gridRelayoutTransitionId;
       }
 
       function endGridRelayoutTransition(transitionId) {
         if (!isGridRelayoutTransitionCurrent(transitionId)) return;
         requestAnimationFrame(() => {
           if (!isGridRelayoutTransitionCurrent(transitionId)) return;
-          for (const gs of gridSessions) setGridCellLoading(gs, false);
+          for (const gs of state.gridSessions) setGridCellLoading(gs, false);
         });
       }
 
       function cancelGridRelayoutTransition() {
-        gridRelayoutTransitionId += 1;
+        state.gridRelayoutTransitionId += 1;
       }
 
       /** Run a two-pass relayout while keeping loading overlay visible. */
@@ -3674,11 +3692,9 @@
       }
 
       // ── Multi-terminal grid state ──
-      let gridSessions = [];        // [{session, machine, controller}]
-      let gridFocusIndex = 0;       // which cell is interactive
       const MAX_GRID_CELLS = 6;
 
-      function isGridActive() { return gridSessions.length >= 2; }
+      function isGridActive() { return state.gridSessions.length >= 2; }
 
       function gridLayoutClass(count) {
         if (count >= 2 && count <= 6) return "grid-" + count;
@@ -3693,7 +3709,7 @@
           return;
         }
         // Remove old grid-N classes, add current; clear any inline style override
-        container.className = "active " + gridLayoutClass(gridSessions.length);
+        container.className = "active " + gridLayoutClass(state.gridSessions.length);
         container.style.display = "";
         // Ensure single-terminal container is hidden
         document.getElementById("desktop-terminal-container").style.display = "none";
@@ -3706,7 +3722,7 @@
 
       function createGridCell(gs, idx) {
         const cell = document.createElement("div");
-        cell.className = "grid-cell" + (idx === gridFocusIndex ? " grid-focused" : "") + (gs._loading ? " grid-loading" : "");
+        cell.className = "grid-cell" + (idx === state.gridFocusIndex ? " grid-focused" : "") + (gs._loading ? " grid-loading" : "");
         cell.dataset.gridIndex = idx;
         cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div><div class="grid-cell-loading">Loading terminal</div>';
         cell.addEventListener("click", (e) => {
@@ -3733,25 +3749,25 @@
           machine: gs.machine || "",
           fontSize: Math.max(tp.fontSize - 2, 10),
           scrollback: GRID_TERMINAL_SCROLLBACK,
-          cursorBlink: idx === gridFocusIndex,
-          disableStdin: idx !== gridFocusIndex,
+          cursorBlink: idx === state.gridFocusIndex,
+          disableStdin: idx !== state.gridFocusIndex,
           resetPty: gs._resetPty,
           skipInitialPrefill: true,
-          shouldFocus: () => gridSessions[gridFocusIndex] === gs,
-          shouldReconnect: () => gridSessions.includes(gs),
-          canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && gridSessions[gridFocusIndex] === gs),
+          shouldFocus: () => state.gridSessions[state.gridFocusIndex] === gs,
+          shouldReconnect: () => state.gridSessions.includes(gs),
+          canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && state.gridSessions[state.gridFocusIndex] === gs),
           canSendResize: () => !!(gs.controller && gs.controller.isConnected),
           onViewerConflict: () => showGridCellConflictOverlay(gs),
           onControlGranted: () => {
             removeGridCellConflictOverlay(gs);
-            if (gridSessions[gridFocusIndex] === gs) gs.controller.focus();
+            if (state.gridSessions[state.gridFocusIndex] === gs) gs.controller.focus();
           },
           onDisconnected: (code) => {
             removeGridCellConflictOverlay(gs);
-            if (!gridSessions.includes(gs)) return;
+            if (!state.gridSessions.includes(gs)) return;
             if (code === 4002) {
               setTimeout(() => {
-                if (gridSessions.includes(gs) && gs.controller && !gs.controller.isConnected) {
+                if (state.gridSessions.includes(gs) && gs.controller && !gs.controller.isConnected) {
                   gs.controller.connect();
                 }
               }, 500);
@@ -3768,12 +3784,12 @@
       function renderGridCells() {
         const container = document.getElementById("desktop-grid-container");
         // Install resize handler if not yet
-        if (!gridResizeHandler) {
-          gridResizeHandler = () => {
+        if (!state.gridResizeHandler) {
+          state.gridResizeHandler = () => {
             if (!isGridActive()) return;
             runGridRelayoutTransition(() => { fitAllGridCells(); });
           };
-          window.addEventListener("resize", gridResizeHandler);
+          window.addEventListener("resize", state.gridResizeHandler);
         }
         // Build set of current sessions for diffing
         const existingCells = container.querySelectorAll(".grid-cell");
@@ -3784,11 +3800,11 @@
         });
         // Track which sessions need new cells vs reuse
         const newCellSessions = [];
-        gridSessions.forEach((gs, idx) => {
+        state.gridSessions.forEach((gs, idx) => {
           if (gs._cellElement && gs._cellElement.parentNode === container && gs.controller) {
             // Existing cell — just update index and focus state
             gs._cellElement.dataset.gridIndex = idx;
-            gs._cellElement.classList.toggle("grid-focused", idx === gridFocusIndex);
+            gs._cellElement.classList.toggle("grid-focused", idx === state.gridFocusIndex);
           } else {
             // New cell needed
             const cell = createGridCell(gs, idx);
@@ -3798,12 +3814,12 @@
           }
         });
         // Remove orphaned cells (sessions removed from grid)
-        const activeCellElements = new Set(gridSessions.map(gs => gs._cellElement));
+        const activeCellElements = new Set(state.gridSessions.map(gs => gs._cellElement));
         existingCells.forEach(cell => {
           if (!activeCellElements.has(cell)) cell.remove();
         });
-        // Reorder DOM to match gridSessions order
-        gridSessions.forEach(gs => {
+        // Reorder DOM to match state.gridSessions order
+        state.gridSessions.forEach(gs => {
           if (gs._cellElement && gs._cellElement.parentNode === container) {
             container.appendChild(gs._cellElement);
           }
@@ -3828,7 +3844,7 @@
 
       function getGridCellElement(gs) {
         if (gs._cellElement) return gs._cellElement;
-        const idx = gridSessions.indexOf(gs);
+        const idx = state.gridSessions.indexOf(gs);
         if (idx < 0) return null;
         return document.querySelector('#desktop-grid-container .grid-cell[data-grid-index="' + idx + '"]');
       }
@@ -3854,11 +3870,11 @@
       }
 
       function setGridFocus(idx) {
-        if (idx < 0 || idx >= gridSessions.length) return;
-        const prev = gridFocusIndex;
-        gridFocusIndex = idx;
+        if (idx < 0 || idx >= state.gridSessions.length) return;
+        const prev = state.gridFocusIndex;
+        state.gridFocusIndex = idx;
         // Update xterm stdin/cursor for old + new focus
-        gridSessions.forEach((gs, i) => {
+        state.gridSessions.forEach((gs, i) => {
           if (!gs.controller || !gs.controller.term) return;
           const focused = i === idx;
           gs.controller.term.options.disableStdin = !focused;
@@ -3870,7 +3886,7 @@
           cell.classList.toggle("grid-focused", i === idx);
         });
         // Sync sidebar highlights
-        const focusedGs = gridSessions[idx];
+        const focusedGs = state.gridSessions[idx];
         if (focusedGs) {
           setState({ currentSession: focusedGs.session, currentMachine: focusedGs.machine || "" });
           renderSidebar();
@@ -3881,23 +3897,23 @@
 
       function addToGrid(session, machine) {
         if (!isDesktop()) return;
-        if (gridSessions.length >= MAX_GRID_CELLS) return;
+        if (state.gridSessions.length >= MAX_GRID_CELLS) return;
         // Already in grid?
-        if (gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
+        if (state.gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
         // Track which session had a full-width PTY (needs reset on grid connect)
-        const singleTermSession = (desktopController?.term && state.currentSession) ? state.currentSession : null;
+        const singleTermSession = (state.desktopController?.term && state.currentSession) ? state.currentSession : null;
         const singleTermMachine = singleTermSession ? (state.currentMachine || "") : "";
         const gs = {
           session,
           machine: machine || "",
           controller: null,
         };
-        gridSessions.push(gs);
+        state.gridSessions.push(gs);
         // If transitioning from single to grid, add current session too
-        if (gridSessions.length === 1 && state.currentSession) {
+        if (state.gridSessions.length === 1 && state.currentSession) {
           const alreadyAdded = session === state.currentSession && (machine || "") === state.currentMachine;
           if (!alreadyAdded) {
-            gridSessions.unshift({
+            state.gridSessions.unshift({
               session: state.currentSession,
               machine: state.currentMachine,
               controller: null,
@@ -3906,7 +3922,7 @@
         }
         // Mark sessions that had a full-width PTY for reset
         if (singleTermSession) {
-          for (const g of gridSessions) {
+          for (const g of state.gridSessions) {
             if (g.session === singleTermSession && (g.machine || "") === singleTermMachine) {
               g._resetPty = true;
             }
@@ -3915,42 +3931,42 @@
         if (isGridActive()) {
           // Destroy single-terminal mode
           destroyDesktopTerminal();
-          gridFocusIndex = gridSessions.length - 1;
+          state.gridFocusIndex = state.gridSessions.length - 1;
           renderGridCells();
           renderSidebar();
         } else {
           // Only 1 session queued — no current session to pair with.
           // Fall back to just opening it as a single terminal.
-          gridSessions = [];
+          state.gridSessions = [];
           openSession(session, machine || undefined);
         }
       }
 
       function removeFromGrid(idx) {
-        if (idx < 0 || idx >= gridSessions.length) return;
-        const gs = gridSessions[idx];
+        if (idx < 0 || idx >= state.gridSessions.length) return;
+        const gs = state.gridSessions[idx];
         // Remove cell DOM immediately (avoids full rebuild flash)
         if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
         // Cleanup controller
         if (gs.controller) gs.controller.dispose();
-        gridSessions.splice(idx, 1);
+        state.gridSessions.splice(idx, 1);
         // Adjust focus
-        if (gridFocusIndex >= gridSessions.length) gridFocusIndex = Math.max(0, gridSessions.length - 1);
-        if (gridSessions.length <= 1) {
+        if (state.gridFocusIndex >= state.gridSessions.length) state.gridFocusIndex = Math.max(0, state.gridSessions.length - 1);
+        if (state.gridSessions.length <= 1) {
           // Exit grid mode → single terminal
           exitGridMode();
         } else {
           // Update layout and indices without full renderGridCells
-          gridSessions.forEach((g, i) => {
+          state.gridSessions.forEach((g, i) => {
             if (g._cellElement) {
               g._cellElement.dataset.gridIndex = i;
-              g._cellElement.classList.toggle("grid-focused", i === gridFocusIndex);
+              g._cellElement.classList.toggle("grid-focused", i === state.gridFocusIndex);
             }
           });
           updateGridLayout();
           // Remove-flow relayout while preserving scroll on first fit pass.
           runGridRelayoutTransition(() => { fitGridCellsPreserveScroll(); });
-          setGridFocus(gridFocusIndex);
+          setGridFocus(state.gridFocusIndex);
         }
         renderSidebar();
       }
@@ -3958,21 +3974,21 @@
       function exitGridMode() {
         cancelGridRelayoutTransition();
         // Remove grid resize handler
-        if (gridResizeHandler) {
-          window.removeEventListener("resize", gridResizeHandler);
-          gridResizeHandler = null;
+        if (state.gridResizeHandler) {
+          window.removeEventListener("resize", state.gridResizeHandler);
+          state.gridResizeHandler = null;
         }
         // Determine which session to restore before destroying
-        const remaining = gridSessions.length >= 1 ? gridSessions[0] : null;
+        const remaining = state.gridSessions.length >= 1 ? state.gridSessions[0] : null;
         const restoreSession = remaining ? remaining.session : state.currentSession;
         const restoreMachine = remaining ? (remaining.machine || "") : state.currentMachine;
         // Destroy all grid sessions
-        for (const gs of gridSessions) {
+        for (const gs of state.gridSessions) {
           if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
           if (gs.controller) gs.controller.dispose();
         }
-        gridSessions = [];
-        gridFocusIndex = 0;
+        state.gridSessions = [];
+        state.gridFocusIndex = 0;
         // Fully clean up grid container
         const container = document.getElementById("desktop-grid-container");
         container.className = "";
@@ -3982,19 +3998,19 @@
         const dtc = document.getElementById("desktop-terminal-container");
         dtc.style.display = "none";
         dtc.innerHTML = "";
-        // Clear desktopController reference in case it's stale
-        desktopController = null;
+        // Clear state.desktopController reference in case it's stale
+        state.desktopController = null;
         // Restore single-terminal mode
         if (restoreSession) {
           setState({ currentSession: restoreSession, currentMachine: restoreMachine });
-          useDesktopTerminal = true;
+          state.useDesktopTerminal = true;
           initDesktopTerminal();
           renderSidebar();
         }
       }
 
       function fitAllGridCells() {
-        for (const gs of gridSessions) {
+        for (const gs of state.gridSessions) {
           if (gs.controller) {
             try { gs.controller.resize(); } catch {}
           }
@@ -4003,7 +4019,7 @@
 
       /** Fit grid cells but preserve each terminal's scroll position to avoid visible history jump. */
       function fitGridCellsPreserveScroll() {
-        for (const gs of gridSessions) {
+        for (const gs of state.gridSessions) {
           if (!gs.controller || !gs.controller.term) continue;
           const term = gs.controller.term;
           const wasAtBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
@@ -4021,16 +4037,14 @@
         runGridRelayoutTransition(() => { fitAllGridCells(); });
       }
 
-      let gridResizeHandler = null;
-
       function isSessionInGrid(session, machine) {
-        return gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""));
+        return state.gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""));
       }
 
       function toggleGrid(session, machine, event) {
         if (event) { event.stopPropagation(); event.preventDefault(); }
         if (isSessionInGrid(session, machine)) {
-          const idx = gridSessions.findIndex(gs => gs.session === session && (gs.machine || "") === (machine || ""));
+          const idx = state.gridSessions.findIndex(gs => gs.session === session && (gs.machine || "") === (machine || ""));
           if (idx !== -1) removeFromGrid(idx);
         } else {
           addToGrid(session, machine);
@@ -4115,8 +4129,8 @@
         snapshotTimer = null;
         if (!state.currentSession) { snapshotPending = null; return; }
         let text;
-        if (useDesktopTerminal && desktopController?.term) {
-          text = serializeXtermTail(desktopController.term, 100);
+        if (state.useDesktopTerminal && state.desktopController?.term) {
+          text = serializeXtermTail(state.desktopController.term, 100);
         } else {
           text = snapshotPending;
         }
@@ -4241,7 +4255,7 @@
         const isMobile = !isDesktop();
 
         // Desktop: "sessions" view is hidden — redirect to terminal if active (unless sessions expanded)
-        const effectiveName = (!isMobile && name === "sessions" && state.currentSession && !sessionsExpanded) ? "terminal" : name;
+        const effectiveName = (!isMobile && name === "sessions" && state.currentSession && !state.sessionsExpanded) ? "terminal" : name;
 
         const nextEl = document.getElementById(effectiveName + "-view");
         const wasSwipe = swipeNavigated;
@@ -4322,15 +4336,15 @@
         // Desktop: skip all header manipulation, handle view-specific logic only
         if (!isMobile) {
           // Exit expanded sessions mode when navigating away from sessions
-          if (effectiveName !== "sessions" && sessionsExpanded) {
-            sessionsExpanded = false;
+          if (effectiveName !== "sessions" && state.sessionsExpanded) {
+            state.sessionsExpanded = false;
             document.body.classList.remove("sessions-expanded");
             const expandBtn = document.getElementById("sidebar-expand-btn");
             if (expandBtn) expandBtn.classList.remove("active");
             // Restore sidebar based on pin state
-            if (sidebarPinned) {
+            if (state.sidebarPinned) {
               const sb = document.getElementById("desktop-sidebar");
-              if (sb) { sb.classList.remove("collapsed"); sidebarCollapsed = false; }
+              if (sb) { sb.classList.remove("collapsed"); state.sidebarCollapsed = false; }
             }
           }
           const settingsBackBtn = document.getElementById("settings-back-btn");
@@ -4391,9 +4405,9 @@
           } else if (name === "terminal") {
             back.style.display = "block";
             back.onclick = () => {
-              if (useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
+              if (state.useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
               closeSearch();
-              useDesktopTerminal = false;
+              state.useDesktopTerminal = false;
               setState({ currentSession: null, currentMachine: "" });
               showView("sessions");
               loadSessions();
@@ -4990,20 +5004,20 @@
 
       async function openSession(name, machineUrl) {
         // Exit expanded sessions mode when opening a session
-        if (sessionsExpanded) {
-          sessionsExpanded = false;
+        if (state.sessionsExpanded) {
+          state.sessionsExpanded = false;
           document.body.classList.remove("sessions-expanded");
           const expandBtn = document.getElementById("sidebar-expand-btn");
           if (expandBtn) expandBtn.classList.remove("active");
           // Restore sidebar based on pin state
-          if (sidebarPinned) {
+          if (state.sidebarPinned) {
             const sb = document.getElementById("desktop-sidebar");
-            if (sb) { sb.classList.remove("collapsed"); sidebarCollapsed = false; }
+            if (sb) { sb.classList.remove("collapsed"); state.sidebarCollapsed = false; }
           }
         }
         // On desktop with grid active, clicking a card focuses or exits grid
         if (isDesktop() && isGridActive()) {
-          const gridIdx = gridSessions.findIndex(gs => gs.session === name && (gs.machine || "") === (machineUrl || ""));
+          const gridIdx = state.gridSessions.findIndex(gs => gs.session === name && (gs.machine || "") === (machineUrl || ""));
           if (gridIdx !== -1) {
             setGridFocus(gridIdx);
             return;
@@ -5017,7 +5031,7 @@
           // switching so the new terminal fits to full width. Without this,
           // initDesktopTerminal() fits to the narrow width, triggering a PTY
           // resize that causes Claude Code's TUI to redraw with · fill dots.
-          if (sidebarAutoExpanded) {
+          if (state.sidebarAutoExpanded) {
             const sb = document.getElementById("desktop-sidebar");
             if (sb) {
               sb.style.transition = "none";
@@ -5025,8 +5039,8 @@
               sb.offsetHeight; // force reflow
               sb.style.transition = "";
             }
-            sidebarCollapsed = true;
-            sidebarAutoExpanded = false;
+            state.sidebarCollapsed = true;
+            state.sidebarAutoExpanded = false;
             if (sidebarAutoCollapseTimer) { clearTimeout(sidebarAutoCollapseTimer); sidebarAutoCollapseTimer = null; }
           }
           switchSession(machineUrl ? machineUrl + "|" + name : name);
@@ -5036,13 +5050,13 @@
         setState({ currentSession: name, currentMachine: machineUrl || "" });
         recordRecent(state.currentMachine, name);
         lastRawPane = null;
-        useDesktopTerminal = isDesktop();
+        state.useDesktopTerminal = isDesktop();
         wpMetrics.reset();
         setFollowMode(true);
         restoreDraft();
         const cached = loadSnapshot(state.currentMachine, name);
         showView("terminal");
-        if (useDesktopTerminal) {
+        if (state.useDesktopTerminal) {
           destroyDesktopTerminal();
           initDesktopTerminal(cached);
         } else {
@@ -5251,13 +5265,13 @@
           }, machine);
           if (data.session) {
             setState({ currentSession: data.session, currentMachine: machine });
-            useDesktopTerminal = isDesktop();
+            state.useDesktopTerminal = isDesktop();
             // Refresh session list in background so it doesn't block terminal init
             loadSessions().then(() => { loadSessionSwitcher(); renderSidebar(); });
-            if (useDesktopTerminal && isGridActive()) {
+            if (state.useDesktopTerminal && isGridActive()) {
               // Grid is active — add new session to grid instead of single-terminal
               addToGrid(data.session, machine);
-            } else if (useDesktopTerminal) {
+            } else if (state.useDesktopTerminal) {
               destroyDesktopTerminal();
               initDesktopTerminal();
             } else {
@@ -5279,18 +5293,18 @@
       // ── Desktop Terminal (xterm.js + /ws/pty binary WS) ──
 
       function connectDesktopWs() {
-        if (!desktopController) return;
-        desktopController.connect();
+        if (!state.desktopController) return;
+        state.desktopController.connect();
       }
 
       function showDesktopConflictOverlay() {
         const container = document.getElementById("desktop-terminal-container");
         if (!container) return;
         // Force hydration complete so overlay is visible (container may be opacity:0)
-        if (desktopController && desktopController.hydration) desktopController.hydration.finish();
+        if (state.desktopController && state.desktopController.hydration) state.desktopController.hydration.finish();
         removeDesktopConflictOverlay();
         const overlay = createConflictOverlay("Session active on another device", "Take Control", () => {
-          if (desktopController) desktopController.sendTakeControl();
+          if (state.desktopController) state.desktopController.sendTakeControl();
           // Don't remove overlay here — wait for control_granted to confirm
         });
         overlay.id = "desktop-conflict-overlay";
@@ -5303,7 +5317,7 @@
       }
 
       function initDesktopTerminal(cached) {
-        if (desktopController) return;
+        if (state.desktopController) return;
         const container = document.getElementById("desktop-terminal-container");
         container.style.display = "block";
         container.innerHTML = "";
@@ -5317,13 +5331,13 @@
         document.getElementById("cmd-palette").style.display = "none";
         document.getElementById("msg-preview").style.display = "none";
 
-        desktopController = createPtyTerminalController({
+        state.desktopController = createPtyTerminalController({
           session: state.currentSession,
           machine: state.currentMachine || "",
           scrollback: DESKTOP_TERMINAL_SCROLLBACK,
           getHydrationElement: () => document.getElementById("desktop-terminal-container"),
           shouldFocus: () => true,
-          shouldReconnect: () => useDesktopTerminal && !!desktopController?.term,
+          shouldReconnect: () => state.useDesktopTerminal && !!state.desktopController?.term,
           onOpen: (wasReconnect) => {
             if (wasReconnect) wpMetrics.reconnectCount++;
             setConnState("live");
@@ -5335,7 +5349,7 @@
           onViewerConflict: () => showDesktopConflictOverlay(),
           onControlGranted: () => {
             removeDesktopConflictOverlay();
-            if (desktopController) desktopController.focus();
+            if (state.desktopController) state.desktopController.focus();
           },
           onDisconnected: (code, reason) => {
             removeDesktopConflictOverlay();
@@ -5353,23 +5367,23 @@
               setConnState("session-ended");
               return;
             }
-            desktopController.scheduleReconnect();
+            state.desktopController.scheduleReconnect();
           },
           onReconnecting: () => setConnState("reconnecting"),
           onReconnectExhausted: () => setConnState("offline"),
         });
 
-        desktopController.mount(container, { cached });
+        state.desktopController.mount(container, { cached });
 
         const onResize = () => {
-          if (desktopResizeTimer) clearTimeout(desktopResizeTimer);
-          desktopResizeTimer = setTimeout(() => {
-            desktopResizeTimer = null;
-            if (desktopController) desktopController.resize();
+          if (state.desktopResizeTimer) clearTimeout(state.desktopResizeTimer);
+          state.desktopResizeTimer = setTimeout(() => {
+            state.desktopResizeTimer = null;
+            if (state.desktopController) state.desktopController.resize();
           }, 60);
         };
         window.addEventListener("resize", onResize);
-        desktopResizeHandler = onResize;
+        state.desktopResizeHandler = onResize;
 
         const onKeyDown = (e) => {
           if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
@@ -5390,11 +5404,11 @@
 
       function destroyDesktopTerminal() {
         if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
-        if (desktopResizeTimer) { clearTimeout(desktopResizeTimer); desktopResizeTimer = null; }
-        if (desktopController) { desktopController.dispose(); desktopController = null; }
-        if (desktopResizeHandler) {
-          window.removeEventListener("resize", desktopResizeHandler);
-          desktopResizeHandler = null;
+        if (state.desktopResizeTimer) { clearTimeout(state.desktopResizeTimer); state.desktopResizeTimer = null; }
+        if (state.desktopController) { state.desktopController.dispose(); state.desktopController = null; }
+        if (state.desktopResizeHandler) {
+          window.removeEventListener("resize", state.desktopResizeHandler);
+          state.desktopResizeHandler = null;
         }
         const container = document.getElementById("desktop-terminal-container");
         if (container._onKeyDown) {
@@ -5418,7 +5432,7 @@
       function setConnState(state) {
         const statusEl = document.getElementById("conn-status");
         if (!statusEl) return;
-        const active = useDesktopTerminal ? !!desktopController?.term : mobileStreamingActive;
+        const active = state.useDesktopTerminal ? !!state.desktopController?.term : mobileStreamingActive;
         if (state.currentView !== "terminal" || !active || state === "live") {
           statusEl.style.display = "none";
           statusEl.style.background = "#cc3333";
@@ -5470,7 +5484,7 @@
           wpMetrics.recordLatency(performance.now() - renderStart);
           if (termFollowMode) term.scrollTop = term.scrollHeight;
         }
-        if (changed && !useDesktopTerminal) {
+        if (changed && !state.useDesktopTerminal) {
           scheduleSnapshotSave(pane);
         }
       }
@@ -5533,7 +5547,7 @@
       }
 
       function connectMobileTerminalWs() {
-        if (!mobileStreamingActive || useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
+        if (!mobileStreamingActive || state.useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
         if (mobileRetryBlocked) return;
         if (mobileWs && mobileWs.readyState <= WebSocket.OPEN) return;
         const connectKey = terminalSessionKey();
@@ -5542,7 +5556,7 @@
 
         ws.onopen = async () => {
           if (mobileWs !== ws) return;
-          if (!mobileStreamingActive || useDesktopTerminal || connectKey !== terminalSessionKey()) {
+          if (!mobileStreamingActive || state.useDesktopTerminal || connectKey !== terminalSessionKey()) {
             ws.close();
             return;
           }
@@ -5567,7 +5581,7 @@
 
         ws.onclose = (ev) => {
           if (mobileWs === ws) mobileWs = null;
-          if (!mobileStreamingActive || useDesktopTerminal || connectKey !== terminalSessionKey()) return;
+          if (!mobileStreamingActive || state.useDesktopTerminal || connectKey !== terminalSessionKey()) return;
           if (ev.code === 4001 || (ev.code === 1000 && ev.reason === "session ended")) {
             setConnState("session-ended");
             return;
@@ -5579,7 +5593,7 @@
       }
 
       function scheduleMobileReconnect() {
-        if (!mobileStreamingActive || useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
+        if (!mobileStreamingActive || state.useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
         if (mobileReconnectTimer) return;
         const now = Date.now();
         if (!mobileReconnectStartedAt) mobileReconnectStartedAt = now;
@@ -5648,7 +5662,7 @@
       }
 
       function retryTerminalConnection() {
-        if (useDesktopTerminal || !state.currentSession) return;
+        if (state.useDesktopTerminal || !state.currentSession) return;
         mobileRetryBlocked = false;
         if (mobileWs) {
           const ws = mobileWs;
@@ -5659,13 +5673,13 @@
       }
 
       function retryDesktopConnection() {
-        if (!useDesktopTerminal || !desktopController?.term) return;
+        if (!state.useDesktopTerminal || !state.desktopController?.term) return;
         setConnState("reconnecting");
         connectDesktopWs();
       }
 
       function retryConnection() {
-        if (useDesktopTerminal) retryDesktopConnection();
+        if (state.useDesktopTerminal) retryDesktopConnection();
         else retryTerminalConnection();
       }
 
@@ -5758,9 +5772,9 @@
         }
         const wasCurrentSession = name === state.currentSession && (machineUrl || "") === state.currentMachine;
         if (wasCurrentSession && state.currentView === "terminal") {
-          if (useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
+          if (state.useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
           closeSearch();
-          useDesktopTerminal = false;
+          state.useDesktopTerminal = false;
           setState({ currentSession: null, currentMachine: "" });
           showView("sessions");
         }
@@ -6014,7 +6028,7 @@
         }
         if (name === state.currentSession && machineUrl === state.currentMachine) {
           // Same session — but reconnect if WS is dead/blocked
-          if (useDesktopTerminal && desktopController && !desktopController.isConnected) {
+          if (state.useDesktopTerminal && state.desktopController && !state.desktopController.isConnected) {
             connectDesktopWs();
           }
           return;
@@ -6023,7 +6037,7 @@
         // Exit grid mode if active
         if (isGridActive()) exitGridMode();
         // Suspend current mode (cache terminal state)
-        if (useDesktopTerminal) {
+        if (state.useDesktopTerminal) {
           destroyDesktopTerminal();
         } else {
           stopPolling();
@@ -6042,8 +6056,8 @@
           hml.textContent = mName;
           hml.style.display = "";
         }
-        useDesktopTerminal = isDesktop();
-        if (useDesktopTerminal) {
+        state.useDesktopTerminal = isDesktop();
+        if (state.useDesktopTerminal) {
           initDesktopTerminal();
         } else {
           document.getElementById("terminal").textContent = "";
@@ -6138,16 +6152,16 @@
             sessionRefreshTimer = setInterval(loadSessions, 5000);
           }
           if (state.currentSession && state.currentView === "terminal") {
-            if (useDesktopTerminal) {
+            if (state.useDesktopTerminal) {
               // Desktop: reset retry budget and reconnect current terminal context.
               if (isGridActive()) {
-                for (const gs of gridSessions) {
+                for (const gs of state.gridSessions) {
                   if (!gs.controller) continue;
                   gs.controller.resetRetry();
                   if (!gs.controller.isConnected) gs.controller.connect();
                 }
-              } else if (desktopController?.term) {
-                desktopController.resetRetry();
+              } else if (state.desktopController?.term) {
+                state.desktopController.resetRetry();
                 connectDesktopWs();
               }
             } else {
@@ -6338,7 +6352,7 @@
       // Global arrow keys → tmux when in terminal and textarea not focused
       document.addEventListener("keydown", (e) => {
         if (state.currentView !== "terminal") return;
-        if (useDesktopTerminal) return; // desktop terminal has its own handler
+        if (state.useDesktopTerminal) return; // desktop terminal has its own handler
         const tag = document.activeElement && document.activeElement.tagName;
         if (document.activeElement === msgInput || tag === "SELECT" || tag === "INPUT") return;
         const keyMap = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Enter: "Enter", Escape: "Escape" };
@@ -6349,12 +6363,12 @@
       // Navigate back to fully expanded sessions view (desktop: expand mode, mobile: just sessions)
       function backToSessions() {
         if (isDesktop()) {
-          sessionsExpanded = true;
+          state.sessionsExpanded = true;
           document.body.classList.add("sessions-expanded");
           const expandBtn = document.getElementById("sidebar-expand-btn");
           if (expandBtn) expandBtn.classList.add("active");
           const sb = document.getElementById("desktop-sidebar");
-          if (sb) { sb.classList.add("collapsed"); sidebarCollapsed = true; sidebarAutoExpanded = false; }
+          if (sb) { sb.classList.add("collapsed"); state.sidebarCollapsed = true; state.sidebarAutoExpanded = false; }
         }
         showView("sessions");
         loadSessions();
@@ -6379,10 +6393,10 @@
           e.preventDefault();
           e.stopPropagation();
           if (isGridActive()) {
-            const count = gridSessions.length;
+            const count = state.gridSessions.length;
             const next = e.key === "ArrowDown"
-              ? (gridFocusIndex + 1) % count
-              : (gridFocusIndex - 1 + count) % count;
+              ? (state.gridFocusIndex + 1) % count
+              : (state.gridFocusIndex - 1 + count) % count;
             setGridFocus(next);
             return;
           }
@@ -6410,10 +6424,10 @@
           e.preventDefault();
           e.stopPropagation();
           if (isGridActive()) {
-            const gs = gridSessions[gridFocusIndex];
+            const gs = state.gridSessions[state.gridFocusIndex];
             if (gs && gs.controller && gs.controller.term) gs.controller.term.clear();
-          } else if (desktopController?.term) {
-            desktopController.term.clear();
+          } else if (state.desktopController?.term) {
+            state.desktopController.term.clear();
           }
           return;
         }
@@ -6422,11 +6436,11 @@
         if (isGridActive() && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
           e.preventDefault();
           e.stopPropagation();
-          const count = gridSessions.length;
-          let newIdx = gridFocusIndex;
-          if (e.key === "ArrowLeft") newIdx = Math.max(0, gridFocusIndex - 1);
-          else if (e.key === "ArrowRight") newIdx = Math.min(count - 1, gridFocusIndex + 1);
-          if (newIdx !== gridFocusIndex) setGridFocus(newIdx);
+          const count = state.gridSessions.length;
+          let newIdx = state.gridFocusIndex;
+          if (e.key === "ArrowLeft") newIdx = Math.max(0, state.gridFocusIndex - 1);
+          else if (e.key === "ArrowRight") newIdx = Math.min(count - 1, state.gridFocusIndex + 1);
+          if (newIdx !== state.gridFocusIndex) setGridFocus(newIdx);
           return;
         }
       }, true);
@@ -6545,9 +6559,9 @@
         document.getElementById("search-bar").classList.remove("visible");
         document.getElementById("search-input").value = "";
         document.getElementById("search-count").textContent = "";
-        if (useDesktopTerminal) {
-          if (desktopController?.searchAddon) desktopController.searchAddon.clearDecorations();
-          if (desktopController) desktopController.focus();
+        if (state.useDesktopTerminal) {
+          if (state.desktopController?.searchAddon) state.desktopController.searchAddon.clearDecorations();
+          if (state.desktopController) state.desktopController.focus();
         } else {
           const term = document.getElementById("terminal");
           if (lastRawPane) term.textContent = lastRawPane;
@@ -6558,8 +6572,8 @@
         searchTerm = document.getElementById("search-input").value;
         if (!searchTerm) {
           document.getElementById("search-count").textContent = "";
-          if (useDesktopTerminal) {
-            if (desktopController?.searchAddon) desktopController.searchAddon.clearDecorations();
+          if (state.useDesktopTerminal) {
+            if (state.desktopController?.searchAddon) state.desktopController.searchAddon.clearDecorations();
           } else {
             const term = document.getElementById("terminal");
             if (lastRawPane) term.textContent = lastRawPane;
@@ -6568,8 +6582,8 @@
           searchIndex = -1;
           return;
         }
-        if (useDesktopTerminal && desktopController?.searchAddon) {
-          desktopController.searchAddon.findNext(searchTerm, { caseSensitive: false, decorations: {
+        if (state.useDesktopTerminal && state.desktopController?.searchAddon) {
+          state.desktopController.searchAddon.findNext(searchTerm, { caseSensitive: false, decorations: {
             matchOverviewRuler: "#6e5c00",
             activeMatchColorOverviewRuler: "#ff6600",
           }});
@@ -6580,7 +6594,7 @@
       }
 
       function applySearchHighlights() {
-        if (useDesktopTerminal) return; // handled by xterm-addon-search
+        if (state.useDesktopTerminal) return; // handled by xterm-addon-search
         const term = document.getElementById("terminal");
         if (!searchTerm || !lastRawPane) return;
         const escaped = lastRawPane.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -6604,8 +6618,8 @@
       // Desktop search is handled by xterm-addon-search (see doSearch/nextMatch/prevMatch)
 
       function nextMatch() {
-        if (useDesktopTerminal && desktopController?.searchAddon && searchTerm) {
-          desktopController.searchAddon.findNext(searchTerm, { caseSensitive: false });
+        if (state.useDesktopTerminal && state.desktopController?.searchAddon && searchTerm) {
+          state.desktopController.searchAddon.findNext(searchTerm, { caseSensitive: false });
           return;
         }
         if (searchMatches.length === 0) return;
@@ -6614,8 +6628,8 @@
       }
 
       function prevMatch() {
-        if (useDesktopTerminal && desktopController?.searchAddon && searchTerm) {
-          desktopController.searchAddon.findPrevious(searchTerm, { caseSensitive: false });
+        if (state.useDesktopTerminal && state.desktopController?.searchAddon && searchTerm) {
+          state.desktopController.searchAddon.findPrevious(searchTerm, { caseSensitive: false });
           return;
         }
         if (searchMatches.length === 0) return;
@@ -6803,19 +6817,7 @@
       // ── Desktop Sidebar ──
 
       let sidebarRefreshTimer = null;
-      // Migrate old collapsed key → new pinned key (inverted)
-      let sidebarPinned = (() => {
-        const v = localStorage.getItem("wolfpack-sidebar-pinned");
-        if (v !== null) return v !== "0";
-        // Migrate from old key
-        const old = localStorage.getItem("wolfpack-sidebar-collapsed");
-        if (old === "1") return false;
-        return true; // default pinned
-      })();
-      let sidebarCollapsed = !sidebarPinned;
-      let sidebarAutoExpanded = false;
       let sidebarAutoCollapseTimer = null;
-      let sessionsExpanded = true; // default to expanded sessions view
 
       let sidebarInitialRender = false;
       let _sidebarRafId = null;
@@ -6910,8 +6912,8 @@
 
       function updatePinButton() {
         const btn = document.getElementById("sidebar-collapse-btn");
-        btn.classList.toggle("pinned", sidebarPinned);
-        btn.title = sidebarPinned ? "Unpin sidebar" : "Pin sidebar";
+        btn.classList.toggle("pinned", state.sidebarPinned);
+        btn.title = state.sidebarPinned ? "Unpin sidebar" : "Pin sidebar";
       }
 
       function initSidebar() {
@@ -6920,46 +6922,46 @@
         const hoverEdge = document.getElementById("sidebar-hover-edge");
 
         // Restore state
-        if (!sidebarPinned) {
+        if (!state.sidebarPinned) {
           sidebar.classList.add("collapsed");
-          sidebarCollapsed = true;
+          state.sidebarCollapsed = true;
         }
         updatePinButton();
 
         // Pin/unpin button
         document.getElementById("sidebar-collapse-btn").onclick = () => {
-          sidebarPinned = !sidebarPinned;
-          localStorage.setItem("wolfpack-sidebar-pinned", sidebarPinned ? "1" : "0");
-          if (sidebarPinned) {
+          state.sidebarPinned = !state.sidebarPinned;
+          localStorage.setItem("wolfpack-sidebar-pinned", state.sidebarPinned ? "1" : "0");
+          if (state.sidebarPinned) {
             // Pin: ensure visible
             sidebar.classList.remove("collapsed");
-            sidebarCollapsed = false;
-            sidebarAutoExpanded = false;
+            state.sidebarCollapsed = false;
+            state.sidebarAutoExpanded = false;
           } else {
             // Unpin: collapse immediately
             sidebar.classList.add("collapsed");
-            sidebarCollapsed = true;
+            state.sidebarCollapsed = true;
           }
           updatePinButton();
         };
 
         // Expand button — toggle full-page sessions view
         document.getElementById("sidebar-expand-btn").onclick = () => {
-          sessionsExpanded = !sessionsExpanded;
-          document.body.classList.toggle("sessions-expanded", sessionsExpanded);
-          document.getElementById("sidebar-expand-btn").classList.toggle("active", sessionsExpanded);
-          if (sessionsExpanded) {
+          state.sessionsExpanded = !state.sessionsExpanded;
+          document.body.classList.toggle("sessions-expanded", state.sessionsExpanded);
+          document.getElementById("sidebar-expand-btn").classList.toggle("active", state.sessionsExpanded);
+          if (state.sessionsExpanded) {
             // Collapse sidebar when expanded — main area has all sessions
             sidebar.classList.add("collapsed");
-            sidebarCollapsed = true;
-            sidebarAutoExpanded = false;
+            state.sidebarCollapsed = true;
+            state.sidebarAutoExpanded = false;
             showView("sessions");
             loadSessions();
           } else {
             // Restore sidebar based on pin state
-            if (sidebarPinned) {
+            if (state.sidebarPinned) {
               sidebar.classList.remove("collapsed");
-              sidebarCollapsed = false;
+              state.sidebarCollapsed = false;
             }
             // Return to terminal if we have a session, else just stay
             if (state.currentSession) showView("terminal");
@@ -6968,20 +6970,20 @@
 
         // Hover edge — expand on hover (only when unpinned and not in expanded mode)
         hoverEdge.addEventListener("mouseenter", () => {
-          if (sidebarCollapsed && !sidebarPinned && !sessionsExpanded) {
+          if (state.sidebarCollapsed && !state.sidebarPinned && !state.sessionsExpanded) {
             sidebar.classList.remove("collapsed");
-            sidebarAutoExpanded = true;
+            state.sidebarAutoExpanded = true;
           }
         });
 
         // Auto-collapse when mouse leaves sidebar (only if auto-expanded, not pinned)
         sidebar.addEventListener("mouseleave", () => {
-          if (sidebarAutoExpanded && !sidebarPinned) {
+          if (state.sidebarAutoExpanded && !state.sidebarPinned) {
             sidebarAutoCollapseTimer = setTimeout(() => {
-              if (sidebarAutoExpanded) {
+              if (state.sidebarAutoExpanded) {
                 sidebar.classList.add("collapsed");
-                sidebarCollapsed = true;
-                sidebarAutoExpanded = false;
+                state.sidebarCollapsed = true;
+                state.sidebarAutoExpanded = false;
               }
             }, 300);
           }
@@ -6998,11 +7000,11 @@
         // Resizing the PTY during hover causes Claude Code's TUI to redraw with
         // a right-margin dot fill (·) that persists after the sidebar collapses.
         sidebar.addEventListener("transitionend", (e) => {
-          if (e.propertyName === "margin-left" && !sidebarAutoExpanded) {
+          if (e.propertyName === "margin-left" && !state.sidebarAutoExpanded) {
             if (isGridActive()) {
               scheduleGridStabilizedFit();
-            } else if (desktopController) {
-              desktopController.resize();
+            } else if (state.desktopController) {
+              state.desktopController.resize();
             }
           }
         });
@@ -7031,12 +7033,12 @@
       renderCmdPalette();
       initSidebar(); // Init sidebar early so pin/expand/hover handlers are ready
       // Apply expanded sessions as default on desktop — sidebar collapsed in this mode
-      if (isDesktop() && sessionsExpanded) {
+      if (isDesktop() && state.sessionsExpanded) {
         document.body.classList.add("sessions-expanded");
         const expandBtn = document.getElementById("sidebar-expand-btn");
         if (expandBtn) expandBtn.classList.add("active");
         const sb = document.getElementById("desktop-sidebar");
-        if (sb) { sb.classList.add("collapsed"); sidebarCollapsed = true; }
+        if (sb) { sb.classList.add("collapsed"); state.sidebarCollapsed = true; }
       }
       showView("sessions", true);
       loadSessions().then(renderSidebar);
