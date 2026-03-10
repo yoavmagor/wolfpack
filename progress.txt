@@ -135,3 +135,12 @@
 - Deleted `tests/integration/auth-middleware.test.ts` (452 lines, 31 tests)
 - Savings: ~637 lines (185 auth.ts + 452 tests)
 - All 664 tests pass (4 pre-existing Playwright config failures unrelated)
+
+## Task 3: Remove PTY Prefill Dedup Logic — DONE
+- Removed `PREFILL_OVERLAP_LIMIT` constant, `bufferStartsWithPrefillSuffix()` helper, `__stripInitialPtyOverlap()` exported function (~35 lines)
+- Removed `pendingAttach` buffer, `shouldDedupeInitialAttach` flag, and byte-by-byte dedup state machine in PTY `data` callback (~15 lines)
+- Deleted `tests/unit/websocket-scrollback.test.ts` (37 lines, 4 tests)
+- Prefill scrollback still sent to client; attach output now passes through without dedup
+- Risk: minor visual duplicate on PTY attach (barely noticeable, ~2KB repeat)
+- Savings: ~50 lines code + 37 lines tests
+- All 660 tests pass (4 pre-existing Playwright config failures unrelated)
