@@ -130,6 +130,7 @@ export function killPortHolder(port: number): boolean {
           return false;
         }
       } catch {
+        // process exited between lsof and ps lookup — nothing to kill
         return false;
       }
       process.kill(pid, "SIGTERM");

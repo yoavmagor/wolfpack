@@ -37,6 +37,11 @@ function assertTestMode(hook: string): void {
 
 // ── tmuxList ──
 
+/** Returns true if dir is DEV_DIR itself or a child of DEV_DIR (proper path boundary). */
+export function isUnderDevDir(dir: string): boolean {
+  return dir === DEV_DIR || dir.startsWith(DEV_DIR + "/");
+}
+
 /** Maps session name → project directory. Set at creation time by tmuxNewSession(),
  *  backfilled by tmuxList() only for pre-existing sessions (never overwrites). */
 export const sessionDirMap = new Map<string, string>();
@@ -58,17 +63,26 @@ async function _realTmuxList(): Promise<string[]> {
       if (idx === -1) continue;
       const name = line.substring(0, idx);
       const dir = line.substring(idx + SEP.length);
-      if (!dir.startsWith(DEV_DIR) || name.startsWith("wp_")) continue;
+      if (name.startsWith("wp_")) continue;
+      if (!isUnderDevDir(dir)) continue;
       sessions.push(name);
       if (!sessionDirMap.has(name)) {
         // backfill: prefer stored env var (survives server restart), fall back to pane_current_path
         try {
           const { stdout: envOut } = await exec(TMUX, ["show-environment", "-t", name, WOLFPACK_DIR_ENV]);
-          const val = envOut.trim().split("=").slice(1).join("=");
-          if (val && val.startsWith(DEV_DIR)) { sessionDirMap.set(name, val); continue; }
+          const eqIdx = envOut.indexOf("=");
+          const val = eqIdx !== -1 ? envOut.substring(eqIdx + 1).trim() : "";
+          if (val && isUnderDevDir(val)) { sessionDirMap.set(name, val); continue; }
         } catch {}
         sessionDirMap.set(name, dir);
       }
+    }
+    // prune stale entries for sessions that no longer exist
+    for (const key of sessionDirMap.keys()) {
+      if (!sessions.includes(key)) sessionDirMap.delete(key);
+    }
+    for (const key of _triageCacheMap.keys()) {
+      if (!sessions.includes(key)) _triageCacheMap.delete(key);
     }
     return sessions;
   } catch {
