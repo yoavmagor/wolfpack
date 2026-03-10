@@ -1,5 +1,5 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 type JsonObject = Record<string, unknown>;
 

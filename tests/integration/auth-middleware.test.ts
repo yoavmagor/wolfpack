@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
-import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 
 process.env.WOLFPACK_TEST = "1";
 process.env.WOLFPACK_JWT_SECRET = "wolfpack-test-secret-long-enough-for-validation";
@@ -11,8 +11,8 @@ process.env.WOLFPACK_JWT_AUDIENCE = "wolfpack-client";
 const { __resetJwtAuthConfig } = await import("../../src/auth.ts");
 __resetJwtAuthConfig();
 
-const { __setTmuxList, server } = await import("../../src/server/index.ts") as {
-  __setTmuxList: (fn: () => Promise<string[]>) => void;
+const { __setTestOverrides, server } = await import("../../src/server/index.ts") as {
+  __setTestOverrides: (overrides: Partial<{ tmuxList: () => Promise<string[]> }>) => void;
   server: Server;
 };
 
@@ -23,7 +23,7 @@ let port = 0;
 let baseUrl = "";
 let baseWsUrl = "";
 
-__setTmuxList(async () => ["auth-session"]);
+__setTestOverrides({ tmuxList: async () => ["auth-session"] });
 
 function b64url(input: string): string {
   return Buffer.from(input, "utf-8")
@@ -240,8 +240,6 @@ describe("JWT auth middleware", () => {
     await closeWs(authedPty.ws!);
   });
 
-  // ── Signature & algorithm edge cases ──────────────────────────────────────
-
   test("rejects JWT signed with wrong secret", async () => {
     const now = Math.floor(Date.now() / 1000);
     const token = createJwt(
@@ -278,8 +276,6 @@ describe("JWT auth middleware", () => {
     });
     expect(res.status).toBe(401);
   });
-
-  // ── Malformed token structures ────────────────────────────────────────────
 
   test("rejects single-segment token", async () => {
     const res = await fetch(`${baseUrl}/api/projects`, {
@@ -320,8 +316,6 @@ describe("JWT auth middleware", () => {
     expect(res.status).toBe(401);
   });
 
-  // ── Temporal claim edge cases ─────────────────────────────────────────────
-
   test("rejects JWT with nbf in the future", async () => {
     const now = Math.floor(Date.now() / 1000);
     const token = createJwt({
@@ -329,7 +323,7 @@ describe("JWT auth middleware", () => {
       aud: AUTH_AUDIENCE,
       iat: now - 10,
       exp: now + 600,
-      nbf: now + 300, // not valid for another 5 minutes
+      nbf: now + 300,
     });
     const res = await fetch(`${baseUrl}/api/projects`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -342,7 +336,7 @@ describe("JWT auth middleware", () => {
     const token = createJwt({
       sub: "test",
       aud: AUTH_AUDIENCE,
-      iat: now + 600, // issued 10 minutes from now
+      iat: now + 600,
       exp: now + 900,
     });
     const res = await fetch(`${baseUrl}/api/projects`, {
@@ -350,8 +344,6 @@ describe("JWT auth middleware", () => {
     });
     expect(res.status).toBe(401);
   });
-
-  // ── Audience variations ───────────────────────────────────────────────────
 
   test("rejects JWT with array audience not containing expected value", async () => {
     const now = Math.floor(Date.now() / 1000);
@@ -394,8 +386,6 @@ describe("JWT auth middleware", () => {
     expect(res.status).toBe(401);
   });
 
-  // ── Response shape on 401 ─────────────────────────────────────────────────
-
   test("401 response includes WWW-Authenticate Bearer realm header", async () => {
     const res = await fetch(`${baseUrl}/api/sessions`);
     expect(res.status).toBe(401);
@@ -412,11 +402,8 @@ describe("JWT auth middleware", () => {
     expect(body.error).toBe("unauthorized");
   });
 
-  // ── Auth boundary: static assets bypass auth ──────────────────────────────
-
   test("static root (/) does not require auth", async () => {
     const res = await fetch(`${baseUrl}/`);
-    // should serve index.html (200) or redirect — NOT 401
     expect(res.status).not.toBe(401);
   });
 
@@ -424,8 +411,6 @@ describe("JWT auth middleware", () => {
     const res = await fetch(`${baseUrl}/manifest.json`);
     expect(res.status).not.toBe(401);
   });
-
-  // ── WebSocket auth edge cases ─────────────────────────────────────────────
 
   test("rejects websocket with expired query token", async () => {
     const token = createExpiredToken();

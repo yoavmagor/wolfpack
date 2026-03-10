@@ -62,10 +62,20 @@ async function _realTmuxList(): Promise<string[]> {
 
 let _tmuxListFn: () => Promise<string[]> = _realTmuxList;
 
-/** Test hook: override tmuxList to avoid requiring real tmux */
-export function __setTmuxList(fn: () => Promise<string[]>): void {
-  assertTestMode("__setTmuxList");
-  _tmuxListFn = fn;
+/** Test hook: override tmux functions to avoid requiring real tmux */
+export function __setTestOverrides(overrides: Partial<{
+  tmuxList: () => Promise<string[]>;
+  tmuxSend: (session: string, text: string, noEnter?: boolean) => Promise<void>;
+  tmuxSendKey: (session: string, key: string) => Promise<void>;
+  tmuxResize: (session: string, cols: number, rows: number) => Promise<void>;
+  capturePane: (session: string) => Promise<string>;
+}>): void {
+  assertTestMode("__setTestOverrides");
+  if (overrides.tmuxList) _tmuxListFn = overrides.tmuxList;
+  if (overrides.tmuxSend) _tmuxSendFn = overrides.tmuxSend;
+  if (overrides.tmuxSendKey) _tmuxSendKeyFn = overrides.tmuxSendKey;
+  if (overrides.tmuxResize) _tmuxResizeFn = overrides.tmuxResize;
+  if (overrides.capturePane) _capturePane = overrides.capturePane;
 }
 
 export async function tmuxList(): Promise<string[]> {
@@ -91,18 +101,6 @@ async function _realTmuxSendKey(session: string, key: string): Promise<void> {
 let _tmuxSendFn: (session: string, text: string, noEnter?: boolean) => Promise<void> = _realTmuxSend;
 let _tmuxSendKeyFn: (session: string, key: string) => Promise<void> = _realTmuxSendKey;
 
-/** Test hook: override tmuxSend */
-export function __setTmuxSend(fn: (session: string, text: string, noEnter?: boolean) => Promise<void>): void {
-  assertTestMode("__setTmuxSend");
-  _tmuxSendFn = fn;
-}
-
-/** Test hook: override tmuxSendKey */
-export function __setTmuxSendKey(fn: (session: string, key: string) => Promise<void>): void {
-  assertTestMode("__setTmuxSendKey");
-  _tmuxSendKeyFn = fn;
-}
-
 export async function tmuxSend(session: string, text: string, noEnter = false): Promise<void> {
   return _tmuxSendFn(session, text, noEnter);
 }
@@ -118,12 +116,6 @@ async function _realTmuxResize(session: string, cols: number, rows: number): Pro
 }
 
 let _tmuxResizeFn: (session: string, cols: number, rows: number) => Promise<void> = _realTmuxResize;
-
-/** Test hook: override tmuxResize */
-export function __setTmuxResize(fn: (session: string, cols: number, rows: number) => Promise<void>): void {
-  assertTestMode("__setTmuxResize");
-  _tmuxResizeFn = fn;
-}
 
 export async function tmuxResize(session: string, cols: number, rows: number): Promise<void> {
   return _tmuxResizeFn(session, cols, rows);
@@ -156,12 +148,6 @@ export async function capturePaneForTriage(session: string): Promise<string> {
   const content = await _capturePane(session);
   _triageCacheMap.set(session, { content, ts: Date.now() });
   return content;
-}
-
-/** Test hook: override capturePane */
-export function __setCapturePane(fn: (session: string) => Promise<string>): void {
-  assertTestMode("__setCapturePane");
-  _capturePane = fn;
 }
 
 // ── tmuxNewSession ──

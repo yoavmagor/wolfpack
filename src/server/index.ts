@@ -27,14 +27,8 @@ import {
 import { handleTerminalWs, handlePtyWs } from "./websocket.js";
 
 // Re-export everything tests need from a single entry point
-export {
-  __setTmuxList,
-  __setTmuxSend,
-  __setTmuxSendKey,
-  __setTmuxResize,
-  __setCapturePane,
-} from "./tmux.js";
-export { __getActivePtySessions, __getPtySpawnAttempts } from "./websocket.js";
+export { __setTestOverrides } from "./tmux.js";
+export { __getTestState } from "./websocket.js";
 
 const PORT =
   Number(process.env.WOLFPACK_PORT) || Number(process.argv[2]) || 18790;
