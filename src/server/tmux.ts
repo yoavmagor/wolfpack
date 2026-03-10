@@ -41,6 +41,8 @@ function assertTestMode(hook: string): void {
  *  backfilled by tmuxList() only for pre-existing sessions (never overwrites). */
 export const sessionDirMap = new Map<string, string>();
 
+const WOLFPACK_DIR_ENV = "WOLFPACK_PROJECT_DIR";
+
 async function _realTmuxList(): Promise<string[]> {
   try {
     const { stdout } = await exec(TMUX, [
@@ -58,7 +60,15 @@ async function _realTmuxList(): Promise<string[]> {
       const dir = line.substring(idx + SEP.length);
       if (!dir.startsWith(DEV_DIR) || name.startsWith("wp_")) continue;
       sessions.push(name);
-      if (!sessionDirMap.has(name)) sessionDirMap.set(name, dir);
+      if (!sessionDirMap.has(name)) {
+        // backfill: prefer stored env var (survives server restart), fall back to pane_current_path
+        try {
+          const { stdout: envOut } = await exec(TMUX, ["show-environment", "-t", name, WOLFPACK_DIR_ENV]);
+          const val = envOut.trim().split("=").slice(1).join("=");
+          if (val && val.startsWith(DEV_DIR)) { sessionDirMap.set(name, val); continue; }
+        } catch {}
+        sessionDirMap.set(name, dir);
+      }
     }
     return sessions;
   } catch {
@@ -196,11 +206,13 @@ export async function tmuxNewSession(
   sessionDirMap.set(name, cwd);
   if (agentCmd === "shell") {
     await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, SHELL]);
-    return;
+  } else {
+    const fullCmd = injectAgentContext(agentCmd);
+    const shellCmd = `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT ${SHELL} -lic ${shellEscape(fullCmd + "; exec " + SHELL)}`;
+    await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, shellCmd]);
   }
-  const fullCmd = injectAgentContext(agentCmd);
-  const shellCmd = `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT ${SHELL} -lic ${shellEscape(fullCmd + "; exec " + SHELL)}`;
-  await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, shellCmd]);
+  // persist project root in tmux session env — survives server restarts
+  await exec(TMUX, ["set-environment", "-t", name, WOLFPACK_DIR_ENV, cwd]).catch(() => {});
 }
 
 // ── Cleanup ──
