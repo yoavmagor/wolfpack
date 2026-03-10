@@ -37,6 +37,9 @@ function assertTestMode(hook: string): void {
 
 // ── tmuxList ──
 
+/** Maps session name → project directory (populated by tmuxList and tmuxNewSession) */
+export const sessionDirMap = new Map<string, string>();
+
 async function _realTmuxList(): Promise<string[]> {
   try {
     const { stdout } = await exec(TMUX, [
@@ -45,16 +48,18 @@ async function _realTmuxList(): Promise<string[]> {
       "#{session_name}|||#{pane_current_path}",
     ]);
     const SEP = "|||";
-    return stdout
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .filter((line) => {
-        const idx = line.indexOf(SEP);
-        return idx !== -1 && line.substring(idx + SEP.length).startsWith(DEV_DIR);
-      })
-      .map((line) => line.substring(0, line.indexOf(SEP)))
-      .filter((name) => !name.startsWith("wp_"));
+    const sessions: string[] = [];
+    for (const line of stdout.trim().split("\n")) {
+      if (!line) continue;
+      const idx = line.indexOf(SEP);
+      if (idx === -1) continue;
+      const name = line.substring(0, idx);
+      const dir = line.substring(idx + SEP.length);
+      if (!dir.startsWith(DEV_DIR) || name.startsWith("wp_")) continue;
+      sessions.push(name);
+      sessionDirMap.set(name, dir);
+    }
+    return sessions;
   } catch {
     return [];
   }
@@ -187,6 +192,7 @@ export async function tmuxNewSession(
   loadSettings: () => { agentCmd: string },
 ): Promise<void> {
   const agentCmd = cmd || loadSettings().agentCmd || "claude";
+  sessionDirMap.set(name, cwd);
   if (agentCmd === "shell") {
     await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, SHELL]);
     return;

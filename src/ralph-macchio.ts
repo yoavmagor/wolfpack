@@ -546,7 +546,7 @@ async function main() {
       } else {
         markSectionDone(task);
       }
-      if (maxIterations < MAX_CEILING) maxIterations++;
+      if (maxIterations < MAX_CEILING) maxIterations = Math.min(maxIterations + subtasks.length, MAX_CEILING);
       appendFileSync(LOG_FILE, `\n=== 🧩 Subtasks detected (${subtasks.length}) — extended to ${maxIterations} iterations (ceiling ${MAX_CEILING}, expansions ${subtaskExpansions}/${MAX_SUBTASK_EXPANSIONS}) ===\n`);
       for (const st of subtasks) appendFileSync(LOG_FILE, `  + ${st}\n`);
       lastTask = task;
@@ -589,7 +589,7 @@ const CLEANUP_PROMPT = `You may ONLY create/edit/delete files under ${PROJECT_DI
 You are running a CLEANUP pass after all tasks have been implemented.
 
 INSTRUCTIONS:
-1. Run \`git diff --name-only HEAD~10 HEAD 2>/dev/null || git diff --name-only HEAD\` to find all files changed during this session.
+1. Run \`git diff --name-only ${START_COMMIT || "HEAD~10"} HEAD 2>/dev/null || git diff --name-only HEAD\` to find all files changed during this session.
 2. For each changed file, review for:
    - Dead code: unreachable functions, unused imports, orphaned variables
    - Old code paths that were replaced but not removed

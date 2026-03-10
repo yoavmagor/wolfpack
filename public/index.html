@@ -2766,12 +2766,21 @@
       }
       const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
       function applyTermToXterm() {
-        if (!state.desktopController?.term) return;
         const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-        state.desktopController.term.options.fontSize = p.fontSize;
-        state.desktopController.term.options.lineHeight = p.lineHeight;
-        state.desktopController.term.options.fontFamily = getTerminalFontFamily();
-        state.desktopController.resize();
+        const fontFamily = getTerminalFontFamily();
+        if (state.desktopController?.term) {
+          state.desktopController.term.options.fontSize = p.fontSize;
+          state.desktopController.term.options.lineHeight = p.lineHeight;
+          state.desktopController.term.options.fontFamily = fontFamily;
+          state.desktopController.resize();
+        }
+        for (const gs of state.gridSessions) {
+          if (!gs.controller?.term) continue;
+          gs.controller.term.options.fontSize = Math.max(p.fontSize - 2, 10);
+          gs.controller.term.options.lineHeight = p.lineHeight;
+          gs.controller.term.options.fontFamily = fontFamily;
+          gs.controller.resize();
+        }
       }
       function initSettings() {
         Object.entries(wpSettings).forEach(([k, v]) => {

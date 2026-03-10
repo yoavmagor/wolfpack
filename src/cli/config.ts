@@ -121,6 +121,17 @@ export function killPortHolder(port: number): boolean {
       pid = m ? Number(m[1]) : null;
     }
     if (pid && pid > 1) {
+      try {
+        const comm = IS_MACOS
+          ? execFileSync("ps", ["-p", String(pid), "-o", "comm="], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim()
+          : execFileSync("ps", ["-p", String(pid), "-o", "args="], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+        if (!comm.includes("wolfpack")) {
+          print(dim(`  Port ${p} held by non-wolfpack process (PID ${pid}): ${comm}`));
+          return false;
+        }
+      } catch {
+        return false;
+      }
       process.kill(pid, "SIGTERM");
       print(dim(`  Killed stale process (PID ${pid}) on port ${p}`));
       return true;
