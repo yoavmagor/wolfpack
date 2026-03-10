@@ -2355,7 +2355,7 @@
 
     <!-- Project picker view -->
     <div id="projects-view" class="view">
-      <button class="picker-cancel-btn" onclick="showView(viewBeforePicker); loadSessions();">← Cancel</button>
+      <button class="picker-cancel-btn" onclick="showView(state.viewBeforePicker); loadSessions();">← Cancel</button>
       <div class="new-project-row">
         <input
           id="new-project-name"
@@ -2793,14 +2793,14 @@
 
       async function sendQuickCmd(index) {
         const cmd = quickCmds[index];
-        if (!cmd || !currentSession) return;
+        if (!cmd || !state.currentSession) return;
         haptic([30]);
         try {
           await api("/send", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session: currentSession, text: cmd.cmd }),
-          }, currentMachine);
+            body: JSON.stringify({ session: state.currentSession, text: cmd.cmd }),
+          }, state.currentMachine);
           connectMobileTerminalWs();
         } catch {
           wpMetrics.sendFailCount++;
@@ -2865,13 +2865,13 @@
       }
 
       async function showGitStatus() {
-        if (!currentSession) return;
+        if (!state.currentSession) return;
         haptic([30]);
         const overlay = document.getElementById("git-status-overlay");
         overlay.innerHTML = '<pre>loading...</pre>';
         overlay.classList.add("visible");
         try {
-          const data = await api("/git-status?session=" + encodeURIComponent(currentSession), {}, currentMachine);
+          const data = await api("/git-status?session=" + encodeURIComponent(state.currentSession), {}, state.currentMachine);
           overlay.innerHTML = `<div><pre>${esc(data.status || "(clean)")}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
         } catch (e) {
           overlay.innerHTML = `<div><pre style="color:#cc3333">${esc(errorMessage(e))}</pre><div class="overlay-hint">tap to dismiss</div></div>`;
@@ -2913,10 +2913,13 @@
         saveRecents();
       }
 
-      let currentSession = null;
-      let currentMachine = ""; // "" = self, URL string = remote
-      let currentView = "sessions";
-      let viewBeforePicker = "sessions"; // stashed view to return to on Escape from project/agent picker
+      const state = {
+        currentView: "sessions",
+        currentSession: null,
+        currentMachine: "", // "" = self, URL string = remote
+        viewBeforePicker: "sessions", // stashed view to return to on Escape from project/agent picker
+      };
+      function setState(patch) { Object.assign(state, patch); }
       const RECONNECT_BUDGET_MS = 2 * 60 * 1000;
       const RECONNECT_BASE_DELAY_MS = 500;
       const RECONNECT_MAX_DELAY_MS = 5000;
@@ -3861,8 +3864,7 @@
         // Sync sidebar highlights
         const focusedGs = gridSessions[idx];
         if (focusedGs) {
-          currentSession = focusedGs.session;
-          currentMachine = focusedGs.machine || "";
+          setState({ currentSession: focusedGs.session, currentMachine: focusedGs.machine || "" });
           renderSidebar();
           // Focus the terminal
           if (focusedGs.controller) focusedGs.controller.focus();
@@ -3875,8 +3877,8 @@
         // Already in grid?
         if (gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
         // Track which session had a full-width PTY (needs reset on grid connect)
-        const singleTermSession = (desktopController?.term && currentSession) ? currentSession : null;
-        const singleTermMachine = singleTermSession ? (currentMachine || "") : "";
+        const singleTermSession = (desktopController?.term && state.currentSession) ? state.currentSession : null;
+        const singleTermMachine = singleTermSession ? (state.currentMachine || "") : "";
         const gs = {
           session,
           machine: machine || "",
@@ -3884,12 +3886,12 @@
         };
         gridSessions.push(gs);
         // If transitioning from single to grid, add current session too
-        if (gridSessions.length === 1 && currentSession) {
-          const alreadyAdded = session === currentSession && (machine || "") === currentMachine;
+        if (gridSessions.length === 1 && state.currentSession) {
+          const alreadyAdded = session === state.currentSession && (machine || "") === state.currentMachine;
           if (!alreadyAdded) {
             gridSessions.unshift({
-              session: currentSession,
-              machine: currentMachine,
+              session: state.currentSession,
+              machine: state.currentMachine,
               controller: null,
             });
           }
@@ -3954,8 +3956,8 @@
         }
         // Determine which session to restore before destroying
         const remaining = gridSessions.length >= 1 ? gridSessions[0] : null;
-        const restoreSession = remaining ? remaining.session : currentSession;
-        const restoreMachine = remaining ? (remaining.machine || "") : currentMachine;
+        const restoreSession = remaining ? remaining.session : state.currentSession;
+        const restoreMachine = remaining ? (remaining.machine || "") : state.currentMachine;
         // Destroy all grid sessions
         for (const gs of gridSessions) {
           if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
@@ -3976,8 +3978,7 @@
         desktopController = null;
         // Restore single-terminal mode
         if (restoreSession) {
-          currentSession = restoreSession;
-          currentMachine = restoreMachine;
+          setState({ currentSession: restoreSession, currentMachine: restoreMachine });
           useDesktopTerminal = true;
           initDesktopTerminal();
           renderSidebar();
@@ -4038,22 +4039,22 @@
         return "wp-draft|" + (machine || "") + "|" + session;
       }
       function saveDraft() {
-        if (!currentSession) return;
+        if (!state.currentSession) return;
         const val = document.getElementById("msg-input").value;
-        const key = draftKey(currentMachine, currentSession);
+        const key = draftKey(state.currentMachine, state.currentSession);
         if (val) localStorage.setItem(key, val);
         else localStorage.removeItem(key);
       }
       function restoreDraft() {
-        if (!currentSession) return;
-        const val = localStorage.getItem(draftKey(currentMachine, currentSession)) || "";
+        if (!state.currentSession) return;
+        const val = localStorage.getItem(draftKey(state.currentMachine, state.currentSession)) || "";
         const input = document.getElementById("msg-input");
         input.value = val;
         autoResizeInput();
       }
       function clearDraft() {
-        if (!currentSession) return;
-        localStorage.removeItem(draftKey(currentMachine, currentSession));
+        if (!state.currentSession) return;
+        localStorage.removeItem(draftKey(state.currentMachine, state.currentSession));
       }
 
       // ── Recovery snapshots (UX-14) ──
@@ -4104,7 +4105,7 @@
       }
       function flushSnapshot() {
         snapshotTimer = null;
-        if (!currentSession) { snapshotPending = null; return; }
+        if (!state.currentSession) { snapshotPending = null; return; }
         let text;
         if (useDesktopTerminal && desktopController?.term) {
           text = serializeXtermTail(desktopController.term, 100);
@@ -4112,7 +4113,7 @@
           text = snapshotPending;
         }
         snapshotPending = null;
-        if (text) saveSnapshot(currentMachine, currentSession, text);
+        if (text) saveSnapshot(state.currentMachine, state.currentSession, text);
       }
       function serializeXtermTail(term, maxLines) {
         const buf = term.buffer.active;
@@ -4229,12 +4230,12 @@
       };
 
       function showView(name, skipAnimation) {
-        const prevView = currentView;
+        const prevView = state.currentView;
         const prevEl = document.getElementById(prevView + "-view");
         const isMobile = !isDesktop();
 
         // Desktop: "sessions" view is hidden — redirect to terminal if active (unless sessions expanded)
-        const effectiveName = (!isMobile && name === "sessions" && currentSession && !sessionsExpanded) ? "terminal" : name;
+        const effectiveName = (!isMobile && name === "sessions" && state.currentSession && !sessionsExpanded) ? "terminal" : name;
 
         const nextEl = document.getElementById(effectiveName + "-view");
         const wasSwipe = swipeNavigated;
@@ -4248,7 +4249,7 @@
           clearInterval(debugPanelTimer); debugPanelTimer = null;
         }
 
-        currentView = effectiveName;
+        setState({ currentView: effectiveName });
 
         if (animate) {
           const fg = goingForward ? nextEl : prevEl;
@@ -4364,7 +4365,7 @@
             sessionRefreshTimer = setInterval(loadSessions, 5000);
           } else if (name === "projects") {
             back.style.display = "block";
-            back.onclick = () => { stopPolling(); showView(viewBeforePicker); loadSessions(); };
+            back.onclick = () => { stopPolling(); showView(state.viewBeforePicker); loadSessions(); };
             gear.style.display = "none";
             title.textContent = "select project";
 
@@ -4387,8 +4388,7 @@
               if (useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
               closeSearch();
               useDesktopTerminal = false;
-              currentSession = null;
-              currentMachine = "";
+              setState({ currentSession: null, currentMachine: "" });
               showView("sessions");
               loadSessions();
             };
@@ -4400,8 +4400,8 @@
             document.getElementById("search-btn").style.display = "";
             const hml = document.getElementById("header-machine-label");
             if (getMachines().length > 0) {
-              const mName = currentMachine
-                ? (getMachines().find(m => m.url === currentMachine)?.name || "remote")
+              const mName = state.currentMachine
+                ? (getMachines().find(m => m.url === state.currentMachine)?.name || "remote")
                 : (selfName || "local");
               hml.textContent = mName;
               hml.style.display = "";
@@ -5014,7 +5014,7 @@
           exitGridMode();
         }
         // On desktop, if already in terminal view, do a session switch
-        if (isDesktop() && currentView === "terminal" && currentSession) {
+        if (isDesktop() && state.currentView === "terminal" && state.currentSession) {
           // If sidebar is auto-expanded (hover), instantly collapse it before
           // switching so the new terminal fits to full width. Without this,
           // initDesktopTerminal() fits to the narrow width, triggering a PTY
@@ -5035,15 +5035,14 @@
           renderSidebar();
           return;
         }
-        currentSession = name;
-        currentMachine = machineUrl || "";
-        recordRecent(currentMachine, name);
+        setState({ currentSession: name, currentMachine: machineUrl || "" });
+        recordRecent(state.currentMachine, name);
         lastRawPane = null;
         useDesktopTerminal = isDesktop();
         wpMetrics.reset();
         setFollowMode(true);
         restoreDraft();
-        const cached = loadSnapshot(currentMachine, name);
+        const cached = loadSnapshot(state.currentMachine, name);
         showView("terminal");
         if (useDesktopTerminal) {
           destroyDesktopTerminal();
@@ -5074,7 +5073,7 @@
       }
 
       async function resizePane() {
-        if (!currentSession) return;
+        if (!state.currentSession) return;
         const term = document.getElementById("terminal");
         const dims = getCharDimensions();
         if (!dims.w || !dims.h) return false;
@@ -5085,8 +5084,8 @@
             await api("/resize", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ session: currentSession, cols, rows }),
-            }, currentMachine);
+              body: JSON.stringify({ session: state.currentSession, cols, rows }),
+            }, state.currentMachine);
             return true;
           } catch {
             return false;
@@ -5101,7 +5100,7 @@
 
       async function showProjectPicker(machineUrl) {
         projectMachine = machineUrl || "";
-        viewBeforePicker = currentView;
+        setState({ viewBeforePicker: state.currentView });
         showView("projects");
         document.getElementById("new-project-name").value = "";
         const el = document.getElementById("project-list");
@@ -5253,8 +5252,7 @@
             body: JSON.stringify(body),
           }, machine);
           if (data.session) {
-            currentSession = data.session;
-            currentMachine = machine;
+            setState({ currentSession: data.session, currentMachine: machine });
             useDesktopTerminal = isDesktop();
             // Refresh session list in background so it doesn't block terminal init
             loadSessions().then(() => { loadSessionSwitcher(); renderSidebar(); });
@@ -5322,8 +5320,8 @@
         document.getElementById("msg-preview").style.display = "none";
 
         desktopController = createPtyTerminalController({
-          session: currentSession,
-          machine: currentMachine || "",
+          session: state.currentSession,
+          machine: state.currentMachine || "",
           scrollback: DESKTOP_TERMINAL_SCROLLBACK,
           getHydrationElement: () => document.getElementById("desktop-terminal-container"),
           shouldFocus: () => true,
@@ -5416,14 +5414,14 @@
       // ── Terminal ──
 
       function terminalSessionKey() {
-        return (currentMachine || "") + "|" + (currentSession || "");
+        return (state.currentMachine || "") + "|" + (state.currentSession || "");
       }
 
       function setConnState(state) {
         const statusEl = document.getElementById("conn-status");
         if (!statusEl) return;
         const active = useDesktopTerminal ? !!desktopController?.term : mobileStreamingActive;
-        if (currentView !== "terminal" || !active || state === "live") {
+        if (state.currentView !== "terminal" || !active || state === "live") {
           statusEl.style.display = "none";
           statusEl.style.background = "#cc3333";
           return;
@@ -5527,17 +5525,17 @@
       })();
 
       function mobileTerminalWsUrl() {
-        if (currentMachine) {
-          const remote = new URL(currentMachine);
+        if (state.currentMachine) {
+          const remote = new URL(state.currentMachine);
           const proto = remote.protocol === "https:" ? "wss:" : "ws:";
-          return proto + "//" + remote.host + "/ws/terminal?session=" + encodeURIComponent(currentSession);
+          return proto + "//" + remote.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
         }
         const proto = location.protocol === "https:" ? "wss:" : "ws:";
-        return proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(currentSession);
+        return proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
       }
 
       function connectMobileTerminalWs() {
-        if (!mobileStreamingActive || useDesktopTerminal || !currentSession || currentView !== "terminal") return;
+        if (!mobileStreamingActive || useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
         if (mobileRetryBlocked) return;
         if (mobileWs && mobileWs.readyState <= WebSocket.OPEN) return;
         const connectKey = terminalSessionKey();
@@ -5583,7 +5581,7 @@
       }
 
       function scheduleMobileReconnect() {
-        if (!mobileStreamingActive || useDesktopTerminal || !currentSession || currentView !== "terminal") return;
+        if (!mobileStreamingActive || useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
         if (mobileReconnectTimer) return;
         const now = Date.now();
         if (!mobileReconnectStartedAt) mobileReconnectStartedAt = now;
@@ -5652,7 +5650,7 @@
       }
 
       function retryTerminalConnection() {
-        if (useDesktopTerminal || !currentSession) return;
+        if (useDesktopTerminal || !state.currentSession) return;
         mobileRetryBlocked = false;
         if (mobileWs) {
           const ws = mobileWs;
@@ -5678,7 +5676,7 @@
       async function sendMsg() {
         const input = document.getElementById("msg-input");
         const text = input.value.trim();
-        if (!text || !currentSession) return;
+        if (!text || !state.currentSession) return;
         const saved = text;
         input.value = "";
         clearDraft();
@@ -5696,18 +5694,18 @@
           await api("/send", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session: currentSession, text: text.replace(/\n/g, " ") }),
-          }, currentMachine);
+            body: JSON.stringify({ session: state.currentSession, text: text.replace(/\n/g, " ") }),
+          }, state.currentMachine);
           connectMobileTerminalWs();
 
           // Enter retry: if output hasn't changed within 800ms, Enter may have been dropped.
           // Timer is cleared on any pane change, so this only fires if truly stuck.
           // Scope to the session that was active at send time to prevent phantom Enter on other sessions.
           if (enterRetryTimer) clearTimeout(enterRetryTimer);
-          const retrySession = currentSession;
-          const retryMachine = currentMachine;
+          const retrySession = state.currentSession;
+          const retryMachine = state.currentMachine;
           enterRetryTimer = setTimeout(() => {
-            if (currentSession === retrySession && currentMachine === retryMachine) {
+            if (state.currentSession === retrySession && state.currentMachine === retryMachine) {
               sendKey("Enter");
             }
             enterRetryTimer = null;
@@ -5733,14 +5731,14 @@
       }
 
       async function sendKey(key) {
-        if (!currentSession) return;
+        if (!state.currentSession) return;
         try {
           wpMetrics.sendCount++;
           await api("/key", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session: currentSession, key }),
-          }, currentMachine);
+            body: JSON.stringify({ session: state.currentSession, key }),
+          }, state.currentMachine);
           connectMobileTerminalWs();
         } catch {
           wpMetrics.sendFailCount++;
@@ -5760,13 +5758,12 @@
           alert("Failed to kill session: " + errorMessage(e));
           return;
         }
-        const wasCurrentSession = name === currentSession && (machineUrl || "") === currentMachine;
-        if (wasCurrentSession && currentView === "terminal") {
+        const wasCurrentSession = name === state.currentSession && (machineUrl || "") === state.currentMachine;
+        if (wasCurrentSession && state.currentView === "terminal") {
           if (useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
           closeSearch();
           useDesktopTerminal = false;
-          currentSession = null;
-          currentMachine = "";
+          setState({ currentSession: null, currentMachine: "" });
           showView("sessions");
         }
         loadSessions().then(renderSidebar);
@@ -5804,12 +5801,12 @@
           };
         });
         const chipLabel = document.getElementById("chip-label");
-        if (chipLabel) chipLabel.textContent = currentSession || "";
+        if (chipLabel) chipLabel.textContent = state.currentSession || "";
       }
 
       function drawerItemHtml(s, multiMachine) {
         const val = s.machineUrl ? s.machineUrl + "|" + s.name : s.name;
-        const isCurrent = s.name === currentSession && s.machineUrl === currentMachine;
+        const isCurrent = s.name === state.currentSession && s.machineUrl === state.currentMachine;
         const machineLbl = multiMachine ? `<span class="drawer-item-machine">${esc(s.machineName)}</span>` : "";
         return `<div class="drawer-item${isCurrent ? " current" : ""}" data-val="${escAttr(val)}">
           <div class="dot ${isCurrent ? "active" : "inactive"}" title="${isCurrent ? "current session" : "other session"}"></div>
@@ -5894,7 +5891,7 @@
         let touchTarget = null;
 
         function onStart(e) {
-          if (currentView !== "terminal") return;
+          if (state.currentView !== "terminal") return;
           startX = e.touches[0].clientX;
           startY = e.touches[0].clientY;
           startTime = Date.now();
@@ -5904,7 +5901,7 @@
         }
 
         function onMove(e) {
-          if (currentView !== "terminal") return;
+          if (state.currentView !== "terminal") return;
           const dy = e.touches[0].clientY - startY;
           // opening: drag down when closed (header only)
           if (!drawerOpen && dy > 5) {
@@ -6017,7 +6014,7 @@
           machineUrl = "";
           name = val;
         }
-        if (name === currentSession && machineUrl === currentMachine) {
+        if (name === state.currentSession && machineUrl === state.currentMachine) {
           // Same session — but reconnect if WS is dead/blocked
           if (useDesktopTerminal && desktopController && !desktopController.isConnected) {
             connectDesktopWs();
@@ -6033,8 +6030,7 @@
         } else {
           stopPolling();
         }
-        currentSession = name;
-        currentMachine = machineUrl;
+        setState({ currentSession: name, currentMachine: machineUrl });
         recordRecent(machineUrl, name);
         lastRawPane = null;
         restoreDraft();
@@ -6139,11 +6135,11 @@
             startSidebarRefresh();
           }
           // Restart session refresh if on sessions view
-          if (currentView === "sessions" && !sessionRefreshTimer) {
+          if (state.currentView === "sessions" && !sessionRefreshTimer) {
             loadSessions();
             sessionRefreshTimer = setInterval(loadSessions, 5000);
           }
-          if (currentSession && currentView === "terminal") {
+          if (state.currentSession && state.currentView === "terminal") {
             if (useDesktopTerminal) {
               // Desktop: reset retry budget and reconnect current terminal context.
               if (isGridActive()) {
@@ -6197,7 +6193,7 @@
       // enterSends=false: Enter newline, Shift+Enter submits
 
       msgInput.addEventListener("keydown", (e) => {
-        if (currentView !== "terminal") return;
+        if (state.currentView !== "terminal") return;
         const empty = !msgInput.value.trim();
         if (e.key === "Enter") {
           if (wpSettings.enterSends) {
@@ -6343,7 +6339,7 @@
 
       // Global arrow keys → tmux when in terminal and textarea not focused
       document.addEventListener("keydown", (e) => {
-        if (currentView !== "terminal") return;
+        if (state.currentView !== "terminal") return;
         if (useDesktopTerminal) return; // desktop terminal has its own handler
         const tag = document.activeElement && document.activeElement.tagName;
         if (document.activeElement === msgInput || tag === "SELECT" || tag === "INPUT") return;
@@ -6369,9 +6365,9 @@
       // Escape to back out of project/agent picker and ralph views
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
-        if (currentView === "agent") { e.preventDefault(); showView("projects"); }
-        else if (currentView === "projects") { e.preventDefault(); showView(viewBeforePicker); loadSessions(); }
-        else if (currentView === "ralph-start" || currentView === "ralph-detail" || currentView === "settings") { e.preventDefault(); backToSessions(); }
+        if (state.currentView === "agent") { e.preventDefault(); showView("projects"); }
+        else if (state.currentView === "projects") { e.preventDefault(); showView(state.viewBeforePicker); loadSessions(); }
+        else if (state.currentView === "ralph-start" || state.currentView === "ralph-detail" || state.currentView === "settings") { e.preventDefault(); backToSessions(); }
       });
 
       // ── Desktop keyboard shortcuts (capture phase, before xterm) ──
@@ -6393,7 +6389,7 @@
             return;
           }
           if (!allSessions.length) return;
-          let curIdx = allSessions.findIndex(s => s.name === currentSession && (s.machineUrl || "") === currentMachine);
+          let curIdx = allSessions.findIndex(s => s.name === state.currentSession && (s.machineUrl || "") === state.currentMachine);
           if (curIdx === -1) curIdx = e.key === "ArrowDown" ? -1 : allSessions.length;
           const next = e.key === "ArrowDown"
             ? (curIdx + 1) % allSessions.length
@@ -6702,21 +6698,21 @@
             if (Math.abs(dy) > Math.abs(dx) * 0.7) { scrolling = true; return; }
             locked = true;
 
-            const backTarget = BACK_TARGET[currentView];
+            const backTarget = BACK_TARGET[state.currentView];
             // terminal view: only allow back swipe from left edge (40px) to avoid stealing terminal interaction
-            const edgeOnly = currentView === "terminal";
+            const edgeOnly = state.currentView === "terminal";
             if (dx > 0 && backTarget && (!edgeOnly || sx < 40)) {
               isBack = true;
-              fgEl = document.getElementById(currentView + "-view");
+              fgEl = document.getElementById(state.currentView + "-view");
               bgEl = document.getElementById(backTarget + "-view");
             } else if (dx < 0) {
               const card = e.target.closest(".card, .ralph-card");
               if (!card) { scrolling = true; return; }
               swipeCard = card;
               isBack = false;
-              fgEl = document.getElementById(currentView + "-view");
+              fgEl = document.getElementById(state.currentView + "-view");
               const isRalphCard = card.classList.contains("ralph-card");
-              const targetView = currentView === "sessions" ? (isRalphCard ? "ralph-detail" : "terminal") : null;
+              const targetView = state.currentView === "sessions" ? (isRalphCard ? "ralph-detail" : "terminal") : null;
               if (!targetView) { scrolling = true; return; }
               bgEl = document.getElementById(targetView + "-view");
             } else { scrolling = true; return; }
@@ -6789,7 +6785,7 @@
             swipeNavigated = true;
 
             if (back) {
-              const backView = BACK_TARGET[currentView];
+              const backView = BACK_TARGET[state.currentView];
               if (backView === "sessions") {
                 const backBtn = document.getElementById("back-btn");
                 if (backBtn && backBtn.onclick) backBtn.onclick();
@@ -6892,7 +6888,7 @@
       function sidebarCardHtml(s, machineUrl) {
         const lastLine = s.lastLine || "";
         const ui = triageUi(s.triage);
-        const isActive = s.name === currentSession && machineUrl === currentMachine;
+        const isActive = s.name === state.currentSession && machineUrl === state.currentMachine;
         const inGrid = isSessionInGrid(s.name, machineUrl);
         const activeClass = isActive ? " sidebar-active" : (inGrid ? " sidebar-grid" : "");
         const onclick = machineUrl
@@ -6968,7 +6964,7 @@
               sidebarCollapsed = false;
             }
             // Return to terminal if we have a session, else just stay
-            if (currentSession) showView("terminal");
+            if (state.currentSession) showView("terminal");
           }
         };
 

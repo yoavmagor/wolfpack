@@ -195,3 +195,22 @@
 - Removed visual overhaul comment header (section now empty)
 - 13 remaining `!important` are all unrelated (terminal font-size/wrap body classes, reduce-motion, `.ralph-hidden`)
 - All 660 tests pass (4 pre-existing Playwright config failures unrelated)
+
+## Task 6: Unify Terminal Controllers — ALREADY DONE (no-op)
+- This task was already completed in Phases 2-7 of this refactoring branch
+- Desktop single-session and grid both use `createPtyTerminalController()` (shared xterm.js + PTY socket + hydration)
+- `initDesktopTerminal()` (85 lines) and `mountGridController()` (38 lines) are already the "thin wrappers" the task describes
+- Mobile polling controller is fundamentally different (no xterm.js, JSON protocol, HTML rendering to `#terminal` div) — cannot meaningfully share the PTY terminal controller
+- Only actual duplication: reconnect backoff in `scheduleMobileReconnect()` (~20 lines) mirrors `createPtySocketClient.scheduleReconnect()` — not worth forcing a shared abstraction for
+- No code changes needed
+
+## Task 7: State Object Scaffold + Navigation Globals Migration — DONE
+- Created centralized `state` object with `currentView`, `currentSession`, `currentMachine`, `viewBeforePicker`
+- Created `setState(patch)` function using `Object.assign`
+- Migrated ~117 references across `public/index.html`:
+  - 4 `let` declarations → single `const state = { ... }` object
+  - 10 write sites (8 paired session+machine, 1 currentView, 1 viewBeforePicker) → `setState()` calls
+  - ~95 read references → `state.X` property access
+- Coordinated pairs (currentSession + currentMachine) batched into single `setState()` calls
+- Regenerated `src/public-assets.ts`
+- All 660 tests pass (4 pre-existing Playwright config failures unrelated)
