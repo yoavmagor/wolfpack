@@ -4257,6 +4257,12 @@
           clearInterval(debugPanelTimer); debugPanelTimer = null;
         }
 
+        // Tear down terminal connections when navigating away from terminal view
+        // Prevents background WS from auto-reconnecting and stealing control from other instances
+        if (prevView === "terminal" && effectiveName !== "terminal") {
+          if (state.useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
+        }
+
         setState({ currentView: effectiveName });
 
         if (animate) {
