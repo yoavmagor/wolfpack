@@ -1563,19 +1563,19 @@
         align-items: center;
         gap: 5px;
         border: 1px solid #282828;
-        border-radius: 10px;
-        padding: 6px 10px;
+        border-radius: 6px;
+        padding: 8px 12px;
         background: #1a1a1a;
         color: #00ff41;
-        font-size: 11px;
+        font-size: 12px;
         font-family: inherit;
-        font-weight: 600;
+        font-weight: 700;
         text-transform: uppercase;
-        letter-spacing: 1.5px;
+        letter-spacing: 2px;
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
         transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-        min-height: 34px;
+        min-height: 38px;
         max-width: 160px;
         overflow: hidden;
         white-space: nowrap;
@@ -1653,9 +1653,12 @@
         position: fixed;
         left: 0; right: 0;
         top: 42px;
-        max-height: 50vh;
-        background: #111;
+        max-height: 55vh;
+        background: linear-gradient(180deg, #111 0%, #0c0c0c 100%);
         border-bottom: 1px solid #1a1a1a;
+        border-bottom-left-radius: 12px;
+        border-bottom-right-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.6);
         z-index: 95;
         transform: translate3d(0, -100%, 0);
         overflow-y: auto;
@@ -1673,8 +1676,9 @@
       .drawer-item {
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 12px 14px;
+        gap: 12px;
+        padding: 14px 16px;
+        min-height: 50px;
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
         transition: background 0.1s ease;
@@ -1685,11 +1689,11 @@
         background: #1a1a1a;
       }
       .drawer-item.current {
-        background: #0a0a0a;
+        background: linear-gradient(90deg, rgba(0,255,65,0.04) 0%, transparent 60%);
       }
       .drawer-item .dot {
-        width: 8px;
-        height: 8px;
+        width: 10px;
+        height: 10px;
         border-radius: 50%;
         flex-shrink: 0;
       }
@@ -1701,8 +1705,8 @@
         background: #333;
       }
       .drawer-item-name {
-        font-size: 13px;
-        font-weight: 600;
+        font-size: 14px;
+        font-weight: 700;
         color: #b0b0b0;
         text-transform: uppercase;
         letter-spacing: 1.2px;
@@ -1721,60 +1725,36 @@
         letter-spacing: 1px;
       }
 
-      /* ══════════════════════════════════════════════════════════
-         WOLFPACK COMMAND CENTER — VISUAL OVERHAUL
-         (buttons/inputs/forms/kb/toggles/ralph merged into base above)
-         ══════════════════════════════════════════════════════════ */
-
-      /* ── Session chip ── */
-      #session-chip {
-        border-radius: 6px !important;
-        font-weight: 700 !important;
-        letter-spacing: 2px !important;
-      }
-
-      /* ── Session drawer ── */
-      #session-drawer {
-        background: linear-gradient(180deg, #111 0%, #0c0c0c 100%) !important;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.6) !important;
-      }
-      .drawer-item.current {
-        background: linear-gradient(90deg, rgba(0,255,65,0.04) 0%, transparent 60%) !important;
-      }
-      .drawer-item-name {
-        font-weight: 700 !important;
-      }
-
       /* ── Subtle hover states for desktop ── */
       @media (hover: hover) {
         .card:hover {
-          background: linear-gradient(145deg, #141414 0%, #0f0f0f 100%) !important;
-          border-color: #222 !important;
+          background: linear-gradient(145deg, #141414 0%, #0f0f0f 100%);
+          border-color: #222;
         }
         .card.active-session:hover {
-          border-left-color: #00ff41 !important;
+          border-left-color: #00ff41;
           box-shadow: inset 4px 0 20px -8px rgba(0,255,65,0.18);
         }
         .ralph-card:hover {
-          background: linear-gradient(145deg, #141414 0%, #0f0f0f 100%) !important;
+          background: linear-gradient(145deg, #141414 0%, #0f0f0f 100%);
         }
         .drawer-item:hover {
-          background: #141414 !important;
+          background: #141414;
         }
         .new-btn:hover {
-          border-color: rgba(0,255,65,0.6) !important;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 8px rgba(0,255,65,0.1), inset 0 1px 0 rgba(255,255,255,0.04) !important;
+          border-color: rgba(0,255,65,0.6);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 8px rgba(0,255,65,0.1), inset 0 1px 0 rgba(255,255,255,0.04);
         }
         .settings-gear:hover,
         .back-btn:hover {
-          border-color: #3a3a3a !important;
-          color: #aaa !important;
+          border-color: #3a3a3a;
+          color: #aaa;
         }
         .machine-ralph-btn:hover {
-          border-color: rgba(155, 89, 182, 0.8) !important;
-          color: #b07cc8 !important;
-          background: rgba(155, 89, 182, 0.1) !important;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 10px rgba(155, 89, 182, 0.2) !important;
+          border-color: rgba(155, 89, 182, 0.8);
+          color: #b07cc8;
+          background: rgba(155, 89, 182, 0.1);
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 10px rgba(155, 89, 182, 0.2);
         }
       }
 
@@ -1982,18 +1962,19 @@
       /* Hidden by default (mobile-first) */
       #desktop-sidebar { display: none; }
       #sidebar-hover-edge { display: none; }
+      #expanded-toolbar { display: none; }
 
       @media (min-width: 769px) {
         /* Hide mobile header on desktop */
-        header { display: none !important; }
+        header { display: none; }
 
         /* Horizontal flex: sidebar + main */
-        body { flex-direction: row !important; }
+        body { flex-direction: row; }
 
         #desktop-sidebar {
           width: 260px;
           flex-shrink: 0;
-          display: flex !important;
+          display: flex;
           flex-direction: column;
           background: linear-gradient(180deg, #131313 0%, #0f0f0f 100%);
           border-right: 1px solid rgba(0,255,65,0.12);
@@ -2083,25 +2064,25 @@
 
         /* Sidebar cards — denser than mobile */
         .sidebar-sessions .card {
-          padding: 6px 8px !important;
-          min-height: 0 !important;
-          margin-bottom: 3px !important;
-          border-left-width: 2px !important;
+          padding: 6px 8px;
+          min-height: 0;
+          margin-bottom: 3px;
+          border-left-width: 2px;
         }
         .sidebar-sessions .card-name {
-          font-size: 11px !important;
-          letter-spacing: 1.5px !important;
+          font-size: 11px;
+          letter-spacing: 1.5px;
         }
         .sidebar-sessions .card-status {
           margin-top: 1px;
         }
         .sidebar-sessions .card-preview {
-          -webkit-line-clamp: 1 !important;
-          font-size: 10px !important;
+          -webkit-line-clamp: 1;
+          font-size: 10px;
         }
         .sidebar-sessions .dot {
-          width: 7px !important;
-          height: 7px !important;
+          width: 7px;
+          height: 7px;
         }
         .sidebar-sessions .kill-btn,
         .sidebar-sessions .grid-btn {
@@ -2151,10 +2132,10 @@
 
         /* Active session highlight in sidebar */
         .sidebar-sessions .card.sidebar-active {
-          border: 1px solid rgba(0,255,65,0.35) !important;
-          border-left: 2px solid #00ff41 !important;
-          background: linear-gradient(90deg, rgba(0,255,65,0.08) 0%, rgba(0,255,65,0.02) 40%, transparent 100%) !important;
-          box-shadow: 0 0 12px rgba(0,255,65,0.15), 0 0 4px rgba(0,255,65,0.1) !important;
+          border: 1px solid rgba(0,255,65,0.35);
+          border-left: 2px solid #00ff41;
+          background: linear-gradient(90deg, rgba(0,255,65,0.08) 0%, rgba(0,255,65,0.02) 40%, transparent 100%);
+          box-shadow: 0 0 12px rgba(0,255,65,0.15), 0 0 4px rgba(0,255,65,0.1);
           transform: scale(1.02);
           z-index: 1;
           position: relative;
@@ -2162,10 +2143,10 @@
 
         /* In-grid but not focused session */
         .sidebar-sessions .card.sidebar-grid {
-          border: 1px solid rgba(0,255,65,0.15) !important;
-          border-left: 2px solid rgba(0,255,65,0.5) !important;
-          background: linear-gradient(90deg, rgba(0,255,65,0.04) 0%, transparent 50%) !important;
-          box-shadow: 0 0 8px rgba(0,255,65,0.08) !important;
+          border: 1px solid rgba(0,255,65,0.15);
+          border-left: 2px solid rgba(0,255,65,0.5);
+          background: linear-gradient(90deg, rgba(0,255,65,0.04) 0%, transparent 50%);
+          box-shadow: 0 0 8px rgba(0,255,65,0.08);
         }
 
         /* Dim inactive sessions */
@@ -2183,9 +2164,9 @@
           padding: 6px 4px 4px;
         }
         .sidebar-sessions .new-btn {
-          font-size: 11px !important;
-          padding: 8px 10px !important;
-          margin-bottom: 0 !important;
+          font-size: 11px;
+          padding: 8px 10px;
+          margin-bottom: 0;
           flex: 1;
         }
         .sidebar-top-btns {
@@ -2203,10 +2184,9 @@
 
 
         /* Hide sessions-view on desktop (sidebar replaces it) */
-        #sessions-view { display: none !important; }
+        #sessions-view { display: none; }
 
-        /* Expanded toolbar — hidden by default, shown in expanded mode */
-        #expanded-toolbar { display: none; }
+        /* Expanded toolbar — shown in expanded mode */
         body.sessions-expanded #expanded-toolbar {
           display: flex;
           align-items: center;
@@ -2246,7 +2226,7 @@
 
         /* Expanded sessions view — full-page grid on desktop */
         body.sessions-expanded #sessions-view {
-          display: flex !important;
+          display: flex;
           flex-direction: column;
         }
         /* Column per machine — fills screen width */
@@ -2266,18 +2246,18 @@
           overflow-y: auto;
         }
         body.sessions-expanded #sessions-view .card {
-          padding: 16px 14px !important;
-          min-height: 64px !important;
-          border-left-width: 3px !important;
-          margin-bottom: 0 !important;
+          padding: 16px 14px;
+          min-height: 64px;
+          border-left-width: 3px;
+          margin-bottom: 0;
         }
         body.sessions-expanded #sessions-view .card-name {
-          font-size: 14px !important;
-          letter-spacing: 1.8px !important;
+          font-size: 14px;
+          letter-spacing: 1.8px;
         }
         body.sessions-expanded #sessions-view .card-preview {
-          -webkit-line-clamp: 2 !important;
-          font-size: 12px !important;
+          -webkit-line-clamp: 2;
+          font-size: 12px;
         }
         body.sessions-expanded #sessions-view .machine-header {
           padding: 8px 4px 4px;
@@ -2292,59 +2272,23 @@
 
         /* Hover edge — invisible trigger to re-open collapsed sidebar */
         #sidebar-hover-edge {
-          display: none !important;
           position: fixed;
           left: 0; top: 0; bottom: 0;
           width: 8px;
           z-index: 60;
         }
         #desktop-sidebar.collapsed ~ #sidebar-hover-edge {
-          display: block !important;
+          display: block;
         }
 
         /* Hide drawer elements on desktop */
-        #session-drawer { display: none !important; }
-        #drawer-backdrop { display: none !important; }
+        #session-drawer { display: none; }
+        #drawer-backdrop { display: none; }
       }
 
-      @media (max-width: 768px) {
-        #desktop-sidebar { display: none !important; }
-        #sidebar-hover-edge { display: none !important; }
-        #expanded-toolbar { display: none !important; }
-      }
-
-      /* ══════════════════════════════════════════════════════════
-         MOBILE-SPECIFIC PASS
-         (buttons/inputs/forms/kb/toggles/ralph merged into base above)
-         ══════════════════════════════════════════════════════════ */
+      /* ── Mobile-specific ── */
       @media (max-width: 768px) {
         #kb-toggle { display: flex; }
-
-        /* ── Session chip — easier to tap ── */
-        #session-chip {
-          min-height: 38px !important;
-          padding: 8px 12px !important;
-          font-size: 12px !important;
-        }
-
-        /* ── Session drawer — bottom-sheet feel ── */
-        #session-drawer {
-          border-bottom-left-radius: 12px !important;
-          border-bottom-right-radius: 12px !important;
-          max-height: 55vh !important;
-        }
-        .drawer-item {
-          padding: 14px 16px !important;
-          min-height: 50px;
-          gap: 12px !important;
-        }
-        .drawer-item .dot {
-          width: 10px !important;
-          height: 10px !important;
-        }
-        .drawer-item-name {
-          font-size: 14px !important;
-        }
       }
 
     </style>

@@ -180,3 +180,18 @@
 - Net: ~115 lines saved (7229 → 7114)
 - Regenerated `src/public-assets.ts`
 - All 660 tests pass (4 pre-existing Playwright config failures unrelated)
+
+## Task 5c: CSS Merge — Session Drawer + Desktop Sidebar + Expanded View + Hover States — DONE
+- Merged 3 CSS layers (base, visual overhaul, mobile pass) into mobile-first base with desktop @media overrides
+- Zero `!important` in merged selectors for all components in scope
+- **Session chip:** Merged overhaul values (`border-radius: 6px`, `font-weight: 700`, `letter-spacing: 2px`) + mobile values (`min-height: 38px`, `padding: 8px 12px`, `font-size: 12px`) into base definition
+- **Session drawer:** Merged gradient background, box-shadow, border-radius, max-height 55vh into base. Merged `.drawer-item` mobile padding/gap/min-height, `.drawer-item .dot` 10px size, `.drawer-item-name` 14px/700 into base
+- **Hover states:** Stripped all `!important` from `@media (hover: hover)` block — `:hover` pseudo-class specificity wins naturally
+- **Desktop sidebar:** Stripped `!important` from `header { display: none }`, `body { flex-direction: row }`, `#desktop-sidebar { display: flex }`, `.sidebar-sessions .card/card-name/card-preview/dot/new-btn` (class specificity sufficient), `.sidebar-active/.sidebar-grid` (compound selector specificity), `#sessions-view { display: none }`
+- **Expanded view:** Stripped `!important` from `body.sessions-expanded #sessions-view { display: flex }` and card/card-name/card-preview overrides (compound selector specificity 0,3,1 wins)
+- **Hover edge:** Removed redundant `display: none` (base already hides), `#desktop-sidebar.collapsed ~ #sidebar-hover-edge { display: block }` wins via 0,2,1 specificity
+- **Base rules added:** `#expanded-toolbar { display: none }` moved from desktop-only to base (hidden everywhere by default)
+- **Mobile cleanup:** Removed redundant `@media (max-width: 768px)` block (desktop-sidebar/hover-edge/expanded-toolbar already hidden by base), removed merged session chip/drawer rules from mobile pass
+- Removed visual overhaul comment header (section now empty)
+- 13 remaining `!important` are all unrelated (terminal font-size/wrap body classes, reduce-motion, `.ralph-hidden`)
+- All 660 tests pass (4 pre-existing Playwright config failures unrelated)
