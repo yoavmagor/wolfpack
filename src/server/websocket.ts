@@ -45,6 +45,40 @@ export const activePtySessions = new Map<string, {
 
 const ptySpawnAttempts = new Map<string, number>();
 const DESKTOP_PREFILL_MAX_BYTES = 256 * 1024;
+const PREFILL_OVERLAP_LIMIT = 32 * 1024;
+
+function bufferStartsWithPrefillSuffix(prefillTail: Buffer, attachPrefix: Buffer, overlap: number): boolean {
+  const prefillStart = prefillTail.length - overlap;
+  for (let i = 0; i < overlap; i++) {
+    if (prefillTail[prefillStart + i] !== attachPrefix[i]) return false;
+  }
+  return true;
+}
+
+export function __stripInitialPtyOverlap(
+  prefill: Buffer,
+  attachPrefix: Buffer,
+): { awaitingMore: boolean; data: Buffer } {
+  if (!prefill.length || !attachPrefix.length) {
+    return { awaitingMore: false, data: attachPrefix };
+  }
+
+  const prefillTail = prefill.subarray(Math.max(0, prefill.length - PREFILL_OVERLAP_LIMIT));
+  const maxOverlap = Math.min(prefillTail.length, attachPrefix.length);
+
+  for (let overlap = maxOverlap; overlap > 0; overlap--) {
+    if (!bufferStartsWithPrefillSuffix(prefillTail, attachPrefix, overlap)) continue;
+    if (overlap === attachPrefix.length) {
+      return { awaitingMore: true, data: Buffer.alloc(0) };
+    }
+    return {
+      awaitingMore: false,
+      data: attachPrefix.subarray(overlap),
+    };
+  }
+
+  return { awaitingMore: false, data: attachPrefix };
+}
 
 /** Test hook: expose PTY internal state for assertions */
 export function __getTestState(): { activePtySessions: Map<string, { viewer: any; alive: boolean }>; ptySpawnAttempts: Map<string, number> } {
@@ -280,6 +314,8 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
     const skipPrefill = pendingSkipPrefill;
     pendingSkipPrefill = false;
     let prefill = Buffer.alloc(0);
+    let pendingAttach = Buffer.alloc(0);
+    let shouldDedupeInitialAttach = false;
 
     try {
       try {
@@ -320,6 +356,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
             }
             try {
               entry.viewer.send(prefill);
+              shouldDedupeInitialAttach = true;
             } catch (err: any) {
               console.error(`PTY prefill send failed [${session}]:`, err?.message || err);
             }
@@ -338,6 +375,17 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
           rows: initialSize.rows,
           data(_terminal: unknown, data: Buffer) {
             if (!entry.alive) return;
+            if (shouldDedupeInitialAttach) {
+              pendingAttach = pendingAttach.length
+                ? Buffer.concat([pendingAttach, data])
+                : Buffer.from(data);
+              const next = __stripInitialPtyOverlap(prefill, pendingAttach);
+              if (next.awaitingMore) return;
+              shouldDedupeInitialAttach = false;
+              pendingAttach = Buffer.alloc(0);
+              data = next.data;
+              if (!data.length) return;
+            }
             if (entry.viewer && entry.viewer.readyState === 1) {
               try { entry.viewer.send(data); } catch {}
             }
