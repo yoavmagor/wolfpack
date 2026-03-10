@@ -4155,7 +4155,16 @@
 
       function scheduleGridStabilizedFit() {
         if (!isGridActive()) return;
-        runGridRelayoutTransition(() => { fitAllGridCells(); });
+        // Sidebar open/close should feel instant: refit without grid loading overlays.
+        // Double-rAF keeps sizing stable after CSS transition while preserving scroll.
+        requestAnimationFrame(() => {
+          if (!isGridActive()) return;
+          fitGridCellsPreserveScroll();
+          requestAnimationFrame(() => {
+            if (!isGridActive()) return;
+            fitGridCellsPreserveScroll();
+          });
+        });
       }
 
       function isSessionInGrid(session, machine) {
