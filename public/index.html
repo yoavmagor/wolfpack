@@ -2786,7 +2786,7 @@
         el.innerHTML = state.quickCmds.map((c, i) =>
           `<button class="cmd-chip" onclick="sendQuickCmd(${i})">${esc(c.label)}</button>`
         ).join("");
-        el.classList.toggle("visible", kbAccessoryOpen);
+        el.classList.toggle("visible", state.kbAccessoryOpen);
       }
 
       async function sendQuickCmd(index) {
@@ -2918,6 +2918,9 @@
       }
 
       const _initSidebarPinned = loadSidebarPinned();
+      const RECONNECT_BUDGET_MS = 2 * 60 * 1000;
+      const RECONNECT_BASE_DELAY_MS = 500;
+      const RECONNECT_MAX_DELAY_MS = 5000;
 
       const state = {
         currentView: "sessions",
@@ -2956,11 +2959,32 @@
         sidebarCollapsed: !_initSidebarPinned,
         sidebarAutoExpanded: false,
         sessionsExpanded: true,
+        // mobile/connection state
+        mobileWs: null,
+        mobileReconnectTimer: null,
+        mobileReconnectDelayMs: RECONNECT_BASE_DELAY_MS,
+        mobileReconnectStartedAt: 0,
+        mobileRetryBlocked: false,
+        mobileStreamingActive: false,
+        termFollowMode: true,
+        sessionRefreshTimer: null,
+        // UI interaction state
+        snapshotTimer: null,
+        swipeNavigated: false,
+        projectMachine: "",
+        selectedProject: "",
+        isNewProject: false,
+        enterRetryTimer: null,
+        drawerOpen: false,
+        notificationsEnabled: ("Notification" in window && Notification.permission === "granted"),
+        kbAccessoryOpen: false,
+        searchActive: false,
+        searchTerm: "",
+        searchMatches: [],
+        searchIndex: -1,
+        lastRawPane: null,
       };
       function setState(patch) { Object.assign(state, patch); }
-      const RECONNECT_BUDGET_MS = 2 * 60 * 1000;
-      const RECONNECT_BASE_DELAY_MS = 500;
-      const RECONNECT_MAX_DELAY_MS = 5000;
       const SNAPSHOT_KEY_PREFIX = "wp-snap|";
       const SNAPSHOT_MAX_BYTES = 8192;
       const SNAPSHOT_SAVE_INTERVAL = 2000;
@@ -3547,14 +3571,6 @@
         };
       }
 
-      let mobileWs = null;
-      let mobileReconnectTimer = null;
-      let mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
-      let mobileReconnectStartedAt = 0;
-      let mobileRetryBlocked = false;
-      let mobileStreamingActive = false;
-      let termFollowMode = true;
-      let sessionRefreshTimer = null;
       function getTerminalFontFamily() {
         return wpSettings.termFont === "alt"
           ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
@@ -4081,7 +4097,6 @@
 
       // ── Recovery snapshots (UX-14) ──
 
-      let snapshotTimer = null;
       let snapshotPending = null;
 
       function snapshotKey(machine, session) {
@@ -4122,11 +4137,11 @@
       }
       function scheduleSnapshotSave(text) {
         snapshotPending = text;
-        if (snapshotTimer) return;
-        snapshotTimer = setTimeout(flushSnapshot, SNAPSHOT_SAVE_INTERVAL);
+        if (state.snapshotTimer) return;
+        state.snapshotTimer = setTimeout(flushSnapshot, SNAPSHOT_SAVE_INTERVAL);
       }
       function flushSnapshot() {
-        snapshotTimer = null;
+        state.snapshotTimer = null;
         if (!state.currentSession) { snapshotPending = null; return; }
         let text;
         if (state.useDesktopTerminal && state.desktopController?.term) {
@@ -4236,7 +4251,6 @@
       }
 
       // set by swipe engine so showView() skips animation after gesture already handled it
-      let swipeNavigated = false;
 
       // navigation hierarchy — higher depth = "deeper" (forward = left, back = right)
       const VIEW_DEPTH = {
@@ -4258,8 +4272,8 @@
         const effectiveName = (!isMobile && name === "sessions" && state.currentSession && !state.sessionsExpanded) ? "terminal" : name;
 
         const nextEl = document.getElementById(effectiveName + "-view");
-        const wasSwipe = swipeNavigated;
-        if (swipeNavigated) { skipAnimation = true; swipeNavigated = false; }
+        const wasSwipe = state.swipeNavigated;
+        if (state.swipeNavigated) { skipAnimation = true; state.swipeNavigated = false; }
         const animate = isMobile && !skipAnimation && prevView !== effectiveName && prevEl && nextEl;
         const animateHeader = isMobile && prevView !== effectiveName && !skipAnimation || wasSwipe;
         const goingForward = (VIEW_DEPTH[effectiveName] || 0) > (VIEW_DEPTH[prevView] || 0);
@@ -4330,7 +4344,7 @@
         const headerCenter = document.getElementById("header-center");
 
         // Stop timers immediately (don't defer these)
-        if (sessionRefreshTimer) { clearInterval(sessionRefreshTimer); sessionRefreshTimer = null; }
+        if (state.sessionRefreshTimer) { clearInterval(state.sessionRefreshTimer); state.sessionRefreshTimer = null; }
         if (state.ralphLogPollTimer) { clearInterval(state.ralphLogPollTimer); state.ralphLogPollTimer = null; }
 
         // Desktop: skip all header manipulation, handle view-specific logic only
@@ -4367,7 +4381,7 @@
           // Always start with kb-accessory closed on view change
           document.getElementById("kb-accessory").classList.remove("visible");
           document.getElementById("kb-toggle")?.classList.remove("active");
-          kbAccessoryOpen = false;
+          state.kbAccessoryOpen = false;
           chip.style.display = "none";
           closeDrawer(true);
           title.style.display = "";
@@ -4382,7 +4396,7 @@
             back.onclick = null;
             gear.style.display = "";
             title.textContent = "wolfpack";
-            sessionRefreshTimer = setInterval(loadSessions, 5000);
+            state.sessionRefreshTimer = setInterval(loadSessions, 5000);
           } else if (name === "projects") {
             back.style.display = "block";
             back.onclick = () => { stopPolling(); showView(state.viewBeforePicker); loadSessions(); };
@@ -5049,7 +5063,7 @@
         }
         setState({ currentSession: name, currentMachine: machineUrl || "" });
         recordRecent(state.currentMachine, name);
-        lastRawPane = null;
+        state.lastRawPane = null;
         state.useDesktopTerminal = isDesktop();
         wpMetrics.reset();
         setFollowMode(true);
@@ -5108,10 +5122,8 @@
 
       // ── Project picker ──
 
-      let projectMachine = ""; // machine URL for project picker context
-
       async function showProjectPicker(machineUrl) {
-        projectMachine = machineUrl || "";
+        state.projectMachine = machineUrl || "";
         setState({ viewBeforePicker: state.currentView });
         showView("projects");
         document.getElementById("new-project-name").value = "";
@@ -5119,7 +5131,7 @@
         el.innerHTML = '<div class="empty">Loading...</div>';
 
         try {
-          const data = await api("/projects", undefined, projectMachine);
+          const data = await api("/projects", undefined, state.projectMachine);
           if (!data.projects?.length) {
             el.innerHTML = '<div class="empty">No projects in ~/Dev</div>';
             return;
@@ -5145,12 +5157,9 @@
         term.innerHTML = '<span class="loading-text">Starting session in ' + esc(label) + '\u2026</span>';
       }
 
-      let selectedProject = "";
-      let isNewProject = false;
-
       function selectProject(project) {
-        selectedProject = project;
-        isNewProject = false;
+        state.selectedProject = project;
+        state.isNewProject = false;
         showAgentPicker();
       }
 
@@ -5158,8 +5167,8 @@
         const input = document.getElementById("new-project-name");
         const name = input.value.trim();
         if (!name) return;
-        selectedProject = name;
-        isNewProject = true;
+        state.selectedProject = name;
+        state.isNewProject = true;
         showAgentPicker();
       }
 
@@ -5174,10 +5183,10 @@
         nameError.classList.remove("visible");
         try {
           const [data, nameData] = await Promise.all([
-            api("/settings", undefined, projectMachine),
-            api("/next-session-name?project=" + encodeURIComponent(selectedProject), undefined, projectMachine),
+            api("/settings", undefined, state.projectMachine),
+            api("/next-session-name?project=" + encodeURIComponent(state.selectedProject), undefined, state.projectMachine),
           ]);
-          nameInput.value = nameData.name || selectedProject;
+          nameInput.value = nameData.name || state.selectedProject;
           const presets = Object.entries(data.presets || {});
           const customCmds = data.settings?.customCmds || [];
           let html = presets.map(([label, cmd]) => `
@@ -5226,7 +5235,7 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ addCustomCmd: cmd }),
-          }, projectMachine);
+          }, state.projectMachine);
           input.value = "";
           showAgentPicker();
         } catch (e) {
@@ -5241,7 +5250,7 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ deleteCustomCmd: cmd }),
-          }, projectMachine);
+          }, state.projectMachine);
           showAgentPicker();
         } catch (e) {
           alert("Failed to delete command: " + errorMessage(e));
@@ -5252,12 +5261,12 @@
         const nameInput = document.getElementById("session-name-input");
         const sessionName = (nameInput.value || "").trim();
         if (sessionName && !/^[a-zA-Z0-9_-]+$/.test(sessionName)) return;
-        const machine = projectMachine;
-        showTerminalLoading(sessionName || selectedProject);
+        const machine = state.projectMachine;
+        showTerminalLoading(sessionName || state.selectedProject);
         try {
-          const body = isNewProject
-            ? { newProject: selectedProject, cmd, sessionName: sessionName || undefined }
-            : { project: selectedProject, cmd, sessionName: sessionName || undefined };
+          const body = state.isNewProject
+            ? { newProject: state.selectedProject, cmd, sessionName: sessionName || undefined }
+            : { project: state.selectedProject, cmd, sessionName: sessionName || undefined };
           const data = await api("/create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -5326,7 +5335,7 @@
         document.getElementById("terminal").style.display = "none";
         document.getElementById("kb-accessory").classList.remove("visible");
         document.getElementById("kb-toggle")?.classList.remove("active");
-        kbAccessoryOpen = false;
+        state.kbAccessoryOpen = false;
         document.getElementById("input-bar").style.display = "none";
         document.getElementById("cmd-palette").style.display = "none";
         document.getElementById("msg-preview").style.display = "none";
@@ -5388,10 +5397,10 @@
         const onKeyDown = (e) => {
           if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
             e.preventDefault();
-            if (!searchActive) toggleSearch();
+            if (!state.searchActive) toggleSearch();
             return;
           }
-          if (searchActive && e.key === "Escape") {
+          if (state.searchActive && e.key === "Escape") {
             e.preventDefault();
             closeSearch();
           }
@@ -5403,7 +5412,7 @@
       }
 
       function destroyDesktopTerminal() {
-        if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
+        if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
         if (state.desktopResizeTimer) { clearTimeout(state.desktopResizeTimer); state.desktopResizeTimer = null; }
         if (state.desktopController) { state.desktopController.dispose(); state.desktopController = null; }
         if (state.desktopResizeHandler) {
@@ -5432,7 +5441,7 @@
       function setConnState(state) {
         const statusEl = document.getElementById("conn-status");
         if (!statusEl) return;
-        const active = state.useDesktopTerminal ? !!state.desktopController?.term : mobileStreamingActive;
+        const active = state.useDesktopTerminal ? !!state.desktopController?.term : state.mobileStreamingActive;
         if (state.currentView !== "terminal" || !active || state === "live") {
           statusEl.style.display = "none";
           statusEl.style.background = "#cc3333";
@@ -5468,21 +5477,21 @@
       function applyTerminalPane(pane) {
         const renderStart = performance.now();
         const term = document.getElementById("terminal");
-        const changed = pane !== lastRawPane;
-        lastRawPane = pane;
+        const changed = pane !== state.lastRawPane;
+        state.lastRawPane = pane;
         if (changed) {
           // Clear Enter retry once output has advanced.
-          if (enterRetryTimer) {
-            clearTimeout(enterRetryTimer);
-            enterRetryTimer = null;
+          if (state.enterRetryTimer) {
+            clearTimeout(state.enterRetryTimer);
+            state.enterRetryTimer = null;
           }
-          if (searchActive && searchTerm) {
+          if (state.searchActive && state.searchTerm) {
             applySearchHighlights();
           } else {
             term.textContent = pane;
           }
           wpMetrics.recordLatency(performance.now() - renderStart);
-          if (termFollowMode) term.scrollTop = term.scrollHeight;
+          if (state.termFollowMode) term.scrollTop = term.scrollHeight;
         }
         if (changed && !state.useDesktopTerminal) {
           scheduleSnapshotSave(pane);
@@ -5490,7 +5499,7 @@
       }
 
       function setFollowMode(on) {
-        termFollowMode = on;
+        state.termFollowMode = on;
         const btn = document.getElementById("jump-to-live");
         if (btn) {
           if (on) {
@@ -5530,7 +5539,7 @@
           const atBottom = term.scrollHeight - origDesc.get.call(term) - term.clientHeight < 40;
           if (atBottom) {
             setFollowMode(true);
-          } else if (termFollowMode) {
+          } else if (state.termFollowMode) {
             setFollowMode(false);
           }
         }, { passive: true });
@@ -5547,29 +5556,29 @@
       }
 
       function connectMobileTerminalWs() {
-        if (!mobileStreamingActive || state.useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
-        if (mobileRetryBlocked) return;
-        if (mobileWs && mobileWs.readyState <= WebSocket.OPEN) return;
+        if (!state.mobileStreamingActive || state.useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
+        if (state.mobileRetryBlocked) return;
+        if (state.mobileWs && state.mobileWs.readyState <= WebSocket.OPEN) return;
         const connectKey = terminalSessionKey();
         const ws = new WebSocket(mobileTerminalWsUrl());
-        mobileWs = ws;
+        state.mobileWs = ws;
 
         ws.onopen = async () => {
-          if (mobileWs !== ws) return;
-          if (!mobileStreamingActive || state.useDesktopTerminal || connectKey !== terminalSessionKey()) {
+          if (state.mobileWs !== ws) return;
+          if (!state.mobileStreamingActive || state.useDesktopTerminal || connectKey !== terminalSessionKey()) {
             ws.close();
             return;
           }
-          if (mobileReconnectStartedAt > 0) wpMetrics.reconnectCount++;
-          mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
-          mobileReconnectStartedAt = 0;
-          mobileRetryBlocked = false;
+          if (state.mobileReconnectStartedAt > 0) wpMetrics.reconnectCount++;
+          state.mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
+          state.mobileReconnectStartedAt = 0;
+          state.mobileRetryBlocked = false;
           setConnState("live");
           await resizePane();
         };
 
         ws.onmessage = (ev) => {
-          if (mobileWs !== ws) return;
+          if (state.mobileWs !== ws) return;
           wpMetrics.wsMessagesReceived++;
           let msg = null;
           try { msg = JSON.parse(ev.data); } catch { return; }
@@ -5580,8 +5589,8 @@
         };
 
         ws.onclose = (ev) => {
-          if (mobileWs === ws) mobileWs = null;
-          if (!mobileStreamingActive || state.useDesktopTerminal || connectKey !== terminalSessionKey()) return;
+          if (state.mobileWs === ws) state.mobileWs = null;
+          if (!state.mobileStreamingActive || state.useDesktopTerminal || connectKey !== terminalSessionKey()) return;
           if (ev.code === 4001 || (ev.code === 1000 && ev.reason === "session ended")) {
             setConnState("session-ended");
             return;
@@ -5593,65 +5602,65 @@
       }
 
       function scheduleMobileReconnect() {
-        if (!mobileStreamingActive || state.useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
-        if (mobileReconnectTimer) return;
+        if (!state.mobileStreamingActive || state.useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
+        if (state.mobileReconnectTimer) return;
         const now = Date.now();
-        if (!mobileReconnectStartedAt) mobileReconnectStartedAt = now;
-        const elapsed = now - mobileReconnectStartedAt;
+        if (!state.mobileReconnectStartedAt) state.mobileReconnectStartedAt = now;
+        const elapsed = now - state.mobileReconnectStartedAt;
         const remaining = RECONNECT_BUDGET_MS - elapsed;
         if (remaining <= 0) {
-          mobileRetryBlocked = true;
+          state.mobileRetryBlocked = true;
           setConnState("offline");
           return;
         }
         setConnState("reconnecting");
         const jitterMs = Math.floor(Math.random() * 200);
-        const delayMs = Math.min(mobileReconnectDelayMs + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
-        mobileReconnectTimer = setTimeout(() => {
-          mobileReconnectTimer = null;
+        const delayMs = Math.min(state.mobileReconnectDelayMs + jitterMs, RECONNECT_MAX_DELAY_MS, remaining);
+        state.mobileReconnectTimer = setTimeout(() => {
+          state.mobileReconnectTimer = null;
           connectMobileTerminalWs();
         }, delayMs);
-        mobileReconnectDelayMs = Math.min(Math.floor(mobileReconnectDelayMs * 1.8), RECONNECT_MAX_DELAY_MS);
+        state.mobileReconnectDelayMs = Math.min(Math.floor(state.mobileReconnectDelayMs * 1.8), RECONNECT_MAX_DELAY_MS);
       }
 
       function startPolling(resetBudget = true) {
-        mobileStreamingActive = true;
+        state.mobileStreamingActive = true;
         if (resetBudget) {
-          mobileReconnectStartedAt = 0;
-          mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
-          mobileRetryBlocked = false;
+          state.mobileReconnectStartedAt = 0;
+          state.mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
+          state.mobileRetryBlocked = false;
         }
-        if (mobileRetryBlocked && !resetBudget) {
+        if (state.mobileRetryBlocked && !resetBudget) {
           setConnState("offline");
           return;
         }
-        if (mobileReconnectTimer) {
-          clearTimeout(mobileReconnectTimer);
-          mobileReconnectTimer = null;
+        if (state.mobileReconnectTimer) {
+          clearTimeout(state.mobileReconnectTimer);
+          state.mobileReconnectTimer = null;
         }
-        if (!mobileWs || mobileWs.readyState === WebSocket.CLOSED) {
+        if (!state.mobileWs || state.mobileWs.readyState === WebSocket.CLOSED) {
           setConnState("reconnecting");
         }
         connectMobileTerminalWs();
       }
 
       function stopPolling() {
-        if (snapshotTimer) { clearTimeout(snapshotTimer); flushSnapshot(); }
-        mobileStreamingActive = false;
-        mobileReconnectStartedAt = 0;
-        mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
-        mobileRetryBlocked = false;
-        if (mobileReconnectTimer) {
-          clearTimeout(mobileReconnectTimer);
-          mobileReconnectTimer = null;
+        if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
+        state.mobileStreamingActive = false;
+        state.mobileReconnectStartedAt = 0;
+        state.mobileReconnectDelayMs = RECONNECT_BASE_DELAY_MS;
+        state.mobileRetryBlocked = false;
+        if (state.mobileReconnectTimer) {
+          clearTimeout(state.mobileReconnectTimer);
+          state.mobileReconnectTimer = null;
         }
-        if (enterRetryTimer) {
-          clearTimeout(enterRetryTimer);
-          enterRetryTimer = null;
+        if (state.enterRetryTimer) {
+          clearTimeout(state.enterRetryTimer);
+          state.enterRetryTimer = null;
         }
-        if (mobileWs) {
-          const ws = mobileWs;
-          mobileWs = null;
+        if (state.mobileWs) {
+          const ws = state.mobileWs;
+          state.mobileWs = null;
           try { ws.close(1000, "viewer changed"); } catch {}
         }
         const statusEl = document.getElementById("conn-status");
@@ -5663,10 +5672,10 @@
 
       function retryTerminalConnection() {
         if (state.useDesktopTerminal || !state.currentSession) return;
-        mobileRetryBlocked = false;
-        if (mobileWs) {
-          const ws = mobileWs;
-          mobileWs = null;
+        state.mobileRetryBlocked = false;
+        if (state.mobileWs) {
+          const ws = state.mobileWs;
+          state.mobileWs = null;
           try { ws.close(1000, "manual retry"); } catch {}
         }
         startPolling(true);
@@ -5682,8 +5691,6 @@
         if (state.useDesktopTerminal) retryDesktopConnection();
         else retryTerminalConnection();
       }
-
-      let enterRetryTimer = null;
 
       async function sendMsg() {
         const input = document.getElementById("msg-input");
@@ -5713,14 +5720,14 @@
           // Enter retry: if output hasn't changed within 800ms, Enter may have been dropped.
           // Timer is cleared on any pane change, so this only fires if truly stuck.
           // Scope to the session that was active at send time to prevent phantom Enter on other sessions.
-          if (enterRetryTimer) clearTimeout(enterRetryTimer);
+          if (state.enterRetryTimer) clearTimeout(state.enterRetryTimer);
           const retrySession = state.currentSession;
           const retryMachine = state.currentMachine;
-          enterRetryTimer = setTimeout(() => {
+          state.enterRetryTimer = setTimeout(() => {
             if (state.currentSession === retrySession && state.currentMachine === retryMachine) {
               sendKey("Enter");
             }
-            enterRetryTimer = null;
+            state.enterRetryTimer = null;
           }, 800);
         } catch {
           wpMetrics.sendFailCount++;
@@ -5782,7 +5789,6 @@
       }
 
       // ── Session drawer ──
-      let drawerOpen = false;
       let drawerDragY = 0;
       let drawerDragStartY = 0;
       let drawerDragging = false;
@@ -5837,14 +5843,14 @@
         var now = Date.now();
         if (now - lastToggleT < 300) return;
         lastToggleT = now;
-        if (drawerOpen) closeDrawer();
+        if (state.drawerOpen) closeDrawer();
         else openDrawer();
       }
 
       function openDrawer() {
         if (isDesktop()) return; // sidebar handles session switching on desktop
-        if (drawerOpen) return;
-        drawerOpen = true;
+        if (state.drawerOpen) return;
+        state.drawerOpen = true;
         const drawer = document.getElementById("session-drawer");
         const backdrop = document.getElementById("drawer-backdrop");
         const chip = document.getElementById("session-chip");
@@ -5864,8 +5870,8 @@
       }
 
       function closeDrawer(instant) {
-        if (!drawerOpen) return;
-        drawerOpen = false;
+        if (!state.drawerOpen) return;
+        state.drawerOpen = false;
         const drawer = document.getElementById("session-drawer");
         const backdrop = document.getElementById("drawer-backdrop");
         const chip = document.getElementById("session-chip");
@@ -5916,7 +5922,7 @@
           if (state.currentView !== "terminal") return;
           const dy = e.touches[0].clientY - startY;
           // opening: drag down when closed (header only)
-          if (!drawerOpen && dy > 5) {
+          if (!state.drawerOpen && dy > 5) {
             if (!dragging) {
               dragging = true;
               drawer.classList.remove("animating", "open");
@@ -5929,7 +5935,7 @@
             backdrop.style.transition = "none";
           }
           // closing: drag up when open (header or drawer)
-          if (drawerOpen && dy < -5) {
+          if (state.drawerOpen && dy < -5) {
             if (!dragging) {
               dragging = true;
               drawer.classList.remove("animating");
@@ -5951,7 +5957,7 @@
               const chip = document.getElementById("session-chip");
               if (chip && chip.contains(touchTarget)) { toggleDrawer(); return; }
               const item = touchTarget.closest(".drawer-item");
-              if (item && drawerOpen) { item.click(); return; }
+              if (item && state.drawerOpen) { item.click(); return; }
             }
             return;
           }
@@ -5961,7 +5967,7 @@
           const velocity = Math.abs(dy) / Math.max(elapsed, 1) * 1000;
           const threshold = maxDrag * 0.25;
 
-          if (!drawerOpen) {
+          if (!state.drawerOpen) {
             // was dragging to open
             if (dy > threshold || (velocity > 300 && dy > 10)) {
               const baseDur = 0.22;
@@ -5971,7 +5977,7 @@
               drawer.style.transform = "translate3d(0, 0, 0)";
               backdrop.style.transition = `opacity ${dur.toFixed(2)}s ease`;
               backdrop.style.opacity = "1";
-              drawerOpen = true;
+              state.drawerOpen = true;
               document.getElementById("session-chip").classList.add("open");
               haptic(5);
               drawer.addEventListener("transitionend", () => {
@@ -6044,7 +6050,7 @@
         }
         setState({ currentSession: name, currentMachine: machineUrl });
         recordRecent(machineUrl, name);
-        lastRawPane = null;
+        state.lastRawPane = null;
         restoreDraft();
         loadSessionSwitcher();
         // Update machine label in header (showView sets it, but drawer bypasses showView)
@@ -6070,15 +6076,13 @@
 
       // ── Notifications ──
 
-      let notificationsEnabled = ("Notification" in window && Notification.permission === "granted");
-
       function requestNotifications() {
         if ("Notification" in window && Notification.permission === "default") {
           Notification.requestPermission().then((p) => {
-            notificationsEnabled = p === "granted";
+            state.notificationsEnabled = p === "granted";
           });
         } else if ("Notification" in window && Notification.permission === "granted") {
-          notificationsEnabled = true;
+          state.notificationsEnabled = true;
         }
       }
 
@@ -6095,7 +6099,7 @@
       }
 
       function checkStateTransitions(groups) {
-        if (!notificationsEnabled || !wpSettings.notifications) return;
+        if (!state.notificationsEnabled || !wpSettings.notifications) return;
         if (document.visibilityState === "visible") return;
 
         for (const g of groups) {
@@ -6147,9 +6151,9 @@
             startSidebarRefresh();
           }
           // Restart session refresh if on sessions view
-          if (state.currentView === "sessions" && !sessionRefreshTimer) {
+          if (state.currentView === "sessions" && !state.sessionRefreshTimer) {
             loadSessions();
-            sessionRefreshTimer = setInterval(loadSessions, 5000);
+            state.sessionRefreshTimer = setInterval(loadSessions, 5000);
           }
           if (state.currentSession && state.currentView === "terminal") {
             if (state.useDesktopTerminal) {
@@ -6171,9 +6175,9 @@
           }
         } else {
           // Stop session refresh when backgrounded
-          if (sessionRefreshTimer) {
-            clearInterval(sessionRefreshTimer);
-            sessionRefreshTimer = null;
+          if (state.sessionRefreshTimer) {
+            clearInterval(state.sessionRefreshTimer);
+            state.sessionRefreshTimer = null;
           }
           if (sidebarRefreshTimer) {
             clearInterval(sidebarRefreshTimer);
@@ -6285,17 +6289,15 @@
       // ── Keyboard accessory row (UX-15) ──
       // Toggle-based: user taps ⌨ button in input bar to show/hide.
       // Always starts closed on session entry.
-      let kbAccessoryOpen = false;
-
       function toggleKbAccessory() {
         const acc = document.getElementById("kb-accessory");
         const cmd = document.getElementById("cmd-palette");
         const tog = document.getElementById("kb-toggle");
         if (!acc) return;
-        kbAccessoryOpen = !kbAccessoryOpen;
-        acc.classList.toggle("visible", kbAccessoryOpen);
-        if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", kbAccessoryOpen);
-        if (tog) tog.classList.toggle("active", kbAccessoryOpen);
+        state.kbAccessoryOpen = !state.kbAccessoryOpen;
+        acc.classList.toggle("visible", state.kbAccessoryOpen);
+        if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", state.kbAccessoryOpen);
+        if (tog) tog.classList.toggle("active", state.kbAccessoryOpen);
         haptic([10]);
       }
 
@@ -6534,28 +6536,22 @@
 
       // ── Search ──
 
-      let searchActive = false;
-      let searchTerm = "";
-      let searchMatches = [];
-      let searchIndex = -1;
-      let lastRawPane = null;
-
       function toggleSearch() {
         const bar = document.getElementById("search-bar");
-        if (searchActive) {
+        if (state.searchActive) {
           closeSearch();
         } else {
-          searchActive = true;
+          state.searchActive = true;
           bar.classList.add("visible");
           document.getElementById("search-input").focus();
         }
       }
 
       function closeSearch() {
-        searchActive = false;
-        searchTerm = "";
-        searchMatches = [];
-        searchIndex = -1;
+        state.searchActive = false;
+        state.searchTerm = "";
+        state.searchMatches = [];
+        state.searchIndex = -1;
         document.getElementById("search-bar").classList.remove("visible");
         document.getElementById("search-input").value = "";
         document.getElementById("search-count").textContent = "";
@@ -6564,52 +6560,52 @@
           if (state.desktopController) state.desktopController.focus();
         } else {
           const term = document.getElementById("terminal");
-          if (lastRawPane) term.textContent = lastRawPane;
+          if (state.lastRawPane) term.textContent = state.lastRawPane;
         }
       }
 
       function doSearch() {
-        searchTerm = document.getElementById("search-input").value;
-        if (!searchTerm) {
+        state.searchTerm = document.getElementById("search-input").value;
+        if (!state.searchTerm) {
           document.getElementById("search-count").textContent = "";
           if (state.useDesktopTerminal) {
             if (state.desktopController?.searchAddon) state.desktopController.searchAddon.clearDecorations();
           } else {
             const term = document.getElementById("terminal");
-            if (lastRawPane) term.textContent = lastRawPane;
+            if (state.lastRawPane) term.textContent = state.lastRawPane;
           }
-          searchMatches = [];
-          searchIndex = -1;
+          state.searchMatches = [];
+          state.searchIndex = -1;
           return;
         }
         if (state.useDesktopTerminal && state.desktopController?.searchAddon) {
-          state.desktopController.searchAddon.findNext(searchTerm, { caseSensitive: false, decorations: {
+          state.desktopController.searchAddon.findNext(state.searchTerm, { caseSensitive: false, decorations: {
             matchOverviewRuler: "#6e5c00",
             activeMatchColorOverviewRuler: "#ff6600",
           }});
           return;
         }
-        searchIndex = 0;
+        state.searchIndex = 0;
         applySearchHighlights();
       }
 
       function applySearchHighlights() {
         if (state.useDesktopTerminal) return; // handled by xterm-addon-search
         const term = document.getElementById("terminal");
-        if (!searchTerm || !lastRawPane) return;
-        const escaped = lastRawPane.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        if (!state.searchTerm || !state.lastRawPane) return;
+        const escaped = state.lastRawPane.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const escapedTerm = state.searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const re = new RegExp(escapedTerm.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"), "gi");
         let count = 0;
-        let current = searchIndex;
+        let current = state.searchIndex;
         const html = escaped.replace(re, (m) => {
           const cls = count === current ? "search-current" : "";
           count++;
           return `<mark class="${cls}">${m}</mark>`;
         });
-        searchMatches = Array.from({ length: count });
-        if (count > 0 && searchIndex >= count) searchIndex = 0;
-        document.getElementById("search-count").textContent = count > 0 ? `${searchIndex + 1}/${count}` : "0/0";
+        state.searchMatches = Array.from({ length: count });
+        if (count > 0 && state.searchIndex >= count) state.searchIndex = 0;
+        document.getElementById("search-count").textContent = count > 0 ? `${state.searchIndex + 1}/${count}` : "0/0";
         term.innerHTML = html;
         const cur = term.querySelector("mark.search-current");
         if (cur) cur.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -6618,22 +6614,22 @@
       // Desktop search is handled by xterm-addon-search (see doSearch/nextMatch/prevMatch)
 
       function nextMatch() {
-        if (state.useDesktopTerminal && state.desktopController?.searchAddon && searchTerm) {
-          state.desktopController.searchAddon.findNext(searchTerm, { caseSensitive: false });
+        if (state.useDesktopTerminal && state.desktopController?.searchAddon && state.searchTerm) {
+          state.desktopController.searchAddon.findNext(state.searchTerm, { caseSensitive: false });
           return;
         }
-        if (searchMatches.length === 0) return;
-        searchIndex = (searchIndex + 1) % searchMatches.length;
+        if (state.searchMatches.length === 0) return;
+        state.searchIndex = (state.searchIndex + 1) % state.searchMatches.length;
         applySearchHighlights();
       }
 
       function prevMatch() {
-        if (state.useDesktopTerminal && state.desktopController?.searchAddon && searchTerm) {
-          state.desktopController.searchAddon.findPrevious(searchTerm, { caseSensitive: false });
+        if (state.useDesktopTerminal && state.desktopController?.searchAddon && state.searchTerm) {
+          state.desktopController.searchAddon.findPrevious(state.searchTerm, { caseSensitive: false });
           return;
         }
-        if (searchMatches.length === 0) return;
-        searchIndex = (searchIndex - 1 + searchMatches.length) % searchMatches.length;
+        if (state.searchMatches.length === 0) return;
+        state.searchIndex = (state.searchIndex - 1 + state.searchMatches.length) % state.searchMatches.length;
         applySearchHighlights();
       }
 
@@ -6794,7 +6790,7 @@
             });
 
             haptic(10);
-            swipeNavigated = true;
+            state.swipeNavigated = true;
 
             if (back) {
               const backView = BACK_TARGET[state.currentView];
