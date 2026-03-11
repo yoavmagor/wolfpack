@@ -15,7 +15,7 @@ import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync } f
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanFormat } from "./wolfpack-context.js";
-import { expandBudget } from "./validation.js";
+import { expandBudget, resolveCleanupDiffBase } from "./validation.js";
 
 const { values: args } = parseArgs({
   args: process.argv.slice(2),
@@ -590,7 +590,7 @@ const CLEANUP_PROMPT = `You may ONLY create/edit/delete files under ${PROJECT_DI
 You are running a CLEANUP pass after all tasks have been implemented.
 
 INSTRUCTIONS:
-1. Run \`git diff --name-only ${START_COMMIT || "HEAD~10"} HEAD 2>/dev/null || git diff --name-only HEAD\` to find all files changed during this session.
+1. Run \`git diff --name-only ${resolveCleanupDiffBase(START_COMMIT)} HEAD 2>/dev/null || git diff --name-only HEAD\` to find all files changed during this session.
 2. For each changed file, review for:
    - Dead code: unreachable functions, unused imports, orphaned variables
    - Old code paths that were replaced but not removed

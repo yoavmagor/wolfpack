@@ -4080,8 +4080,12 @@
         // Cleanup controller
         if (gs.controller) gs.controller.dispose();
         state.gridSessions.splice(idx, 1);
-        // Adjust focus
-        if (state.gridFocusIndex >= state.gridSessions.length) state.gridFocusIndex = Math.max(0, state.gridSessions.length - 1);
+        // Adjust focus — shift left when a cell before the focused one is removed
+        if (idx < state.gridFocusIndex) {
+          state.gridFocusIndex--;
+        } else if (state.gridFocusIndex >= state.gridSessions.length) {
+          state.gridFocusIndex = Math.max(0, state.gridSessions.length - 1);
+        }
         if (state.gridSessions.length <= 1) {
           // Exit grid mode → single terminal
           exitGridMode();

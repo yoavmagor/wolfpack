@@ -228,7 +228,6 @@ export async function tmuxNewSession(
   loadSettings: () => { agentCmd: string },
 ): Promise<void> {
   const agentCmd = cmd || loadSettings().agentCmd || "claude";
-  sessionDirMap.set(name, cwd);
   if (agentCmd === "shell") {
     await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, SHELL]);
   } else {
@@ -236,6 +235,8 @@ export async function tmuxNewSession(
     const shellCmd = `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT ${SHELL} -lic ${shellEscape(fullCmd + "; exec " + SHELL)}`;
     await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, shellCmd]);
   }
+  // cache only after successful creation to avoid poisoning map on failed attempts
+  sessionDirMap.set(name, cwd);
   // persist project root in tmux session env — survives server restarts
   await exec(TMUX, ["set-environment", "-t", name, WOLFPACK_DIR_ENV, cwd]).catch(() => {});
 }

@@ -88,6 +88,12 @@ export function isWolfpackProcess(comm: string): boolean {
   return comm.includes("wolfpack");
 }
 
+/** Prefer full args when binary name alone is not descriptive. */
+export function resolveProcessCommandForValidation(comm: string, args: string): string {
+  if (isWolfpackProcess(comm)) return comm;
+  return args || comm;
+}
+
 export function isPortInUse(port: number): boolean {
   try {
     const p = Math.floor(Number(port));
@@ -127,11 +133,18 @@ export function killPortHolder(port: number): boolean {
     }
     if (pid && pid > 1) {
       try {
-        const comm = IS_MACOS
-          ? execFileSync("ps", ["-p", String(pid), "-o", "comm="], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim()
-          : execFileSync("ps", ["-p", String(pid), "-o", "args="], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+        const comm = execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
+          encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+        let args = "";
         if (!isWolfpackProcess(comm)) {
-          print(dim(`  Port ${p} held by non-wolfpack process (PID ${pid}): ${comm}`));
+          args = execFileSync("ps", ["-p", String(pid), "-o", "args="], {
+            encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+          }).trim();
+        }
+        const processCmd = resolveProcessCommandForValidation(comm, args);
+        if (!isWolfpackProcess(processCmd)) {
+          print(dim(`  Port ${p} held by non-wolfpack process (PID ${pid}): ${processCmd}`));
           return false;
         }
       } catch {

@@ -139,10 +139,33 @@ describe("removeFromGridState", () => {
     expect(result.exitGrid).toBe(false);
   });
 
-  test("focus stays if removing before focus", () => {
+  test("focus shifts left when removing cell before focused one", () => {
     const result = removeFromGridState(three, 0, 2);
-    // focus was 2, removed index 0, so new focus should be clamped
-    expect(result.focusIndex).toBe(1); // was 2, now array is length 2, so 1
+    // focus was 2, removed index 0, so focused session "c" is now at index 1
+    expect(result.focusIndex).toBe(1);
+    expect(result.sessions[1].session).toBe("c");
+    expect(result.exitGrid).toBe(false);
+  });
+
+  test("focus stays when removing cell after focused one", () => {
+    const result = removeFromGridState(three, 2, 0);
+    // focus was 0, removed index 2 — focus should remain at 0
+    expect(result.focusIndex).toBe(0);
+    expect(result.sessions[0].session).toBe("a");
+    expect(result.exitGrid).toBe(false);
+  });
+
+  test("4-cell grid: focus tracks correct session when earlier cell removed", () => {
+    const four: GridSession[] = [
+      { session: "a", machine: "" },
+      { session: "b", machine: "" },
+      { session: "c", machine: "" },
+      { session: "d", machine: "" },
+    ];
+    // Focus on "d" (index 3), remove "b" (index 1)
+    const result = removeFromGridState(four, 1, 3);
+    expect(result.focusIndex).toBe(2);
+    expect(result.sessions[2].session).toBe("d");
     expect(result.exitGrid).toBe(false);
   });
 

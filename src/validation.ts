@@ -40,6 +40,11 @@ export function expandBudget(current: number, subtaskCount: number, ceiling: num
   return current < ceiling ? Math.min(current + subtaskCount, ceiling) : current;
 }
 
+/** Choose git diff base for ralph cleanup scope. */
+export function resolveCleanupDiffBase(startCommit: string): string {
+  return startCommit || "HEAD~10";
+}
+
 // ── Clamping ──
 
 export function clampCols(n: number): number {

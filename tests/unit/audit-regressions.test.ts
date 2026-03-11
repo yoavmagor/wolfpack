@@ -38,30 +38,7 @@ describe("isUnderDevDir — path containment boundary", () => {
   });
 });
 
-// ── 2. sessionDirMap pruning ──
-// The pruning logic lives inside _realTmuxList() which requires tmux.
-// We test the exported sessionDirMap directly: populate it, then verify
-// the pruning pattern (which is trivial Map iteration) stays correct.
-
-describe("sessionDirMap pruning", () => {
-  test("stale entries are removed when session disappears", () => {
-    // Simulates the pruning loop in _realTmuxList — can't call the real
-    // function without tmux, so we verify the pattern against the exported map.
-    const sessionDirMap = new Map<string, string>();
-    sessionDirMap.set("alive-session", "/Users/home/Dev/alive");
-    sessionDirMap.set("dead-session", "/Users/home/Dev/dead");
-
-    const liveSet = new Set(["alive-session"]);
-    for (const key of sessionDirMap.keys()) {
-      if (!liveSet.has(key)) sessionDirMap.delete(key);
-    }
-
-    expect(sessionDirMap.has("alive-session")).toBe(true);
-    expect(sessionDirMap.has("dead-session")).toBe(false);
-  });
-});
-
-// ── 3. killPortHolder process verification ──
+// ── 2. killPortHolder process verification ──
 
 import { isWolfpackProcess } from "../../src/cli/config.js";
 
@@ -79,9 +56,14 @@ describe("isWolfpackProcess — killPortHolder identity check", () => {
   });
 });
 
-// ── 4. Ralph subtask expansion budget ──
+// ── 3. Ralph subtask expansion budget ──
 
-import { expandBudget, clampCols, clampRows } from "../../src/validation.js";
+import {
+  expandBudget,
+  clampCols,
+  clampRows,
+  resolveCleanupDiffBase,
+} from "../../src/validation.js";
 
 describe("expandBudget — ralph subtask expansion", () => {
   test("budget increases by subtask count, not just 1", () => {
@@ -129,27 +111,19 @@ describe("clampCols / clampRows — NaN safety", () => {
   });
 });
 
-// ── 5. Ralph cleanup scope uses START_COMMIT ──
-// CLEANUP_PROMPT is module-scoped and captures START_COMMIT at import time
-// (which runs git rev-parse). Can't import without the full ralph-macchio
-// side effects, so we verify the template logic pattern directly.
+// ── 4. Ralph cleanup scope uses START_COMMIT ──
 
 describe("ralph cleanup prompt — START_COMMIT boundary", () => {
   test("uses START_COMMIT when available", () => {
-    const START_COMMIT = "abc123";
-    const fragment = `git diff --name-only ${START_COMMIT || "HEAD~10"} HEAD`;
-    expect(fragment).toContain("abc123");
-    expect(fragment).not.toContain("HEAD~10");
+    expect(resolveCleanupDiffBase("abc123")).toBe("abc123");
   });
 
   test("falls back to HEAD~10 when START_COMMIT is empty", () => {
-    const START_COMMIT = "";
-    const fragment = `git diff --name-only ${START_COMMIT || "HEAD~10"} HEAD`;
-    expect(fragment).toContain("HEAD~10");
+    expect(resolveCleanupDiffBase("")).toBe("HEAD~10");
   });
 });
 
-// ── 6. /api/ralph/start validation ──
+// ── 5. /api/ralph/start validation ──
 
 import { isValidPlanFile, BRANCH_REGEX } from "../../src/validation.js";
 
