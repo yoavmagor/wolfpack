@@ -524,9 +524,11 @@ export const routes: Record<
       newBranch?: string;
       sourceBranch?: string;
       format?: boolean;
+      cleanup?: boolean;
+      auditFix?: boolean;
     }>(req, res);
     if (!body) return;
-    const { project, iterations, planFile, agent, newBranch, sourceBranch, format } = body;
+    const { project, iterations, planFile, agent, newBranch, sourceBranch, format, cleanup, auditFix } = body;
     if (!validateProject(res, project)) return;
     const projectDir = join(DEV_DIR, project);
     if (!validateProjectDir(res, projectDir)) return;
@@ -563,6 +565,14 @@ export const routes: Record<
     if (!isValidPlanFile(resolvedPlan)) {
       return json(res, { error: "invalid plan file name" }, 400);
     }
+    if (cleanup != null && typeof cleanup !== "boolean") {
+      return json(res, { error: "invalid cleanup flag" }, 400);
+    }
+    if (auditFix != null && typeof auditFix !== "boolean") {
+      return json(res, { error: "invalid auditFix flag" }, 400);
+    }
+    const cleanupEnabled = cleanup ?? true;
+    const auditFixEnabled = auditFix ?? false;
 
     if (newBranch) {
       if (!BRANCH_REGEX.test(newBranch)) {
@@ -607,6 +617,8 @@ export const routes: Record<
       "--iterations", String(iters),
       "--agent", RALPH_AGENTS.has(agent || "claude") ? (agent || "claude") : "claude",
       "--progress", "progress.txt",
+      "--cleanup", String(cleanupEnabled),
+      "--audit-fix", String(auditFixEnabled),
       ...(format ? ["--format"] : []),
     ];
     const child = spawn(RALPH_BIN_ARGS[0], workerArgs, {

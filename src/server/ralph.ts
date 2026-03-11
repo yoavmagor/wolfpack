@@ -16,7 +16,10 @@ export interface RalphStatus {
   project: string;
   active: boolean;
   completed: boolean;
+  audit: boolean;
   cleanup: boolean;
+  cleanupEnabled: boolean;
+  auditFixEnabled: boolean;
   iteration: number;
   totalIterations: number;
   agent: string;
@@ -66,7 +69,10 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
     project,
     active: false,
     completed: false,
+    audit: false,
     cleanup: false,
+    cleanupEnabled: true,
+    auditFixEnabled: false,
     iteration: 0,
     totalIterations: 0,
     agent: "",
@@ -85,13 +91,17 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
     const lines = content.split("\n");
 
     // parse header
-    for (const line of lines.slice(0, 10)) {
+    for (const line of lines.slice(0, 16)) {
       const agentMatch = line.match(/^agent:\s*(.+)/);
       if (agentMatch) status.agent = agentMatch[1].trim();
       const planMatch = line.match(/^plan:\s*(.+)/);
       if (planMatch) status.planFile = planMatch[1].trim();
       const progMatch = line.match(/^progress:\s*(.+)/);
       if (progMatch) status.progressFile = progMatch[1].trim();
+      const cleanupMatch = line.match(/^phase_cleanup:\s*(on|off)/);
+      if (cleanupMatch) status.cleanupEnabled = cleanupMatch[1] === "on";
+      const auditFixMatch = line.match(/^phase_audit_fix:\s*(on|off)/);
+      if (auditFixMatch) status.auditFixEnabled = auditFixMatch[1] === "on";
       const startMatch = line.match(/^started:\s*(.+)/);
       if (startMatch) status.started = startMatch[1].trim();
       const pidMatch = line.match(/^pid:\s*(\d+)/);
@@ -122,6 +132,9 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
         process.kill(status.pid, 0);
         status.active = true;
         status.completed = false;
+        if (content.includes("Wax Inspect") && !content.includes("Wax Inspect complete") && !content.includes("Wax Inspect FAILED")) {
+          status.audit = true;
+        }
         if (content.includes("🥋 Wax Off") && !content.includes("Wax Off complete") && !content.includes("Wax Off FAILED")) {
           status.cleanup = true;
         }
@@ -137,7 +150,8 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
       (l) => l.trim() && !l.startsWith("===") && !l.startsWith("plan:") &&
         !l.startsWith("progress:") && !l.startsWith("started:") &&
         !l.startsWith("finished:") && !l.startsWith("pid:") &&
-        !l.startsWith("agent:") && !l.startsWith("🥋"),
+        !l.startsWith("agent:") && !l.startsWith("phase_cleanup:") &&
+        !l.startsWith("phase_audit_fix:") && !l.startsWith("🥋"),
     );
     status.lastOutput = meaningful.slice(-5).join("\n");
 

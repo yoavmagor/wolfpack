@@ -42,7 +42,10 @@ interface RalphStatus {
   project: string;
   active: boolean;
   completed: boolean;
+  audit: boolean;
   cleanup: boolean;
+  cleanupEnabled: boolean;
+  auditFixEnabled: boolean;
   iteration: number;
   totalIterations: number;
   agent: string;
@@ -88,7 +91,10 @@ function parseRalphLog(projectDir: string): RalphStatus | null {
     project,
     active: false,
     completed: false,
+    audit: false,
     cleanup: false,
+    cleanupEnabled: true,
+    auditFixEnabled: false,
     iteration: 0,
     totalIterations: 0,
     agent: "",
@@ -106,13 +112,17 @@ function parseRalphLog(projectDir: string): RalphStatus | null {
     const content = readFileSync(logPath, "utf-8");
     const lines = content.split("\n");
 
-    for (const line of lines.slice(0, 10)) {
+    for (const line of lines.slice(0, 16)) {
       const agentMatch = line.match(/^agent:\s*(.+)/);
       if (agentMatch) status.agent = agentMatch[1].trim();
       const planMatch = line.match(/^plan:\s*(.+)/);
       if (planMatch) status.planFile = planMatch[1].trim();
       const progMatch = line.match(/^progress:\s*(.+)/);
       if (progMatch) status.progressFile = progMatch[1].trim();
+      const cleanupMatch = line.match(/^phase_cleanup:\s*(on|off)/);
+      if (cleanupMatch) status.cleanupEnabled = cleanupMatch[1] === "on";
+      const auditFixMatch = line.match(/^phase_audit_fix:\s*(on|off)/);
+      if (auditFixMatch) status.auditFixEnabled = auditFixMatch[1] === "on";
       const startMatch = line.match(/^started:\s*(.+)/);
       if (startMatch) status.started = startMatch[1].trim();
       const pidMatch = line.match(/^pid:\s*(\d+)/);
@@ -139,6 +149,9 @@ function parseRalphLog(projectDir: string): RalphStatus | null {
         process.kill(status.pid, 0);
         status.active = true;
         status.completed = false;
+        if (content.includes("Wax Inspect") && !content.includes("Wax Inspect complete") && !content.includes("Wax Inspect FAILED")) {
+          status.audit = true;
+        }
         if (content.includes("🥋 Wax Off") && !content.includes("Wax Off complete") && !content.includes("Wax Off FAILED")) {
           status.cleanup = true;
         }
@@ -151,7 +164,8 @@ function parseRalphLog(projectDir: string): RalphStatus | null {
       (l) => l.trim() && !l.startsWith("===") && !l.startsWith("plan:") &&
         !l.startsWith("progress:") && !l.startsWith("started:") &&
         !l.startsWith("finished:") && !l.startsWith("pid:") &&
-        !l.startsWith("agent:") && !l.startsWith("🥋"),
+        !l.startsWith("agent:") && !l.startsWith("phase_cleanup:") &&
+        !l.startsWith("phase_audit_fix:") && !l.startsWith("🥋"),
     );
     status.lastOutput = meaningful.slice(-5).join("\n");
 
@@ -284,9 +298,11 @@ const routes: Record<
       newBranch?: string;
       sourceBranch?: string;
       format?: boolean;
+      cleanup?: boolean;
+      auditFix?: boolean;
     }>(req, res);
     if (!body) return;
-    const { project, iterations, planFile, agent, format } = body;
+    const { project, iterations, planFile, agent, format, cleanup, auditFix } = body;
     if (!project || !isValidProjectName(project)) {
       return json(res, { error: "invalid project name" }, 400);
     }
@@ -336,6 +352,14 @@ const routes: Record<
     if (!/^[a-zA-Z0-9._\- ]+\.md$/.test(resolvedPlan) || resolvedPlan === ".." || resolvedPlan === ".") {
       return json(res, { error: "invalid plan file name" }, 400);
     }
+    if (cleanup != null && typeof cleanup !== "boolean") {
+      return json(res, { error: "invalid cleanup flag" }, 400);
+    }
+    if (auditFix != null && typeof auditFix !== "boolean") {
+      return json(res, { error: "invalid auditFix flag" }, 400);
+    }
+    const cleanupEnabled = cleanup ?? true;
+    const auditFixEnabled = auditFix ?? false;
     if (!existsSync(join(projectDir, resolvedPlan))) {
       return json(res, { error: `plan file '${resolvedPlan}' not found` }, 404);
     }
@@ -347,6 +371,8 @@ const routes: Record<
       "--iterations", String(iters),
       "--agent", agent || "claude",
       "--progress", "progress.txt",
+      "--cleanup", String(cleanupEnabled),
+      "--audit-fix", String(auditFixEnabled),
       ...(format ? ["--format"] : []),
     ];
     lastSpawnArgs = { bin: "bun", args: workerArgs, cwd: projectDir };
@@ -573,6 +599,36 @@ describe("POST /api/ralph/start", () => {
     expect(lastSpawnArgs!.args).toContain("claude"); // default agent
   });
 
+  test("default phase flags — cleanup on, audit+fix off", async () => {
+    setupProject("start-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", { project: "start-test" });
+    expect(res.status).toBe(200);
+    expect(lastSpawnArgs!.args).toContain("--cleanup");
+    expect(lastSpawnArgs!.args).toContain("true");
+    expect(lastSpawnArgs!.args).toContain("--audit-fix");
+    expect(lastSpawnArgs!.args).toContain("false");
+  });
+
+  test("phase flags passed through", async () => {
+    setupProject("start-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "start-test",
+      cleanup: false,
+      auditFix: true,
+    });
+    expect(res.status).toBe(200);
+    expect(lastSpawnArgs!.args).toContain("--cleanup");
+    expect(lastSpawnArgs!.args).toContain("false");
+    expect(lastSpawnArgs!.args).toContain("--audit-fix");
+    expect(lastSpawnArgs!.args).toContain("true");
+  });
+
   test("iterations clamped to min 1", async () => {
     setupProject("start-test", {
       plan: { name: "PLAN.md", content: "- [ ] task\n" },
@@ -610,6 +666,34 @@ describe("POST /api/ralph/start", () => {
     });
     expect(res.status).toBe(200);
     expect(lastSpawnArgs!.args).toContain("--format");
+  });
+
+  test("invalid cleanup flag type → 400", async () => {
+    setupProject("start-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "start-test",
+      cleanup: "false",
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe("invalid cleanup flag");
+  });
+
+  test("invalid auditFix flag type → 400", async () => {
+    setupProject("start-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "start-test",
+      auditFix: "true",
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe("invalid auditFix flag");
   });
 
   test("invalid project name → 400", async () => {

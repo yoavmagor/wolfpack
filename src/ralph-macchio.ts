@@ -9,6 +9,8 @@
  *   --progress FILE   progress file name (default progress.txt)
  *   --agent NAME      agent to use: claude|cursor|codex|gemini (default claude)
  *   --format          number plan tasks before starting
+ *   --cleanup BOOL    run cleanup phase: true|false (default true)
+ *   --audit-fix BOOL  run audit+fix phase: true|false (default false)
  */
 import { execFileSync, spawn as nodeSpawn } from "node:child_process";
 import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
@@ -16,6 +18,8 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanFormat } from "./wolfpack-context.js";
 import { expandBudget, resolveCleanupDiffBase } from "./validation.js";
+import { buildAuditFixPrompt } from "./ralph-skill-audit.js";
+import { buildCleanupPrompt } from "./ralph-skill-cleanup.js";
 
 const { values: args } = parseArgs({
   args: process.argv.slice(2),
@@ -25,6 +29,8 @@ const { values: args } = parseArgs({
     progress: { type: "string", default: "progress.txt" },
     agent: { type: "string", default: "claude" },
     format: { type: "boolean", default: false },
+    cleanup: { type: "string", default: "true" },
+    "audit-fix": { type: "string", default: "false" },
   },
 });
 
@@ -33,6 +39,8 @@ const PLAN_FILE = args.plan!;
 const PROGRESS_FILE = args.progress!;
 const AGENT = args.agent!;
 const FORMAT_PLAN = args.format!;
+const CLEANUP_ENABLED = args.cleanup !== "false";
+const AUDIT_FIX_ENABLED = args["audit-fix"] === "true";
 const PROJECT_DIR = process.cwd();
 const LOG_FILE = join(PROJECT_DIR, ".ralph.log");
 const ITER_FILE = join(PROJECT_DIR, ".ralph_iter.tmp");
@@ -271,6 +279,8 @@ writeFileSync(LOG_FILE, `🥋 ralph — ${ITERATIONS} iterations\n`);
 appendFileSync(LOG_FILE, `agent: ${AGENT}\n`);
 appendFileSync(LOG_FILE, `plan: ${PLAN_FILE}\n`);
 appendFileSync(LOG_FILE, `progress: ${PROGRESS_FILE}\n`);
+appendFileSync(LOG_FILE, `phase_cleanup: ${CLEANUP_ENABLED ? "on" : "off"}\n`);
+appendFileSync(LOG_FILE, `phase_audit_fix: ${AUDIT_FIX_ENABLED ? "on" : "off"}\n`);
 appendFileSync(LOG_FILE, `pid: ${process.pid}\n`);
 appendFileSync(LOG_FILE, `bin: ${agent.bin}\n`);
 appendFileSync(LOG_FILE, `started: ${new Date().toString()}\n\n`);
@@ -474,7 +484,7 @@ async function main() {
         ? "Plan has content but no parseable tasks — format may be corrupted"
         : "No unchecked tasks remain";
       appendFileSync(LOG_FILE, `\n=== ${hasSubstantiveContent ? "⚠️" : "🥋"} ${msg} — ${new Date().toString()} ===\n`);
-      if (i > 1) await runCleanup();
+      if (i > 1) await runFinalPhases();
       logSummary(tasksCompleted, subtasksAdded);
       appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
       process.exit(0);
@@ -575,47 +585,48 @@ async function main() {
   appendFileSync(LOG_FILE, `=== Completed ${maxIterations} iterations ===\n`);
   const remaining = extractCurrentTask();
   if (!remaining) {
-    await runCleanup();
+    await runFinalPhases();
   } else {
-    appendFileSync(LOG_FILE, `=== ⏭️  Skipping cleanup — tasks still remain ===\n`);
+    appendFileSync(LOG_FILE, `=== ⏭️  Skipping final phases — tasks still remain ===\n`);
   }
   logSummary(tasksCompleted, subtasksAdded);
   appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
 }
 
-const CLEANUP_PROMPT = `You may ONLY create/edit/delete files under ${PROJECT_DIR}. Do NOT touch files outside this directory.
+function getAuditFixPrompt(): string {
+  return buildAuditFixPrompt({
+    projectDir: PROJECT_DIR,
+    planFile: PLAN_FILE,
+    progressFile: PROGRESS_FILE,
+    diffBase: resolveCleanupDiffBase(START_COMMIT),
+  });
+}
 
-@${PLAN_FILE} @${PROGRESS_FILE}
+function getCleanupPrompt(): string {
+  return buildCleanupPrompt({
+    projectDir: PROJECT_DIR,
+    planFile: PLAN_FILE,
+    progressFile: PROGRESS_FILE,
+    diffBase: resolveCleanupDiffBase(START_COMMIT),
+  });
+}
 
-You are running a CLEANUP pass after all tasks have been implemented.
+async function runAuditFix(): Promise<void> {
+  appendFileSync(LOG_FILE, `\n=== 🥋 Wax Inspect — starting audit+fix — ${new Date().toString()} ===\n\n`);
+  const { exitCode, output } = await runIteration(getAuditFixPrompt());
+  writeFileSync(ITER_FILE, output);
 
-INSTRUCTIONS:
-1. Run \`git diff --name-only ${resolveCleanupDiffBase(START_COMMIT)} HEAD 2>/dev/null || git diff --name-only HEAD\` to find all files changed during this session.
-2. For each changed file, review for:
-   - Dead code: unreachable functions, unused imports, orphaned variables
-   - Old code paths that were replaced but not removed
-   - Commented-out code that is no longer relevant
-   - Stale TODO/FIXME comments referencing completed work
-3. Also check files that IMPORT FROM or are closely coupled to the changed files — look for:
-   - Exports that are no longer imported anywhere
-   - Interfaces/types that lost all consumers
-   - Test helpers that test removed functionality
-4. Remove all identified dead code. Do NOT remove code that is still reachable or may be used.
-5. Run any relevant tests to confirm nothing breaks.
-6. Commit with message "chore: cleanup dead code after ralph session".
-7. Update ${PROGRESS_FILE} with what was cleaned up.
-
-RULES:
-- Do NOT add new features or refactor working code.
-- Do NOT remove comments that explain non-obvious logic.
-- Only remove code you can confirm is unreachable or unused.
-- If unsure, leave it.
-
-BEGIN.`;
+  if (exitCode !== 0) {
+    appendFileSync(LOG_FILE, `\n=== ⚠️  Wax Inspect FAILED (exit code ${exitCode}) — ${new Date().toString()} ===\n\n`);
+  } else {
+    appendFileSync(LOG_FILE, `\n=== ✅ Wax Inspect complete — ${new Date().toString()} ===\n`);
+  }
+  try { unlinkSync(ITER_FILE); } catch {}
+}
 
 async function runCleanup(): Promise<void> {
   appendFileSync(LOG_FILE, `\n=== 🥋 Wax Off — starting cleanup — ${new Date().toString()} ===\n\n`);
-  const { exitCode, output } = await runIteration(CLEANUP_PROMPT);
+  const { exitCode, output } = await runIteration(getCleanupPrompt());
   writeFileSync(ITER_FILE, output);
 
   if (exitCode !== 0) {
@@ -624,6 +635,20 @@ async function runCleanup(): Promise<void> {
     appendFileSync(LOG_FILE, `\n=== ✅ Wax Off complete — ${new Date().toString()} ===\n`);
   }
   try { unlinkSync(ITER_FILE); } catch {}
+}
+
+async function runFinalPhases(): Promise<void> {
+  if (AUDIT_FIX_ENABLED) {
+    await runAuditFix();
+  } else {
+    appendFileSync(LOG_FILE, `=== ⏭️  Skipping audit+fix — phase disabled ===\n`);
+  }
+
+  if (CLEANUP_ENABLED) {
+    await runCleanup();
+  } else {
+    appendFileSync(LOG_FILE, `=== ⏭️  Skipping cleanup — phase disabled ===\n`);
+  }
 }
 
 main().then(() => {
