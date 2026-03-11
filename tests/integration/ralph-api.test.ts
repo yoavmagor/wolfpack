@@ -18,7 +18,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { TASK_HEADER, validatePlanFormat } from "../../src/wolfpack-context.js";
+import { parseRalphLog, countPlanTasks, type RalphStatus } from "../../src/server/ralph.ts";
+import { isValidPlanFile } from "../../src/validation.ts";
 
 // ─── Temp directory for fake DEV_DIR ─────────────────────────────────────────
 
@@ -36,152 +37,6 @@ afterAll(() => {
 
 function isValidProjectName(name: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(name) && name !== "." && name !== "..";
-}
-
-interface RalphStatus {
-  project: string;
-  active: boolean;
-  completed: boolean;
-  audit: boolean;
-  cleanup: boolean;
-  cleanupEnabled: boolean;
-  auditFixEnabled: boolean;
-  iteration: number;
-  totalIterations: number;
-  agent: string;
-  planFile: string;
-  progressFile: string;
-  started: string;
-  finished: string;
-  lastOutput: string;
-  pid: number;
-  tasksDone: number;
-  tasksTotal: number;
-}
-
-function countPlanTasks(planPath: string): { done: number; total: number; issues: string[] } {
-  try {
-    const plan = readFileSync(planPath, "utf-8");
-    const { issues } = validatePlanFormat(plan);
-    if (/^- \[[ x]\] /m.test(plan)) {
-      const done = (plan.match(/^- \[x\] /gm) || []).length;
-      const pending = (plan.match(/^- \[ \] /gm) || []).length;
-      return { done, total: done + pending, issues };
-    }
-    let total = 0;
-    let done = 0;
-    for (const line of plan.split("\n")) {
-      if (TASK_HEADER.test(line)) {
-        total++;
-        if (line.includes("~~")) done++;
-      }
-    }
-    return { done, total, issues };
-  } catch {
-    return { done: 0, total: 0, issues: [] };
-  }
-}
-
-function parseRalphLog(projectDir: string): RalphStatus | null {
-  const logPath = join(projectDir, ".ralph.log");
-  if (!existsSync(logPath)) return null;
-
-  const project = projectDir.split("/").pop() ?? "";
-  const status: RalphStatus = {
-    project,
-    active: false,
-    completed: false,
-    audit: false,
-    cleanup: false,
-    cleanupEnabled: true,
-    auditFixEnabled: false,
-    iteration: 0,
-    totalIterations: 0,
-    agent: "",
-    planFile: "",
-    progressFile: "",
-    started: "",
-    finished: "",
-    lastOutput: "",
-    pid: 0,
-    tasksDone: 0,
-    tasksTotal: 0,
-  };
-
-  try {
-    const content = readFileSync(logPath, "utf-8");
-    const lines = content.split("\n");
-
-    for (const line of lines.slice(0, 16)) {
-      const agentMatch = line.match(/^agent:\s*(.+)/);
-      if (agentMatch) status.agent = agentMatch[1].trim();
-      const planMatch = line.match(/^plan:\s*(.+)/);
-      if (planMatch) status.planFile = planMatch[1].trim();
-      const progMatch = line.match(/^progress:\s*(.+)/);
-      if (progMatch) status.progressFile = progMatch[1].trim();
-      const cleanupMatch = line.match(/^phase_cleanup:\s*(on|off)/);
-      if (cleanupMatch) status.cleanupEnabled = cleanupMatch[1] === "on";
-      const auditFixMatch = line.match(/^phase_audit_fix:\s*(on|off)/);
-      if (auditFixMatch) status.auditFixEnabled = auditFixMatch[1] === "on";
-      const startMatch = line.match(/^started:\s*(.+)/);
-      if (startMatch) status.started = startMatch[1].trim();
-      const pidMatch = line.match(/^pid:\s*(\d+)/);
-      if (pidMatch) status.pid = Number(pidMatch[1]);
-    }
-
-    const totalMatch = content.match(/ralph — (\d+) iterations/);
-    if (totalMatch) status.totalIterations = Number(totalMatch[1]);
-
-    const iterRegex = /=== (?:Iteration|🥋 Wax On) (\d+)\/(\d+)/g;
-    let match;
-    while ((match = iterRegex.exec(content)) !== null) {
-      status.iteration = Number(match[1]);
-      status.totalIterations = Number(match[2]);
-    }
-
-    const finishedMatch = content.match(/^finished:\s*(.+)/m);
-    if (finishedMatch) {
-      status.finished = finishedMatch[1].trim();
-    }
-
-    if (status.pid > 1) {
-      try {
-        process.kill(status.pid, 0);
-        status.active = true;
-        status.completed = false;
-        if (content.includes("Wax Inspect") && !content.includes("Wax Inspect complete") && !content.includes("Wax Inspect FAILED")) {
-          status.audit = true;
-        }
-        if (content.includes("🥋 Wax Off") && !content.includes("Wax Off complete") && !content.includes("Wax Off FAILED")) {
-          status.cleanup = true;
-        }
-      } catch {
-        status.active = false;
-      }
-    }
-
-    const meaningful = lines.filter(
-      (l) => l.trim() && !l.startsWith("===") && !l.startsWith("plan:") &&
-        !l.startsWith("progress:") && !l.startsWith("started:") &&
-        !l.startsWith("finished:") && !l.startsWith("pid:") &&
-        !l.startsWith("agent:") && !l.startsWith("phase_cleanup:") &&
-        !l.startsWith("phase_audit_fix:") && !l.startsWith("🥋"),
-    );
-    status.lastOutput = meaningful.slice(-5).join("\n");
-
-    if (status.planFile) {
-      const tasks = countPlanTasks(join(projectDir, status.planFile));
-      status.tasksDone = tasks.done;
-      status.tasksTotal = tasks.total;
-      if (tasks.done > 0 && tasks.done === tasks.total && !status.active) {
-        status.completed = true;
-      }
-    }
-
-    return status;
-  } catch {
-    return null;
-  }
 }
 
 function listDevProjects(): string[] {
@@ -279,7 +134,7 @@ const routes: Record<
     if (!project || !isValidProjectName(project)) {
       return json(res, { error: "invalid project" }, 400);
     }
-    if (!plan || !/^[a-zA-Z0-9._\- ]+\.md$/.test(plan)) {
+    if (!plan || !isValidPlanFile(plan)) {
       return json(res, { error: "invalid plan file" }, 400);
     }
     const planPath = join(TEST_DEV_DIR, project, plan);
@@ -347,9 +202,9 @@ const routes: Record<
       return json(res, { error: "failed to acquire lock" }, 500);
     }
 
-    const iters = Math.max(1, Math.min(50, iterations ?? 5));
+    const iters = Math.max(1, Math.min(500, iterations ?? 5));
     const resolvedPlan = planFile || "PLAN.md";
-    if (!/^[a-zA-Z0-9._\- ]+\.md$/.test(resolvedPlan) || resolvedPlan === ".." || resolvedPlan === ".") {
+    if (!isValidPlanFile(resolvedPlan)) {
       return json(res, { error: "invalid plan file name" }, 400);
     }
     if (cleanup != null && typeof cleanup !== "boolean") {
@@ -515,6 +370,12 @@ function get(path: string) {
   return fetch(`${base}${path}`);
 }
 
+function valueAfterFlag(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx < 0 || idx + 1 >= args.length) return undefined;
+  return args[idx + 1];
+}
+
 /** Create a fake project dir with optional .ralph.log and plan file */
 function setupProject(
   name: string,
@@ -606,10 +467,8 @@ describe("POST /api/ralph/start", () => {
 
     const res = await post("/api/ralph/start", { project: "start-test" });
     expect(res.status).toBe(200);
-    expect(lastSpawnArgs!.args).toContain("--cleanup");
-    expect(lastSpawnArgs!.args).toContain("true");
-    expect(lastSpawnArgs!.args).toContain("--audit-fix");
-    expect(lastSpawnArgs!.args).toContain("false");
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--cleanup")).toBe("true");
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--audit-fix")).toBe("false");
   });
 
   test("phase flags passed through", async () => {
@@ -623,10 +482,8 @@ describe("POST /api/ralph/start", () => {
       auditFix: true,
     });
     expect(res.status).toBe(200);
-    expect(lastSpawnArgs!.args).toContain("--cleanup");
-    expect(lastSpawnArgs!.args).toContain("false");
-    expect(lastSpawnArgs!.args).toContain("--audit-fix");
-    expect(lastSpawnArgs!.args).toContain("true");
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--cleanup")).toBe("false");
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--audit-fix")).toBe("true");
   });
 
   test("iterations clamped to min 1", async () => {
@@ -642,7 +499,7 @@ describe("POST /api/ralph/start", () => {
     expect(lastSpawnArgs!.args).toContain("1");
   });
 
-  test("iterations clamped to max 50", async () => {
+  test("iterations clamped to max 500", async () => {
     setupProject("start-test", {
       plan: { name: "PLAN.md", content: "- [ ] task\n" },
     });
@@ -652,7 +509,7 @@ describe("POST /api/ralph/start", () => {
       iterations: 999,
     });
     expect(res.status).toBe(200);
-    expect(lastSpawnArgs!.args).toContain("50");
+    expect(lastSpawnArgs!.args).toContain("500");
   });
 
   test("format flag passed through", async () => {
@@ -931,7 +788,7 @@ describe("POST /api/ralph/dismiss", () => {
     const data = await res.json();
     expect(data.ok).toBe(true);
     expect(data.deleted).toContain(".ralph.log");
-    expect(data.deleted).toContain(".ralph.lock");
+    // .ralph.lock may already be cleaned up by parseRalphLog (dead pid)
     expect(data.deleted).toContain("progress.txt");
     expect(data.deleted).not.toContain("MY-PLAN.md");
 

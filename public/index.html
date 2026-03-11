@@ -1973,7 +1973,7 @@
           border-radius: var(--radius-sm);
           min-height: 0;
         }
-        .ralph-toggles { padding-top: 10px; gap: 8px; }
+        .ralph-toggles { padding-top: 10px; gap: 10px; }
         .ralph-branch-label { font-size: 12px; }
         .ralph-iter-header {
           padding: 10px 12px;
@@ -4701,7 +4701,7 @@
           if (loop.active) {
             actions.innerHTML = '<button class="ralph-launch-btn ralph-cancel-btn" onclick="cancelRalph()">Cancel</button>';
           } else {
-            actions.innerHTML = '<button class="ralph-launch-btn" onclick="restartRalph(\'' + escAttr(loop.planFile || '') + '\',\'' + escAttr(loop.agent || '') + '\')">Restart</button>';
+            actions.innerHTML = '<button class="ralph-launch-btn" onclick="restartRalph(\'' + escAttr(loop.planFile || '') + '\',\'' + escAttr(loop.agent || '') + '\',' + cleanupEnabled + ',' + auditFixEnabled + ')">Restart</button>';
           }
 
           // stop polling if loop finished
@@ -4839,9 +4839,11 @@
             loadBranches(sel.value);
           }
         };
-        // Reset branch toggle on form load
-        document.getElementById("ralph-cleanup-toggle").checked = true;
-        document.getElementById("ralph-audit-fix-toggle").checked = false;
+        // Reset toggles on form load (restore from state if restarting)
+        document.getElementById("ralph-cleanup-toggle").checked = state.currentRalphCleanup != null ? state.currentRalphCleanup : true;
+        document.getElementById("ralph-audit-fix-toggle").checked = state.currentRalphAuditFix != null ? state.currentRalphAuditFix : false;
+        state.currentRalphCleanup = undefined;
+        state.currentRalphAuditFix = undefined;
         document.getElementById("ralph-branch-toggle").checked = false;
         document.getElementById("ralph-branch-fields").style.display = "none";
         await loadPlanFiles(sel.value);
@@ -4962,9 +4964,11 @@
         }
       }
 
-      function restartRalph(planFile, agent) {
+      function restartRalph(planFile, agent, cleanup, auditFix) {
         state.currentRalphPlanFile = planFile || "";
         state.currentRalphAgent = agent || "";
+        state.currentRalphCleanup = cleanup;
+        state.currentRalphAuditFix = auditFix;
         state.restartingRalph = true;
         state.ralphStartMachine = state.currentRalphMachine;
         showView("ralph-start");
