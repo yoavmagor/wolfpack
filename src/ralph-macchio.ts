@@ -15,6 +15,7 @@ import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync } f
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanFormat } from "./wolfpack-context.js";
+import { expandBudget, resolveCleanupDiffBase } from "./validation.js";
 
 const { values: args } = parseArgs({
   args: process.argv.slice(2),
@@ -546,7 +547,7 @@ async function main() {
       } else {
         markSectionDone(task);
       }
-      if (maxIterations < MAX_CEILING) maxIterations++;
+      maxIterations = expandBudget(maxIterations, subtasks.length, MAX_CEILING);
       appendFileSync(LOG_FILE, `\n=== 🧩 Subtasks detected (${subtasks.length}) — extended to ${maxIterations} iterations (ceiling ${MAX_CEILING}, expansions ${subtaskExpansions}/${MAX_SUBTASK_EXPANSIONS}) ===\n`);
       for (const st of subtasks) appendFileSync(LOG_FILE, `  + ${st}\n`);
       lastTask = task;
@@ -589,7 +590,7 @@ const CLEANUP_PROMPT = `You may ONLY create/edit/delete files under ${PROJECT_DI
 You are running a CLEANUP pass after all tasks have been implemented.
 
 INSTRUCTIONS:
-1. Run \`git diff --name-only HEAD~10 HEAD 2>/dev/null || git diff --name-only HEAD\` to find all files changed during this session.
+1. Run \`git diff --name-only ${resolveCleanupDiffBase(START_COMMIT)} HEAD 2>/dev/null || git diff --name-only HEAD\` to find all files changed during this session.
 2. For each changed file, review for:
    - Dead code: unreachable functions, unused imports, orphaned variables
    - Old code paths that were replaced but not removed

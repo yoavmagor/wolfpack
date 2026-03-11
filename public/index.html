@@ -2766,12 +2766,21 @@
       }
       const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
       function applyTermToXterm() {
-        if (!state.desktopController?.term) return;
         const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-        state.desktopController.term.options.fontSize = p.fontSize;
-        state.desktopController.term.options.lineHeight = p.lineHeight;
-        state.desktopController.term.options.fontFamily = getTerminalFontFamily();
-        state.desktopController.resize();
+        const fontFamily = getTerminalFontFamily();
+        if (state.desktopController?.term) {
+          state.desktopController.term.options.fontSize = p.fontSize;
+          state.desktopController.term.options.lineHeight = p.lineHeight;
+          state.desktopController.term.options.fontFamily = fontFamily;
+          state.desktopController.resize();
+        }
+        for (const gs of state.gridSessions) {
+          if (!gs.controller?.term) continue;
+          gs.controller.term.options.fontSize = Math.max(p.fontSize - 2, 10);
+          gs.controller.term.options.lineHeight = p.lineHeight;
+          gs.controller.term.options.fontFamily = fontFamily;
+          gs.controller.resize();
+        }
       }
       function initSettings() {
         Object.entries(wpSettings).forEach(([k, v]) => {
@@ -4071,8 +4080,12 @@
         // Cleanup controller
         if (gs.controller) gs.controller.dispose();
         state.gridSessions.splice(idx, 1);
-        // Adjust focus
-        if (state.gridFocusIndex >= state.gridSessions.length) state.gridFocusIndex = Math.max(0, state.gridSessions.length - 1);
+        // Adjust focus — shift left when a cell before the focused one is removed
+        if (idx < state.gridFocusIndex) {
+          state.gridFocusIndex--;
+        } else if (state.gridFocusIndex >= state.gridSessions.length) {
+          state.gridFocusIndex = Math.max(0, state.gridSessions.length - 1);
+        }
         if (state.gridSessions.length <= 1) {
           // Exit grid mode → single terminal
           exitGridMode();
@@ -5094,8 +5107,7 @@
           });
         }
 
-        // Sort by number of open terminals (most first) and do final render
-        groups.sort((a, b) => b.sessions.length - a.sessions.length);
+        // Render groups in stable order (no reordering)
         const html = groups.map(g => renderMachineGroupHtml(g, true)).join("");
         if (html !== state.lastSessionsHtml) {
           // Incremental per-group update: replace only changed groups

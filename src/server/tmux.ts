@@ -37,6 +37,21 @@ function assertTestMode(hook: string): void {
 
 // ── tmuxList ──
 
+/** Returns true if dir is DEV_DIR itself or a child of DEV_DIR (proper path boundary). */
+export function isUnderDevDir(dir: string): boolean {
+  const normalizePath = (path: string): string =>
+    path.length > 1 ? path.replace(/\/+$/, "") : path;
+  const baseDir = normalizePath(DEV_DIR);
+  const candidate = normalizePath(dir);
+  return candidate === baseDir || candidate.startsWith(baseDir + "/");
+}
+
+/** Maps session name → project directory. Set at creation time by tmuxNewSession(),
+ *  backfilled by tmuxList() only for pre-existing sessions (never overwrites). */
+export const sessionDirMap = new Map<string, string>();
+
+const WOLFPACK_DIR_ENV = "WOLFPACK_PROJECT_DIR";
+
 async function _realTmuxList(): Promise<string[]> {
   try {
     const { stdout } = await exec(TMUX, [
@@ -45,16 +60,42 @@ async function _realTmuxList(): Promise<string[]> {
       "#{session_name}|||#{pane_current_path}",
     ]);
     const SEP = "|||";
-    return stdout
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .filter((line) => {
-        const idx = line.indexOf(SEP);
-        return idx !== -1 && line.substring(idx + SEP.length).startsWith(DEV_DIR);
-      })
-      .map((line) => line.substring(0, line.indexOf(SEP)))
-      .filter((name) => !name.startsWith("wp_"));
+    const sessions: string[] = [];
+    const backfillQueue: { name: string; dir: string }[] = [];
+    for (const line of stdout.trim().split("\n")) {
+      if (!line) continue;
+      const idx = line.indexOf(SEP);
+      if (idx === -1) continue;
+      const name = line.substring(0, idx);
+      const dir = line.substring(idx + SEP.length);
+      if (name.startsWith("wp_")) continue;
+      if (!isUnderDevDir(dir)) continue;
+      sessions.push(name);
+      if (!sessionDirMap.has(name)) {
+        backfillQueue.push({ name, dir });
+      }
+    }
+    // backfill missing sessionDirMap entries in parallel
+    if (backfillQueue.length > 0) {
+      await Promise.all(backfillQueue.map(async ({ name, dir }) => {
+        try {
+          const { stdout: envOut } = await exec(TMUX, ["show-environment", "-t", name, WOLFPACK_DIR_ENV]);
+          const eqIdx = envOut.indexOf("=");
+          const val = eqIdx !== -1 ? envOut.substring(eqIdx + 1).trim() : "";
+          if (val && isUnderDevDir(val)) { sessionDirMap.set(name, val); return; }
+        } catch {}
+        sessionDirMap.set(name, dir);
+      }));
+    }
+    // prune stale entries for sessions that no longer exist
+    const liveSet = new Set(sessions);
+    for (const key of sessionDirMap.keys()) {
+      if (!liveSet.has(key)) sessionDirMap.delete(key);
+    }
+    for (const key of _triageCacheMap.keys()) {
+      if (!liveSet.has(key)) _triageCacheMap.delete(key);
+    }
+    return sessions;
   } catch {
     return [];
   }
@@ -189,11 +230,15 @@ export async function tmuxNewSession(
   const agentCmd = cmd || loadSettings().agentCmd || "claude";
   if (agentCmd === "shell") {
     await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, SHELL]);
-    return;
+  } else {
+    const fullCmd = injectAgentContext(agentCmd);
+    const shellCmd = `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT ${SHELL} -lic ${shellEscape(fullCmd + "; exec " + SHELL)}`;
+    await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, shellCmd]);
   }
-  const fullCmd = injectAgentContext(agentCmd);
-  const shellCmd = `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT ${SHELL} -lic ${shellEscape(fullCmd + "; exec " + SHELL)}`;
-  await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, shellCmd]);
+  // cache only after successful creation to avoid poisoning map on failed attempts
+  sessionDirMap.set(name, cwd);
+  // persist project root in tmux session env — survives server restarts
+  await exec(TMUX, ["set-environment", "-t", name, WOLFPACK_DIR_ENV, cwd]).catch(() => {});
 }
 
 // ── Cleanup ──

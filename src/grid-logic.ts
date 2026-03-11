@@ -73,7 +73,9 @@ export function removeFromGridState(
   newSessions.splice(idx, 1);
 
   let newFocus = focusIndex;
-  if (newFocus >= newSessions.length) {
+  if (idx < focusIndex) {
+    newFocus--;
+  } else if (newFocus >= newSessions.length) {
     newFocus = Math.max(0, newSessions.length - 1);
   }
 

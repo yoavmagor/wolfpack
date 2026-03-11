@@ -33,14 +33,28 @@ export function isValidPlanFile(name: string): boolean {
   return PLAN_FILE_REGEX.test(name) && name !== ".." && name !== ".";
 }
 
+// ── Budget expansion ──
+
+/** Expand iteration budget by subtask count, capped at ceiling. */
+export function expandBudget(current: number, subtaskCount: number, ceiling: number): number {
+  return current < ceiling ? Math.min(current + subtaskCount, ceiling) : current;
+}
+
+/** Choose git diff base for ralph cleanup scope. */
+export function resolveCleanupDiffBase(startCommit: string): string {
+  return startCommit || "HEAD~10";
+}
+
 // ── Clamping ──
 
 export function clampCols(n: number): number {
-  return Math.max(20, Math.min(n, 300));
+  const v = Number(n);
+  return Number.isFinite(v) ? Math.max(20, Math.min(v, 300)) : 80;
 }
 
 export function clampRows(n: number): number {
-  return Math.max(5, Math.min(n, 100));
+  const v = Number(n);
+  return Number.isFinite(v) ? Math.max(5, Math.min(v, 100)) : 24;
 }
 
 // ── Port validation ──

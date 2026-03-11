@@ -21,8 +21,10 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import {
   CMD_REGEX,
+  BRANCH_REGEX,
   isValidProjectName,
   isValidSessionName,
+  isValidPlanFile,
   clampCols,
   clampRows,
 } from "../validation.js";
@@ -40,6 +42,7 @@ import {
   tmuxNewSession,
   capturePane,
   capturePaneForTriage,
+  sessionDirMap,
   exec,
 } from "./tmux.js";
 import {
@@ -381,10 +384,8 @@ export const routes: Record<
     if (!validateProject(res, session)) return;
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
-    // Strip deduplication suffix (-2, -3, ...) to get base project name
-    const projectName = session.replace(/-\d+$/, "");
-    const projectDir = join(DEV_DIR, projectName);
-    if (!existsSync(projectDir))
+    const projectDir = sessionDirMap.get(session);
+    if (!projectDir || !existsSync(projectDir))
       return json(res, { error: "project directory not found" }, 404);
     try {
       const output = await new Promise<string>((resolve, reject) => {
@@ -557,7 +558,12 @@ export const routes: Record<
       return json(res, { error: "failed to acquire lock" }, 500);
     }
 
-    const BRANCH_REGEX = /^[a-zA-Z0-9._\-/]+$/;
+    const iters = Math.max(1, Math.min(500, iterations ?? 5));
+    const resolvedPlan = planFile || "PLAN.md";
+    if (!isValidPlanFile(resolvedPlan)) {
+      return json(res, { error: "invalid plan file name" }, 400);
+    }
+
     if (newBranch) {
       if (!BRANCH_REGEX.test(newBranch)) {
         return json(res, { error: "invalid branch name" }, 400);
@@ -590,11 +596,6 @@ export const routes: Record<
       }
     }
 
-    const iters = Math.max(1, Math.min(500, iterations ?? 5));
-    const resolvedPlan = planFile || "PLAN.md";
-    if (!/^[a-zA-Z0-9._\- ]+\.md$/.test(resolvedPlan) || resolvedPlan === ".." || resolvedPlan === ".") {
-      return json(res, { error: "invalid plan file name" }, 400);
-    }
     if (!existsSync(join(projectDir, resolvedPlan))) {
       return json(res, { error: `plan file '${resolvedPlan}' not found` }, 404);
     }
@@ -625,7 +626,7 @@ export const routes: Record<
     const project = url.searchParams.get("project");
     const plan = url.searchParams.get("plan");
     if (!validateProject(res, project)) return;
-    if (!plan || !/^[a-zA-Z0-9._\- ]+\.md$/.test(plan)) {
+    if (!plan || !isValidPlanFile(plan)) {
       return json(res, { error: "invalid plan file" }, 400);
     }
     const planPath = join(DEV_DIR, project, plan);

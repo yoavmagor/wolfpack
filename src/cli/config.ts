@@ -83,6 +83,17 @@ export function sleepSync(ms: number) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/** Check if a process command string belongs to wolfpack. */
+export function isWolfpackProcess(comm: string): boolean {
+  return comm.includes("wolfpack");
+}
+
+/** Prefer full args when binary name alone is not descriptive. */
+export function resolveProcessCommandForValidation(comm: string, args: string): string {
+  if (isWolfpackProcess(comm)) return comm;
+  return args || comm;
+}
+
 export function isPortInUse(port: number): boolean {
   try {
     const p = Math.floor(Number(port));
@@ -121,6 +132,25 @@ export function killPortHolder(port: number): boolean {
       pid = m ? Number(m[1]) : null;
     }
     if (pid && pid > 1) {
+      try {
+        const comm = execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
+          encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+        let args = "";
+        if (!isWolfpackProcess(comm)) {
+          args = execFileSync("ps", ["-p", String(pid), "-o", "args="], {
+            encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+          }).trim();
+        }
+        const processCmd = resolveProcessCommandForValidation(comm, args);
+        if (!isWolfpackProcess(processCmd)) {
+          print(dim(`  Port ${p} held by non-wolfpack process (PID ${pid}): ${processCmd}`));
+          return false;
+        }
+      } catch {
+        // process exited between lsof and ps lookup — nothing to kill
+        return false;
+      }
       process.kill(pid, "SIGTERM");
       print(dim(`  Killed stale process (PID ${pid}) on port ${p}`));
       return true;
