@@ -1367,7 +1367,7 @@
         margin-bottom: 2px;
       }
       .ralph-start-form select,
-      .ralph-start-form input {
+      .ralph-start-form input:not(.ralph-checkbox) {
         width: 100%;
         padding: 10px;
         background: var(--bg-surface);
@@ -1967,12 +1967,14 @@
           margin-bottom: 0;
         }
         .ralph-start-form select,
-        .ralph-start-form input {
+        .ralph-start-form input:not(.ralph-checkbox) {
           padding: 7px;
           font-size: 13px;
           border-radius: var(--radius-sm);
           min-height: 0;
         }
+        .ralph-toggles { padding-top: 10px; gap: 10px; }
+        .ralph-branch-label { font-size: 12px; }
         .ralph-iter-header {
           padding: 10px 12px;
           min-height: 0;
@@ -2155,14 +2157,19 @@
           border: 1px solid rgba(255,255,255,0.1);
           border-radius: var(--radius-sm);
           color: var(--text-muted);
-          font-size: 12px;
+          font-size: 14px;
           font-weight: 700;
           font-family: inherit;
           cursor: pointer;
-          padding: 2px 7px;
+          padding: 3px 8px;
+          min-width: 30px;
+          min-height: 30px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           flex-shrink: 0;
           letter-spacing: 0.5px;
-          line-height: 1.4;
+          line-height: 1;
         }
         .sidebar-sessions .card:hover .kill-btn,
         .sidebar-sessions .card:hover .grid-btn {
@@ -2386,8 +2393,9 @@
       .ralph-branch-fields { display: none; flex-direction: column; gap: 12px; }
       .accent-val { color: var(--accent); font-size: 11px; }
       .range-input { width: 100%; accent-color: var(--accent); margin-top: 4px; }
-      .ralph-checkbox { width: auto; accent-color: var(--ralph); }
-      .ralph-branch-label { margin: 0; cursor: pointer; }
+      .ralph-checkbox { width: 18px; height: 18px; min-height: 0; padding: 0; accent-color: var(--ralph); flex-shrink: 0; cursor: pointer; }
+      .ralph-start-form label.ralph-branch-label { margin: 0; cursor: pointer; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text-secondary); }
+      .ralph-toggles { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 10px; }
       .settings-description { padding: 4px 0; font-size: 11px; color: var(--text-dim); line-height: 1.5; }
       .quick-cmds-list { display: flex; flex-direction: column; gap: 4px; }
       .custom-cmd-row { padding: 6px; display: flex; gap: 6px; }
@@ -2712,18 +2720,19 @@
         <label for="ralph-plan-select">Plan file</label>
         <select id="ralph-plan-select"></select>
 
-        <div class="flex-row">
-          <input type="checkbox" id="ralph-cleanup-toggle" class="ralph-checkbox" checked />
-          <label for="ralph-cleanup-toggle" class="ralph-branch-label">Run cleanup phase</label>
-        </div>
-        <div class="flex-row">
-          <input type="checkbox" id="ralph-audit-fix-toggle" class="ralph-checkbox" />
-          <label for="ralph-audit-fix-toggle" class="ralph-branch-label">Run audit+fix phase</label>
-        </div>
-
-        <div class="flex-row">
-          <input type="checkbox" id="ralph-branch-toggle" onchange="toggleBranchFields()" class="ralph-checkbox" />
-          <label for="ralph-branch-toggle" class="ralph-branch-label">New branch</label>
+        <div class="ralph-toggles">
+          <div class="flex-row">
+            <input type="checkbox" id="ralph-cleanup-toggle" class="ralph-checkbox" checked />
+            <label for="ralph-cleanup-toggle" class="ralph-branch-label">Run cleanup phase</label>
+          </div>
+          <div class="flex-row">
+            <input type="checkbox" id="ralph-audit-fix-toggle" class="ralph-checkbox" />
+            <label for="ralph-audit-fix-toggle" class="ralph-branch-label">Run audit+fix phase</label>
+          </div>
+          <div class="flex-row">
+            <input type="checkbox" id="ralph-branch-toggle" onchange="toggleBranchFields()" class="ralph-checkbox" />
+            <label for="ralph-branch-toggle" class="ralph-branch-label">New branch</label>
+          </div>
         </div>
         <div id="ralph-branch-fields" class="ralph-branch-fields">
           <label for="ralph-branch-name">Branch name</label>
@@ -3242,16 +3251,10 @@
           term.unicode.activeVersion = '11';
         } catch {}
 
-        // Copy/paste
+        // Copy (xterm renders to canvas, so native copy doesn't work)
         term.attachCustomKeyEventHandler((e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
             navigator.clipboard.writeText(term.getSelection()).catch(() => {});
-            return false;
-          }
-          if ((e.metaKey || e.ctrlKey) && e.key === "v" && e.type === "keydown") {
-            navigator.clipboard.readText().then(t => {
-              if (t && canAcceptInput()) sendInput(new TextEncoder().encode(t));
-            }).catch(() => {});
             return false;
           }
           return true;
@@ -4698,7 +4701,7 @@
           if (loop.active) {
             actions.innerHTML = '<button class="ralph-launch-btn ralph-cancel-btn" onclick="cancelRalph()">Cancel</button>';
           } else {
-            actions.innerHTML = '<button class="ralph-launch-btn" onclick="restartRalph(\'' + escAttr(loop.planFile || '') + '\',\'' + escAttr(loop.agent || '') + '\')">Restart</button>';
+            actions.innerHTML = '<button class="ralph-launch-btn" onclick="restartRalph(\'' + escAttr(loop.planFile || '') + '\',\'' + escAttr(loop.agent || '') + '\',' + cleanupEnabled + ',' + auditFixEnabled + ')">Restart</button>';
           }
 
           // stop polling if loop finished
@@ -4836,9 +4839,11 @@
             loadBranches(sel.value);
           }
         };
-        // Reset branch toggle on form load
-        document.getElementById("ralph-cleanup-toggle").checked = true;
-        document.getElementById("ralph-audit-fix-toggle").checked = false;
+        // Reset toggles on form load (restore from state if restarting)
+        document.getElementById("ralph-cleanup-toggle").checked = state.currentRalphCleanup != null ? state.currentRalphCleanup : true;
+        document.getElementById("ralph-audit-fix-toggle").checked = state.currentRalphAuditFix != null ? state.currentRalphAuditFix : false;
+        state.currentRalphCleanup = undefined;
+        state.currentRalphAuditFix = undefined;
         document.getElementById("ralph-branch-toggle").checked = false;
         document.getElementById("ralph-branch-fields").style.display = "none";
         await loadPlanFiles(sel.value);
@@ -4959,9 +4964,11 @@
         }
       }
 
-      function restartRalph(planFile, agent) {
+      function restartRalph(planFile, agent, cleanup, auditFix) {
         state.currentRalphPlanFile = planFile || "";
         state.currentRalphAgent = agent || "";
+        state.currentRalphCleanup = cleanup;
+        state.currentRalphAuditFix = auditFix;
         state.restartingRalph = true;
         state.ralphStartMachine = state.currentRalphMachine;
         showView("ralph-start");
