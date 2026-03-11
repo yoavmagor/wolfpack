@@ -694,21 +694,27 @@
       }
       #kb-toggle {
         display: none;
-        background: transparent;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-elevated);
         border: 1px solid var(--border-strong);
         border-radius: var(--radius-md);
-        color: #666;
-        font-size: 18px;
-        padding: 4px 8px;
+        color: var(--text-secondary);
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
         align-self: center;
         flex-shrink: 0;
-        transition: color 0.15s ease, border-color 0.15s ease;
+        transition: color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+        box-shadow: var(--shadow-btn);
+      }
+      #kb-toggle svg {
+        width: 26px;
+        height: 26px;
       }
       #kb-toggle.active {
         color: var(--accent);
         border-color: var(--accent-glow);
+        box-shadow: 0 0 8px rgba(0,255,65,0.15);
       }
       #msg-preview {
         display: none;
@@ -1170,6 +1176,7 @@
         transition: all 0.15s ease;
       }
       .ralph-card.running { border-left: 2px solid var(--accent); }
+      .ralph-card.audit { border-left: 2px solid var(--ralph); }
       .ralph-card.cleanup { border-left: 2px solid #3498db; }
       .ralph-card.done { border-left: 2px solid var(--accent); }
       .ralph-card.limit { border-left: 2px solid var(--warning-hot); }
@@ -1213,6 +1220,7 @@
         transition: width 0.3s ease;
       }
       .ralph-bar-fill.running { background: var(--accent); }
+      .ralph-bar-fill.audit { background: var(--ralph); }
       .ralph-bar-fill.cleanup { background: #3498db; }
       .ralph-bar-fill.done { background: var(--accent); }
       .ralph-bar-fill.limit { background: var(--warning-hot); }
@@ -1231,6 +1239,7 @@
         border-radius: var(--radius-sm);
       }
       .ralph-status.running { color: var(--accent); background: var(--accent-ghost); }
+      .ralph-status.audit { color: var(--ralph); background: rgba(155, 89, 182, 0.12); }
       .ralph-status.cleanup { color: #3498db; background: #3498db15; }
       .ralph-status.done { color: var(--accent); background: var(--accent-ghost); }
       .ralph-status.idle { color: var(--text-dim); background: #55555515; }
@@ -2343,6 +2352,7 @@
       /* ── Mobile-specific ── */
       @media (max-width: 768px) {
         #kb-toggle { display: flex; }
+        .header-center .wolfpack-icon { display: none; }
       }
 
       /* ── Extracted inline styles ── */
@@ -2643,7 +2653,7 @@
         <button class="kb-key kb-git" onclick="showGitStatus()">git</button>
       </div>
       <div id="input-bar">
-        <button id="kb-toggle" onclick="toggleKbAccessory()" title="Toggle keys">&#9000;</button>
+        <button id="kb-toggle" onclick="toggleKbAccessory()" title="Toggle keys" aria-label="Toggle keyboard shortcuts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2.5"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg></button>
         <textarea
           id="msg-input"
           rows="1"
@@ -2701,6 +2711,15 @@
 
         <label for="ralph-plan-select">Plan file</label>
         <select id="ralph-plan-select"></select>
+
+        <div class="flex-row">
+          <input type="checkbox" id="ralph-cleanup-toggle" class="ralph-checkbox" checked />
+          <label for="ralph-cleanup-toggle" class="ralph-branch-label">Run cleanup phase</label>
+        </div>
+        <div class="flex-row">
+          <input type="checkbox" id="ralph-audit-fix-toggle" class="ralph-checkbox" />
+          <label for="ralph-audit-fix-toggle" class="ralph-branch-label">Run audit+fix phase</label>
+        </div>
 
         <div class="flex-row">
           <input type="checkbox" id="ralph-branch-toggle" onchange="toggleBranchFields()" class="ralph-checkbox" />
@@ -4593,8 +4612,8 @@
         const hitLimit = !loop.active && !loop.completed && loop.finished;
         return {
           hitLimit,
-          status: loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle",
-          statusLabel: loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE",
+          status: loop.audit ? "audit" : loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle",
+          statusLabel: loop.audit ? "AUDIT" : loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE",
           dotClass: loop.active ? "purple" : "gray",
           dotTitle: loop.active ? "active" : "idle",
         };
@@ -4657,6 +4676,8 @@
           const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
           const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
           const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
+          const cleanupEnabled = loop.cleanupEnabled !== false;
+          const auditFixEnabled = loop.auditFixEnabled === true;
           header.innerHTML =
             '<div class="ralph-detail-row">' +
               '<span class="ralph-status ' + status + '">' + statusLabel + '</span>' +
@@ -4669,6 +4690,7 @@
               '<div class="ralph-bar"><div class="ralph-bar-fill ' + status + '" style="width:' + taskPct + '%"></div></div>' +
             '</div>' +
             (loop.planFile ? '<div class="ralph-detail-meta">plan: ' + esc(loop.planFile) + '</div>' : '') +
+            '<div class="ralph-detail-meta">phases: audit+fix ' + (auditFixEnabled ? "on" : "off") + ', cleanup ' + (cleanupEnabled ? "on" : "off") + '</div>' +
             (loop.started ? '<div class="ralph-detail-meta">started: ' + esc(loop.started) + '</div>' : '') +
             (loop.finished ? '<div class="ralph-detail-meta">finished: ' + esc(loop.finished) + '</div>' : '');
 
@@ -4815,6 +4837,8 @@
           }
         };
         // Reset branch toggle on form load
+        document.getElementById("ralph-cleanup-toggle").checked = true;
+        document.getElementById("ralph-audit-fix-toggle").checked = false;
         document.getElementById("ralph-branch-toggle").checked = false;
         document.getElementById("ralph-branch-fields").style.display = "none";
         await loadPlanFiles(sel.value);
@@ -4890,6 +4914,8 @@
         const iterations = parseInt(document.getElementById("ralph-iterations-input").value) || 5;
         const planFile = document.getElementById("ralph-plan-select").value || undefined;
         const agent = document.getElementById("ralph-agent-select").value;
+        const cleanup = document.getElementById("ralph-cleanup-toggle").checked;
+        const auditFix = document.getElementById("ralph-audit-fix-toggle").checked;
         if (!project) { alert("select a project"); return; }
         if (!planFile) { alert("select a plan file"); return; }
 
@@ -4909,7 +4935,7 @@
           }
         } catch {}
 
-        const body = { project, iterations, planFile, agent, format };
+        const body = { project, iterations, planFile, agent, format, cleanup, auditFix };
         const branchToggle = document.getElementById("ralph-branch-toggle").checked;
         if (branchToggle) {
           const newBranch = document.getElementById("ralph-branch-name").value.trim();
@@ -6184,6 +6210,7 @@
       const prevRalphStates = {};    // "machineUrl|project" → status
 
       function getRalphNotificationStatus(loop) {
+        if (loop.audit) return "running";
         if (loop.cleanup) return "running";
         if (loop.active) return "running";
         if (loop.completed) return "done";
