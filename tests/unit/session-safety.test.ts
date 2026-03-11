@@ -4,17 +4,14 @@ import { sessionDirMap, tmuxNewSession } from "../../src/server/tmux.js";
 
 describe("tmuxNewSession map update safety", () => {
   test("does not cache session dir when tmux session creation fails", async () => {
-    const sessionName = `review-fix-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
-    const originalPath = process.env.PATH;
+    // Use an invalid session name to force tmux rejection deterministically
+    // across environments (rather than relying on PATH behavior).
+    const sessionName = "";
     sessionDirMap.delete(sessionName);
-    process.env.PATH = "";
-    try {
-      await expect(
-        tmuxNewSession(sessionName, "/tmp", "shell", () => ({ agentCmd: "claude" })),
-      ).rejects.toThrow();
-    } finally {
-      process.env.PATH = originalPath;
-    }
+
+    await expect(
+      tmuxNewSession(sessionName, "/tmp", "shell", () => ({ agentCmd: "claude" })),
+    ).rejects.toThrow();
 
     expect(sessionDirMap.has(sessionName)).toBe(false);
   });
