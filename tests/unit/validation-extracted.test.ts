@@ -83,20 +83,16 @@ describe("clampCols", () => {
     expect(clampCols(1000000)).toBe(300);
   });
 
-  test("handles NaN → clamps to 20", () => {
-    // Math.max(20, Math.min(NaN, 300)) → Math.max(20, NaN) → NaN
-    // Actually: Math.min(NaN, 300) = NaN, Math.max(20, NaN) = NaN
-    // This is a known edge case — NaN propagates through Math.min/max
-    const result = clampCols(NaN);
-    expect(Number.isNaN(result)).toBe(true);
+  test("handles NaN → returns default 80", () => {
+    expect(clampCols(NaN)).toBe(80);
   });
 
-  test("handles Infinity → clamps to 300", () => {
-    expect(clampCols(Infinity)).toBe(300);
+  test("handles Infinity → returns default 80", () => {
+    expect(clampCols(Infinity)).toBe(80);
   });
 
-  test("handles -Infinity → clamps to 20", () => {
-    expect(clampCols(-Infinity)).toBe(20);
+  test("handles -Infinity → returns default 80", () => {
+    expect(clampCols(-Infinity)).toBe(80);
   });
 });
 
@@ -128,12 +124,12 @@ describe("clampRows", () => {
     expect(clampRows(9999)).toBe(100);
   });
 
-  test("handles Infinity → clamps to 100", () => {
-    expect(clampRows(Infinity)).toBe(100);
+  test("handles Infinity → returns default 24", () => {
+    expect(clampRows(Infinity)).toBe(24);
   });
 
-  test("handles -Infinity → clamps to 5", () => {
-    expect(clampRows(-Infinity)).toBe(5);
+  test("handles -Infinity → returns default 24", () => {
+    expect(clampRows(-Infinity)).toBe(24);
   });
 });
 
