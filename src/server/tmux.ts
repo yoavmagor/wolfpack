@@ -39,7 +39,11 @@ function assertTestMode(hook: string): void {
 
 /** Returns true if dir is DEV_DIR itself or a child of DEV_DIR (proper path boundary). */
 export function isUnderDevDir(dir: string): boolean {
-  return dir === DEV_DIR || dir.startsWith(DEV_DIR + "/");
+  const normalizePath = (path: string): string =>
+    path.length > 1 ? path.replace(/\/+$/, "") : path;
+  const baseDir = normalizePath(DEV_DIR);
+  const candidate = normalizePath(dir);
+  return candidate === baseDir || candidate.startsWith(baseDir + "/");
 }
 
 /** Maps session name → project directory. Set at creation time by tmuxNewSession(),
@@ -57,6 +61,7 @@ async function _realTmuxList(): Promise<string[]> {
     ]);
     const SEP = "|||";
     const sessions: string[] = [];
+    const backfillQueue: { name: string; dir: string }[] = [];
     for (const line of stdout.trim().split("\n")) {
       if (!line) continue;
       const idx = line.indexOf(SEP);
@@ -67,15 +72,20 @@ async function _realTmuxList(): Promise<string[]> {
       if (!isUnderDevDir(dir)) continue;
       sessions.push(name);
       if (!sessionDirMap.has(name)) {
-        // backfill: prefer stored env var (survives server restart), fall back to pane_current_path
+        backfillQueue.push({ name, dir });
+      }
+    }
+    // backfill missing sessionDirMap entries in parallel
+    if (backfillQueue.length > 0) {
+      await Promise.all(backfillQueue.map(async ({ name, dir }) => {
         try {
           const { stdout: envOut } = await exec(TMUX, ["show-environment", "-t", name, WOLFPACK_DIR_ENV]);
           const eqIdx = envOut.indexOf("=");
           const val = eqIdx !== -1 ? envOut.substring(eqIdx + 1).trim() : "";
-          if (val && isUnderDevDir(val)) { sessionDirMap.set(name, val); continue; }
+          if (val && isUnderDevDir(val)) { sessionDirMap.set(name, val); return; }
         } catch {}
         sessionDirMap.set(name, dir);
-      }
+      }));
     }
     // prune stale entries for sessions that no longer exist
     const liveSet = new Set(sessions);

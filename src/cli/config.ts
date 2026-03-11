@@ -83,6 +83,11 @@ export function sleepSync(ms: number) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/** Check if a process command string belongs to wolfpack. */
+export function isWolfpackProcess(comm: string): boolean {
+  return comm.includes("wolfpack");
+}
+
 export function isPortInUse(port: number): boolean {
   try {
     const p = Math.floor(Number(port));
@@ -125,7 +130,7 @@ export function killPortHolder(port: number): boolean {
         const comm = IS_MACOS
           ? execFileSync("ps", ["-p", String(pid), "-o", "comm="], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim()
           : execFileSync("ps", ["-p", String(pid), "-o", "args="], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-        if (!comm.includes("wolfpack")) {
+        if (!isWolfpackProcess(comm)) {
           print(dim(`  Port ${p} held by non-wolfpack process (PID ${pid}): ${comm}`));
           return false;
         }

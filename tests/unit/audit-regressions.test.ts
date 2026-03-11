@@ -2,15 +2,17 @@
  * Regression tests for fixes from the security/correctness audit.
  * Each test targets a specific finding that was fixed in the fix/audit-findings branch.
  */
-import { describe, expect, test, beforeEach } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 // ── 1. Path containment boundary (audit finding: prefix check too weak) ──
 // Set DEV_DIR before importing so the module-level constant picks it up.
-process.env.WOLFPACK_DEV_DIR = "/Users/home/Dev";
+// Use trailing slash to verify boundary logic handles normalized equivalence.
+process.env.WOLFPACK_DEV_DIR = "/Users/home/Dev/";
 const { isUnderDevDir } = await import("../../src/server/tmux.js");
 
 describe("isUnderDevDir — path containment boundary", () => {
   test("exact match on DEV_DIR itself", () => {
+    expect(isUnderDevDir("/Users/home/Dev/")).toBe(true);
     expect(isUnderDevDir("/Users/home/Dev")).toBe(true);
   });
 
@@ -37,10 +39,14 @@ describe("isUnderDevDir — path containment boundary", () => {
 });
 
 // ── 2. sessionDirMap pruning ──
+// The pruning logic lives inside _realTmuxList() which requires tmux.
+// We test the exported sessionDirMap directly: populate it, then verify
+// the pruning pattern (which is trivial Map iteration) stays correct.
 
 describe("sessionDirMap pruning", () => {
   test("stale entries are removed when session disappears", () => {
-    // Simulates the pruning loop in _realTmuxList
+    // Simulates the pruning loop in _realTmuxList — can't call the real
+    // function without tmux, so we verify the pattern against the exported map.
     const sessionDirMap = new Map<string, string>();
     sessionDirMap.set("alive-session", "/Users/home/Dev/alive");
     sessionDirMap.set("dead-session", "/Users/home/Dev/dead");
@@ -57,68 +63,76 @@ describe("sessionDirMap pruning", () => {
 
 // ── 3. killPortHolder process verification ──
 
-describe("killPortHolder — process identity check", () => {
-  // The actual function uses execFileSync which needs a real process.
-  // We test the verification logic pattern: only kill if comm includes "wolfpack".
-  function shouldKill(comm: string): boolean {
-    return comm.includes("wolfpack");
-  }
+import { isWolfpackProcess } from "../../src/cli/config.js";
 
-  test("allows killing wolfpack process", () => {
-    expect(shouldKill("/Users/home/.wolfpack/bin/wolfpack")).toBe(true);
-    expect(shouldKill("wolfpack-bridge")).toBe(true);
-    expect(shouldKill("bun /path/to/wolfpack/cli.ts")).toBe(true);
+describe("isWolfpackProcess — killPortHolder identity check", () => {
+  test("identifies wolfpack processes", () => {
+    expect(isWolfpackProcess("/Users/home/.wolfpack/bin/wolfpack")).toBe(true);
+    expect(isWolfpackProcess("wolfpack-bridge")).toBe(true);
+    expect(isWolfpackProcess("bun /path/to/wolfpack/cli.ts")).toBe(true);
   });
 
-  test("rejects non-wolfpack process", () => {
-    expect(shouldKill("node /app/server.js")).toBe(false);
-    expect(shouldKill("python3 -m http.server")).toBe(false);
-    expect(shouldKill("nginx: master")).toBe(false);
+  test("rejects non-wolfpack processes", () => {
+    expect(isWolfpackProcess("node /app/server.js")).toBe(false);
+    expect(isWolfpackProcess("python3 -m http.server")).toBe(false);
+    expect(isWolfpackProcess("nginx: master")).toBe(false);
   });
 });
 
 // ── 4. Ralph subtask expansion budget ──
 
-describe("ralph subtask expansion budget", () => {
+import { expandBudget, clampCols, clampRows } from "../../src/validation.js";
+
+describe("expandBudget — ralph subtask expansion", () => {
   test("budget increases by subtask count, not just 1", () => {
-    const ITERATIONS = 5;
-    let maxIterations = ITERATIONS;
-    const MAX_CEILING = Math.max(ITERATIONS * 2, 100);
-
-    // Simulate 4 subtasks discovered
-    const subtasks = ["sub-a", "sub-b", "sub-c", "sub-d"];
-    if (maxIterations < MAX_CEILING) {
-      maxIterations = Math.min(maxIterations + subtasks.length, MAX_CEILING);
-    }
-
-    expect(maxIterations).toBe(9); // 5 + 4, not 5 + 1
+    expect(expandBudget(5, 4, 100)).toBe(9);
   });
 
   test("budget respects ceiling", () => {
-    const ITERATIONS = 5;
-    let maxIterations = 98;
-    const MAX_CEILING = Math.max(ITERATIONS * 2, 100);
-
-    const subtasks = ["sub-a", "sub-b", "sub-c", "sub-d", "sub-e"];
-    if (maxIterations < MAX_CEILING) {
-      maxIterations = Math.min(maxIterations + subtasks.length, MAX_CEILING);
-    }
-
-    expect(maxIterations).toBe(100); // capped at ceiling
+    expect(expandBudget(98, 5, 100)).toBe(100);
   });
 
-  test("single subtask still increments by 1", () => {
-    let maxIterations = 5;
-    const MAX_CEILING = 100;
-    const subtasks = ["only-one"];
-    if (maxIterations < MAX_CEILING) {
-      maxIterations = Math.min(maxIterations + subtasks.length, MAX_CEILING);
-    }
-    expect(maxIterations).toBe(6);
+  test("single subtask increments by 1", () => {
+    expect(expandBudget(5, 1, 100)).toBe(6);
+  });
+
+  test("at ceiling, budget stays unchanged", () => {
+    expect(expandBudget(100, 3, 100)).toBe(100);
+  });
+});
+
+// ── 4b. clampCols / clampRows — NaN safety ──
+
+describe("clampCols / clampRows — NaN safety", () => {
+  test("NaN returns sensible default", () => {
+    expect(clampCols(NaN)).toBe(80);
+    expect(clampRows(NaN)).toBe(24);
+  });
+
+  test("normal values still clamp correctly", () => {
+    expect(clampCols(10)).toBe(20);
+    expect(clampCols(500)).toBe(300);
+    expect(clampCols(120)).toBe(120);
+    expect(clampRows(2)).toBe(5);
+    expect(clampRows(200)).toBe(100);
+    expect(clampRows(40)).toBe(40);
+  });
+
+  test("undefined coerces to NaN default", () => {
+    expect(clampCols(undefined as any)).toBe(80);
+    expect(clampRows(undefined as any)).toBe(24);
+  });
+
+  test("null coerces to 0, gets clamped to minimum", () => {
+    expect(clampCols(null as any)).toBe(20);
+    expect(clampRows(null as any)).toBe(5);
   });
 });
 
 // ── 5. Ralph cleanup scope uses START_COMMIT ──
+// CLEANUP_PROMPT is module-scoped and captures START_COMMIT at import time
+// (which runs git rev-parse). Can't import without the full ralph-macchio
+// side effects, so we verify the template logic pattern directly.
 
 describe("ralph cleanup prompt — START_COMMIT boundary", () => {
   test("uses START_COMMIT when available", () => {
@@ -135,26 +149,31 @@ describe("ralph cleanup prompt — START_COMMIT boundary", () => {
   });
 });
 
-// ── 6. /api/ralph/start validation ordering ──
+// ── 6. /api/ralph/start validation ──
 
-describe("ralph start — validate before git mutation", () => {
-  test("invalid plan filename is rejected", () => {
-    // Replicates the regex from routes.ts
-    const planRegex = /^[a-zA-Z0-9._\- ]+\.md$/;
+import { isValidPlanFile, BRANCH_REGEX } from "../../src/validation.js";
 
-    // Valid names
-    expect(planRegex.test("PLAN.md")).toBe(true);
-    expect(planRegex.test("my-plan.md")).toBe(true);
-    expect(planRegex.test("plan v2.md")).toBe(true);
+describe("ralph start — validation functions", () => {
+  test("valid plan filenames", () => {
+    expect(isValidPlanFile("PLAN.md")).toBe(true);
+    expect(isValidPlanFile("my-plan.md")).toBe(true);
+    expect(isValidPlanFile("plan v2.md")).toBe(true);
+  });
 
-    // Path traversal attempts
-    expect(planRegex.test("../evil.md")).toBe(false);
-    expect(planRegex.test("path/to/plan.md")).toBe(false);
-    expect(planRegex.test("")).toBe(false);
+  test("path traversal attempts rejected", () => {
+    expect(isValidPlanFile("../evil.md")).toBe(false);
+    expect(isValidPlanFile("path/to/plan.md")).toBe(false);
+    expect(isValidPlanFile("")).toBe(false);
+    expect(isValidPlanFile("..")).toBe(false);
+    expect(isValidPlanFile(".")).toBe(false);
+  });
 
-    // Special values that the route also rejects explicitly
-    expect(planRegex.test("..")).toBe(false);
-    expect(planRegex.test(".")).toBe(false);
+  test("branch names validated", () => {
+    expect(BRANCH_REGEX.test("feature/foo")).toBe(true);
+    expect(BRANCH_REGEX.test("main")).toBe(true);
+    expect(BRANCH_REGEX.test("fix-123")).toBe(true);
+    expect(BRANCH_REGEX.test("branch with spaces")).toBe(false);
+    expect(BRANCH_REGEX.test("")).toBe(false);
   });
 
   test("iterations are clamped to [1, 500]", () => {

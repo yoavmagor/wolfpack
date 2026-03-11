@@ -21,8 +21,10 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import {
   CMD_REGEX,
+  BRANCH_REGEX,
   isValidProjectName,
   isValidSessionName,
+  isValidPlanFile,
   clampCols,
   clampRows,
 } from "../validation.js";
@@ -558,11 +560,10 @@ export const routes: Record<
 
     const iters = Math.max(1, Math.min(500, iterations ?? 5));
     const resolvedPlan = planFile || "PLAN.md";
-    if (!/^[a-zA-Z0-9._\- ]+\.md$/.test(resolvedPlan) || resolvedPlan === ".." || resolvedPlan === ".") {
+    if (!isValidPlanFile(resolvedPlan)) {
       return json(res, { error: "invalid plan file name" }, 400);
     }
 
-    const BRANCH_REGEX = /^[a-zA-Z0-9._\-/]+$/;
     if (newBranch) {
       if (!BRANCH_REGEX.test(newBranch)) {
         return json(res, { error: "invalid branch name" }, 400);
@@ -625,7 +626,7 @@ export const routes: Record<
     const project = url.searchParams.get("project");
     const plan = url.searchParams.get("plan");
     if (!validateProject(res, project)) return;
-    if (!plan || !/^[a-zA-Z0-9._\- ]+\.md$/.test(plan)) {
+    if (!plan || !isValidPlanFile(plan)) {
       return json(res, { error: "invalid plan file" }, 400);
     }
     const planPath = join(DEV_DIR, project, plan);

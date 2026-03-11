@@ -15,6 +15,7 @@ import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync } f
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanFormat } from "./wolfpack-context.js";
+import { expandBudget } from "./validation.js";
 
 const { values: args } = parseArgs({
   args: process.argv.slice(2),
@@ -546,7 +547,7 @@ async function main() {
       } else {
         markSectionDone(task);
       }
-      if (maxIterations < MAX_CEILING) maxIterations = Math.min(maxIterations + subtasks.length, MAX_CEILING);
+      maxIterations = expandBudget(maxIterations, subtasks.length, MAX_CEILING);
       appendFileSync(LOG_FILE, `\n=== 🧩 Subtasks detected (${subtasks.length}) — extended to ${maxIterations} iterations (ceiling ${MAX_CEILING}, expansions ${subtaskExpansions}/${MAX_SUBTASK_EXPANSIONS}) ===\n`);
       for (const st of subtasks) appendFileSync(LOG_FILE, `  + ${st}\n`);
       lastTask = task;
