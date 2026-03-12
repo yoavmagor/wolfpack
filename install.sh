@@ -251,6 +251,25 @@ if $IS_MACOS; then
 fi
 
 echo "  $(green '✓') Binary installed to ${INSTALL_DIR}/${BINARY_NAME}"
+
+# ── Restart service if already installed (upgrade path) ──
+
+SERVICE_EXISTS=false
+if $IS_MACOS && [ -f "$HOME/Library/LaunchAgents/com.wolfpack.server.plist" ]; then
+  SERVICE_EXISTS=true
+elif $IS_LINUX && [ -f "$HOME/.config/systemd/user/wolfpack.service" ]; then
+  SERVICE_EXISTS=true
+fi
+
+if $SERVICE_EXISTS && [ -f "$HOME/.wolfpack/config.json" ]; then
+  echo "  Restarting service with new binary..."
+  if "${INSTALL_DIR}/${BINARY_NAME}" service install 2>/dev/null; then
+    echo "  $(green '✓') Service upgraded"
+  else
+    echo "  $(dim 'Service restart failed — run: wolfpack service install')"
+  fi
+fi
+
 echo ""
 
 # ── Add to PATH ──

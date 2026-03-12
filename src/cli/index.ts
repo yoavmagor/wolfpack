@@ -18,6 +18,7 @@ import {
   serviceStatus,
   isServiceInstalled,
   isServiceRunning,
+  updateStableBinary,
   uninstall,
 } from "./service.js";
 import { setup } from "./setup.js";
@@ -59,13 +60,19 @@ async function start() {
     return;
   }
 
-  // CLI invocation — ensure service is running
+  // CLI invocation — ensure service is running the current version
   const url = remoteUrl(config);
+  const binaryUpdated = updateStableBinary();
   const wasRunning = isServiceRunning();
   try {
-    const action = planServiceEnsureAction(wasRunning, isServiceInstalled());
-    if (action === "start") serviceStart();
-    else if (action === "install") serviceInstall();
+    if (binaryUpdated && wasRunning) {
+      // new binary on disk but old version still in memory — reinstall
+      serviceInstall();
+    } else {
+      const action = planServiceEnsureAction(wasRunning, isServiceInstalled());
+      if (action === "start") serviceStart();
+      else if (action === "install") serviceInstall();
+    }
   } catch (e) {
     print(red(`  Service startup failed: ${e}`));
     print(dim("  Run 'wolfpack service install' to retry."));

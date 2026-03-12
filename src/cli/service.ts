@@ -7,7 +7,9 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -62,6 +64,36 @@ function programArgs(): string[] {
     } catch {}
   }
   return [exe];
+}
+
+/**
+ * Copies the currently-running binary to ~/.wolfpack/bin/wolfpack if it
+ * differs from what's already there.  Returns true when the stable binary
+ * was actually replaced (i.e. an upgrade happened).
+ */
+export function updateStableBinary(): boolean {
+  const exe = process.execPath;
+  if (exe.endsWith("/bun") || exe.endsWith("/bun.exe")) return false;
+
+  const stableBin = join(WOLFPACK_DIR, "bin", "wolfpack");
+  if (exe === stableBin) return false;
+  if (!existsSync(exe)) return false;
+
+  try {
+    if (existsSync(stableBin)) {
+      const a = statSync(exe).size;
+      const b = statSync(stableBin).size;
+      if (a === b && readFileSync(exe).equals(readFileSync(stableBin))) {
+        return false;
+      }
+    }
+    mkdirSync(join(WOLFPACK_DIR, "bin"), { recursive: true });
+    copyFileSync(exe, stableBin);
+    chmodSync(stableBin, 0o755);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function renderPlist(config: Config | null, args: string[], logPath: string): string {
