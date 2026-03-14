@@ -12,7 +12,6 @@
  *   window.Terminal        — drop-in for xterm.js Terminal
  *   window.FitAddon        — { FitAddon: GhosttyWeb.FitAddon }
  *   window.SearchAddon     — { SearchAddon: no-op stub }
- *   window.WebglAddon      — { WebglAddon: no-op stub }
  *   window.ghosttyReady    — Promise that resolves when WASM init is done
  *
  * Usage in HTML:
@@ -49,11 +48,6 @@ ${umdCode}
 
 // === xterm.js compatibility shim ===
 
-// No-op addon stub — loadAddon() calls activate(), dispose() is cleanup
-function NoopAddon() {}
-NoopAddon.prototype.activate = function() {};
-NoopAddon.prototype.dispose = function() {};
-
 // Expose xterm.js-compatible globals
 window.Terminal = GhosttyWeb.Terminal;
 window.FitAddon = { FitAddon: GhosttyWeb.FitAddon };
@@ -66,8 +60,6 @@ window.SearchAddon = { SearchAddon: function() {
   this.findPrevious = function() { return false; };
   this.clearDecorations = function() {};
 } };
-
-window.WebglAddon = { WebglAddon: NoopAddon };          // built-in canvas renderer
 
 // Auto-init WASM — consumers await window.ghosttyReady before creating terminals
 window.ghosttyReady = GhosttyWeb.init().then(function() {

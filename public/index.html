@@ -3627,7 +3627,6 @@
           if (hydrationEl) { hydrationEl.classList.add("hydrating"); hydrationEl.classList.remove("hydrated"); }
 
           _term.open(container);
-          try { _term.loadAddon(new WebglAddon.WebglAddon()); } catch (e) { console.warn("webgl addon failed:", e); }
 
           // Create hydration controller (started in connect())
           _hydration = createInitialHydrationController({
