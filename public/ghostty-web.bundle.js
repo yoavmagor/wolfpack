@@ -25,15 +25,6 @@ For tests, pass a Ghostty instance directly:
 window.Terminal = GhosttyWeb.Terminal;
 window.FitAddon = GhosttyWeb.FitAddon;
 
-// Stubs for addons that ghostty-web handles natively or doesn't support
-window.SearchAddon = { SearchAddon: function() {
-  this.activate = function() {};
-  this.dispose = function() {};
-  this.findNext = function() { return false; };
-  this.findPrevious = function() { return false; };
-  this.clearDecorations = function() {};
-} };
-
 // Auto-init WASM — consumers await window.ghosttyReady before creating terminals
 window.ghosttyReady = GhosttyWeb.init().then(function() {
   console.log("[ghostty-web] WASM initialized");

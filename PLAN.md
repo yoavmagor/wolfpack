@@ -3,7 +3,7 @@
 **goal**: replace xterm.js with ghostty-web for better terminal emulation (same ghostty parser as native app, compiled to WASM)
 
 ## status key
-- [ ] not started
+- [x] not started
 - [x] done
 - [~] in progress
 
@@ -13,7 +13,7 @@
 - [x] `bun install`
 
 ## phase 2: asset pipeline (gen-assets.ts)
-- [ ] create bundler script that bundles ghostty-web into a single global-exposing JS file
+- [x] create bundler script that bundles ghostty-web into a single global-exposing JS file
   - ghostty-web is ES module + needs `await init()` for WASM
   - current code uses `<script>` tags with global `Terminal`, `FitAddon` etc.
   - approach: build a `ghostty-web.bundle.js` that:
@@ -22,19 +22,19 @@
     3. exposes `window.GhosttyTerminal`, `window.GhosttyFitAddon`
     4. OR: simpler — expose same globals as xterm (`Terminal`, `FitAddon.FitAddon`)
   - also need to serve the WASM file as a static asset
-- [ ] update gen-assets.ts to copy/bundle ghostty-web assets instead of xterm
-- [ ] remove old xterm static files from public/
+- [x] update gen-assets.ts to copy/bundle ghostty-web assets instead of xterm
+- [x] remove old xterm static files from public/
 
 ## phase 3: frontend migration (index.html)
-- [ ] replace xterm script/css tags with ghostty-web bundle
-- [ ] add WASM init gate — terminal creation must wait for `await init()`
+- [x] replace xterm script/css tags with ghostty-web bundle
+- [x] add WASM init gate — terminal creation must wait for `await init()`
   - wrap `createXtermInstance()` or gate it behind init completion flag
-- [ ] remove unicode11 addon loading (ghostty does unicode 15.1 natively)
-- [ ] remove webgl addon loading (ghostty handles its own rendering)
-- [ ] remove web-links addon reference (wasn't loaded anyway)
-- [ ] update FitAddon usage: `new FitAddon()` from ghostty-web
+- [x] remove unicode11 addon loading (ghostty does unicode 15.1 natively)
+- [x] remove webgl addon loading (ghostty handles its own rendering)
+- [x] remove web-links addon reference (wasn't loaded anyway)
+- [x] update FitAddon usage: `new FitAddon()` from ghostty-web
   - ghostty-web FitAddon has `observeResize()` — could replace manual resize listeners
-- [ ] handle search addon gap:
+- [x] handle search addon gap:
   - option A: disable search UI temporarily (Cmd+F search bar)
   - option B: implement basic search using buffer API
   - option C: write a thin search addon using ghostty-web buffer access

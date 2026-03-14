@@ -1044,13 +1044,6 @@
         background: var(--warning-hot);
         color: #fff;
       }
-      /* xterm-addon-search decoration colors */
-      .xterm-find-result-decoration {
-        background-color: rgba(110, 92, 0, 0.6) !important;
-      }
-      .xterm-find-active-result-decoration {
-        background-color: rgba(255, 102, 0, 0.8) !important;
-      }
       .dot.yellow {
         background: var(--warning-hot);
         box-shadow: 0 0 6px #ff660060;
@@ -3210,7 +3203,7 @@
        * @param {(msg: string) => void} opts.sendMessage - send a string message (e.g. resize JSON)
        * @param {() => boolean} opts.canAcceptInput - guard for stdin (may include focus check)
        * @param {() => boolean} [opts.canSendResize] - guard for resize messages (defaults to canAcceptInput)
-       * @returns {{ term: Terminal, fitAddon: FitAddon, searchAddon: SearchAddon.SearchAddon }}
+       * @returns {{ term: Terminal, fitAddon: FitAddon }}
        */
       function createXtermInstance({ fontSize, scrollback, cursorBlink = true, disableStdin = false, sendInput, sendMessage, canAcceptInput, canSendResize }) {
         const shouldSendResize = canSendResize || canAcceptInput;
@@ -3232,13 +3225,10 @@
             selectionBackground: "rgba(255,255,255,0.2)",
           },
           scrollback,
-          allowProposedApi: true,
         });
 
         const fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
-        const searchAddon = new SearchAddon.SearchAddon();
-        term.loadAddon(searchAddon);
         // Copy (xterm renders to canvas, so native copy doesn't work)
         term.attachCustomKeyEventHandler((e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
@@ -3271,7 +3261,7 @@
           }, 50);
         });
 
-        return { term, fitAddon, searchAddon };
+        return { term, fitAddon };
       }
       const DESKTOP_INITIAL_PREFILL_TIMEOUT_MS = 1000;
 
@@ -3567,13 +3557,12 @@
        * @param {(number, string) => void} [opts.onDisconnected]
        * @param {() => void} [opts.onReconnecting]
        * @param {() => void} [opts.onReconnectExhausted]
-       * @returns {{ mount, connect, focus, resize, dispose, scheduleReconnect, sendTakeControl, sendFitResize, send, resetRetry, term, fitAddon, searchAddon, ptyClient, hydration, isConnected, retryBlocked }}
+       * @returns {{ mount, connect, focus, resize, dispose, scheduleReconnect, sendTakeControl, sendFitResize, send, resetRetry, term, fitAddon, ptyClient, hydration, isConnected, retryBlocked }}
        */
       function createPtyTerminalController(opts) {
         let _container = null;
         let _term = null;
         let _fitAddon = null;
-        let _searchAddon = null;
         let _hydration = null;
         let _ptyClient = null;
         let _hydrationStarted = false;
@@ -3620,7 +3609,6 @@
           });
           _term = result.term;
           _fitAddon = result.fitAddon;
-          _searchAddon = result.searchAddon;
 
           // Mark hydrating before xterm mounts to avoid first-frame flicker.
           const hydrationEl = _getHydrationElement();
@@ -3717,7 +3705,6 @@
           _hydrationStarted = false;
           _hydrationWritesInFlight = 0;
           _lastHydrationOutputAt = 0;
-          if (_searchAddon) { try { _searchAddon.dispose(); } catch {} _searchAddon = null; }
           if (_term) { try { _term.dispose(); } catch {} _term = null; }
           _fitAddon = null;
           _container = null;
@@ -3738,7 +3725,6 @@
           // Accessors
           get term() { return _term; },
           get fitAddon() { return _fitAddon; },
-          get searchAddon() { return _searchAddon; },
           get ptyClient() { return _ptyClient; },
           get hydration() { return _hydration; },
           get isConnected() { return !!(_ptyClient && _ptyClient.isOpen); },
@@ -6676,7 +6662,6 @@
         document.getElementById("search-input").value = "";
         document.getElementById("search-count").textContent = "";
         if (state.useDesktopTerminal) {
-          if (state.desktopController?.searchAddon) state.desktopController.searchAddon.clearDecorations();
           if (state.desktopController) state.desktopController.focus();
         } else {
           const term = document.getElementById("terminal");
@@ -6688,9 +6673,7 @@
         state.searchTerm = document.getElementById("search-input").value;
         if (!state.searchTerm) {
           document.getElementById("search-count").textContent = "";
-          if (state.useDesktopTerminal) {
-            if (state.desktopController?.searchAddon) state.desktopController.searchAddon.clearDecorations();
-          } else {
+          if (!state.useDesktopTerminal) {
             const term = document.getElementById("terminal");
             if (state.lastRawPane) term.textContent = state.lastRawPane;
           }
@@ -6698,11 +6681,9 @@
           state.searchIndex = -1;
           return;
         }
-        if (state.useDesktopTerminal && state.desktopController?.searchAddon) {
-          state.desktopController.searchAddon.findNext(state.searchTerm, { caseSensitive: false, decorations: {
-            matchOverviewRuler: "#6e5c00",
-            activeMatchColorOverviewRuler: "#ff6600",
-          }});
+        if (state.useDesktopTerminal) {
+          // ghostty-web doesn't have a search API yet — search is disabled for desktop terminal
+          document.getElementById("search-count").textContent = "n/a";
           return;
         }
         state.searchIndex = 0;
@@ -6710,7 +6691,7 @@
       }
 
       function applySearchHighlights() {
-        if (state.useDesktopTerminal) return; // handled by xterm-addon-search
+        if (state.useDesktopTerminal) return; // search not available with ghostty-web
         const term = document.getElementById("terminal");
         if (!state.searchTerm || !state.lastRawPane) return;
         const escaped = state.lastRawPane.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -6731,23 +6712,15 @@
         if (cur) cur.scrollIntoView({ block: "center", behavior: "smooth" });
       }
 
-      // Desktop search is handled by xterm-addon-search (see doSearch/nextMatch/prevMatch)
-
       function nextMatch() {
-        if (state.useDesktopTerminal && state.desktopController?.searchAddon && state.searchTerm) {
-          state.desktopController.searchAddon.findNext(state.searchTerm, { caseSensitive: false });
-          return;
-        }
+        if (state.useDesktopTerminal) return; // search not available with ghostty-web
         if (state.searchMatches.length === 0) return;
         state.searchIndex = (state.searchIndex + 1) % state.searchMatches.length;
         applySearchHighlights();
       }
 
       function prevMatch() {
-        if (state.useDesktopTerminal && state.desktopController?.searchAddon && state.searchTerm) {
-          state.desktopController.searchAddon.findPrevious(state.searchTerm, { caseSensitive: false });
-          return;
-        }
+        if (state.useDesktopTerminal) return; // search not available with ghostty-web
         if (state.searchMatches.length === 0) return;
         state.searchIndex = (state.searchIndex - 1 + state.searchMatches.length) % state.searchMatches.length;
         applySearchHighlights();
