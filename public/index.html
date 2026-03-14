@@ -3210,7 +3210,7 @@
        * @param {(msg: string) => void} opts.sendMessage - send a string message (e.g. resize JSON)
        * @param {() => boolean} opts.canAcceptInput - guard for stdin (may include focus check)
        * @param {() => boolean} [opts.canSendResize] - guard for resize messages (defaults to canAcceptInput)
-       * @returns {{ term: Terminal, fitAddon: FitAddon.FitAddon, searchAddon: SearchAddon.SearchAddon }}
+       * @returns {{ term: Terminal, fitAddon: FitAddon, searchAddon: SearchAddon.SearchAddon }}
        */
       function createXtermInstance({ fontSize, scrollback, cursorBlink = true, disableStdin = false, sendInput, sendMessage, canAcceptInput, canSendResize }) {
         const shouldSendResize = canSendResize || canAcceptInput;
@@ -3235,7 +3235,7 @@
           allowProposedApi: true,
         });
 
-        const fitAddon = new FitAddon.FitAddon();
+        const fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         const searchAddon = new SearchAddon.SearchAddon();
         term.loadAddon(searchAddon);

@@ -8,3 +8,4 @@
 - phase 5: added WASM init gate — mount() now awaits window.ghosttyReady before creating Terminal. initDesktopTerminal and mountGridController made async; renderGridCells collects mount promises and defers connect until all resolve. Stale-disposal guard added to initDesktopTerminal. All 728 tests pass.
 - phase 6: removed Unicode11Addon — ghostty-web does unicode 15.1 natively. Removed from index.html (try/catch block + activeVersion setter), bundle-ghostty.ts (stub + comment), regenerated bundle. All 728 tests pass.
 - phase 7: removed WebglAddon loading — ghostty handles its own rendering. Removed loadAddon call from index.html, removed WebglAddon stub + dead NoopAddon from bundle-ghostty.ts, regenerated bundle. All 728 tests pass.
+- phase 8: updated FitAddon usage — exposed GhosttyWeb.FitAddon directly (no xterm-compat wrapper), changed `new FitAddon.FitAddon()` → `new FitAddon()` in index.html, regenerated bundle. All 728 tests pass.

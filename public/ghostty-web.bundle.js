@@ -23,7 +23,7 @@ For tests, pass a Ghostty instance directly:
 
 // Expose xterm.js-compatible globals
 window.Terminal = GhosttyWeb.Terminal;
-window.FitAddon = { FitAddon: GhosttyWeb.FitAddon };
+window.FitAddon = GhosttyWeb.FitAddon;
 
 // Stubs for addons that ghostty-web handles natively or doesn't support
 window.SearchAddon = { SearchAddon: function() {

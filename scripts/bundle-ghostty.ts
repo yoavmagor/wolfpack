@@ -10,7 +10,7 @@
  *
  * Globals exposed after init():
  *   window.Terminal        — drop-in for xterm.js Terminal
- *   window.FitAddon        — { FitAddon: GhosttyWeb.FitAddon }
+ *   window.FitAddon        — GhosttyWeb.FitAddon (direct constructor)
  *   window.SearchAddon     — { SearchAddon: no-op stub }
  *   window.ghosttyReady    — Promise that resolves when WASM init is done
  *
@@ -50,7 +50,7 @@ ${umdCode}
 
 // Expose xterm.js-compatible globals
 window.Terminal = GhosttyWeb.Terminal;
-window.FitAddon = { FitAddon: GhosttyWeb.FitAddon };
+window.FitAddon = GhosttyWeb.FitAddon;
 
 // Stubs for addons that ghostty-web handles natively or doesn't support
 window.SearchAddon = { SearchAddon: function() {
