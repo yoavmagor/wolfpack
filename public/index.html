@@ -3369,7 +3369,6 @@
         });
         let hasConnected = false;
         let consumeReset = !!opts.resetPty;
-        let _skipPrefillNextAttach = false;
         let _skipInitialPrefill = !!opts.skipInitialPrefill;
         let _attachAckTimer = null;
         let _awaitingAttachAck = false;
@@ -3393,9 +3392,8 @@
           try { opts.fitTerminal(); } catch {}
           const dims = opts.getTermDimensions();
           if (!dims) return;
-          const skipPrefill = _skipInitialPrefill || _skipPrefillNextAttach;
+          const skipPrefill = _skipInitialPrefill;
           _skipInitialPrefill = false;
-          _skipPrefillNextAttach = false;
           _lastSentResize = dims.cols + "x" + dims.rows;
           _awaitingAttachAck = true;
           ws.send(JSON.stringify({ type: "attach", cols: dims.cols, rows: dims.rows, skipPrefill }));
@@ -3445,7 +3443,6 @@
             const wasReconnect = hasConnected;
             hasConnected = true;
             _rc.connected();
-            _skipPrefillNextAttach = wasReconnect;
             sendAttachHandshake();
             if (opts.onOpen) opts.onOpen(wasReconnect);
           };
@@ -3662,7 +3659,24 @@
             getTermDimensions: () => _term ? { cols: _term.cols, rows: _term.rows } : null,
             fitTerminal: fitTerminalPreserveScroll,
             shouldReconnect: opts.shouldReconnect,
-            onOpen: (wasReconnect) => { if (isCurrent() && opts.onOpen) opts.onOpen(wasReconnect); },
+            onOpen: (wasReconnect) => {
+              if (!isCurrent()) return;
+              // On reconnect, clear stale content and restart hydration —
+              // server sends fresh prefill scrollback on the new connection.
+              // Auto-reconnect (wasReconnect) always gets prefill.
+              // Manual retry (_hydrationStarted) gets prefill unless skipInitialPrefill
+              // is set (grid cells skip prefill on fresh ptyClient creation).
+              const shouldRehydrate = wasReconnect || (_hydrationStarted && !opts.skipInitialPrefill);
+              if (shouldRehydrate && _term) {
+                _term.reset();
+                _hydrationWritesInFlight = 0;
+                _lastHydrationOutputAt = 0;
+                if (_hydration) _hydration.start();
+                const el = _getHydrationElement();
+                if (el) { el.classList.add("hydrating"); el.classList.remove("hydrated"); }
+              }
+              if (opts.onOpen) opts.onOpen(wasReconnect);
+            },
             onBinaryData: (data) => {
               if (!_term) return;
               if (_hydration && _hydration.pending) {
