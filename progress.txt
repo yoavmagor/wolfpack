@@ -1,0 +1,4 @@
+# Progress Log
+
+## 2026-03-15
+- phase 1 complete: replaced xterm.js deps with ghostty-web@0.4.0 in package.json, ran bun install (6 packages removed, ghostty-web added)
