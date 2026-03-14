@@ -3609,8 +3609,9 @@
          * CanvasAddon, fit, create hydration controller (not yet started).
          * Optionally write cached content.
          */
-        function mount(container, mountOpts) {
+        async function mount(container, mountOpts) {
           if (_term) return; // already mounted
+          await window.ghosttyReady;
           _container = container;
 
           const result = createXtermInstance({
@@ -3872,7 +3873,7 @@
         return cell;
       }
 
-      function mountGridController(gs, cell, idx) {
+      async function mountGridController(gs, cell, idx) {
         if (gs.controller) return; // already mounted
         const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
         gs.controller = createPtyTerminalController({
@@ -3916,7 +3917,7 @@
           },
         });
         delete gs._resetPty;
-        gs.controller.mount(cell);
+        await gs.controller.mount(cell);
         gs._needsConnect = true;
       }
 
@@ -3939,6 +3940,7 @@
         });
         // Track which sessions need new cells vs reuse
         const newCellSessions = [];
+        const mountPromises = [];
         state.gridSessions.forEach((gs, idx) => {
           if (gs._cellElement && gs._cellElement.parentNode === container && gs.controller) {
             // Existing cell — just update index and focus state
@@ -3948,7 +3950,7 @@
             // New cell needed
             const cell = createGridCell(gs, idx);
             container.appendChild(cell);
-            mountGridController(gs, cell, idx);
+            mountPromises.push(mountGridController(gs, cell, idx));
             newCellSessions.push(gs);
           }
         });
@@ -3965,14 +3967,17 @@
         });
         updateGridLayout();
         // Add-flow relayout + connect in one transition to avoid visible flicker.
+        // Wait for all mounts (WASM init gate) before connecting.
         if (newCellSessions.length > 0) {
-          runGridRelayoutTransition(() => {
-            fitAllGridCells();
-            newCellSessions.forEach(gs => {
-              if (gs._needsConnect) {
-                delete gs._needsConnect;
-                gs.controller.connect();
-              }
+          Promise.all(mountPromises).then(() => {
+            runGridRelayoutTransition(() => {
+              fitAllGridCells();
+              newCellSessions.forEach(gs => {
+                if (gs._needsConnect) {
+                  delete gs._needsConnect;
+                  gs.controller.connect();
+                }
+              });
             });
           });
         } else {
@@ -5474,7 +5479,7 @@
         if (el) el.remove();
       }
 
-      function initDesktopTerminal(cached) {
+      async function initDesktopTerminal(cached) {
         if (state.desktopController) return;
         const container = document.getElementById("desktop-terminal-container");
         container.style.display = "block";
@@ -5531,7 +5536,8 @@
           onReconnectExhausted: () => setConnState("offline"),
         });
 
-        state.desktopController.mount(container, { cached });
+        await state.desktopController.mount(container, { cached });
+        if (!state.desktopController) return; // disposed while awaiting WASM init
 
         const onResize = () => {
           if (state.desktopResizeTimer) clearTimeout(state.desktopResizeTimer);
