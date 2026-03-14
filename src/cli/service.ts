@@ -180,7 +180,13 @@ const LAUNCHD_TARGET = `${LAUNCHD_DOMAIN}/${PLIST_LABEL}`;
 function launchdBootout() {
   try {
     execSync(`launchctl bootout ${LAUNCHD_TARGET} 2>/dev/null`);
-  } catch {}
+  } catch {
+    // fallback: pre-1.4 versions used deprecated `launchctl load`, which
+    // `bootout` can't always remove — try the legacy unload path
+    try {
+      execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null`);
+    } catch {}
+  }
 }
 
 function launchdBootstrap() {

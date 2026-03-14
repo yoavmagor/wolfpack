@@ -205,7 +205,14 @@ const routes: Record<
       }
     }
     const finalName = customName || await uniqueSessionName(folderName);
-    await tmuxNewSession(finalName, `/tmp/dev/${folderName}`, cmd);
+    try {
+      await tmuxNewSession(finalName, `/tmp/dev/${folderName}`, cmd);
+    } catch (e: any) {
+      if (e.code === "DUPLICATE_SESSION") {
+        return json(res, { error: "session name already exists" }, 409);
+      }
+      throw e;
+    }
     json(res, { ok: true, session: finalName });
   },
 
@@ -607,6 +614,16 @@ describe("POST /api/create", () => {
     expect(res.status).toBe(409);
     const data = await res.json();
     expect(data.error).toBe("session name already taken");
+  });
+
+  test("returns 409 when tmux reports duplicate session (race condition)", async () => {
+    const err = new Error("duplicate session: my-app");
+    (err as any).code = "DUPLICATE_SESSION";
+    tmuxNewSession.mockRejectedValueOnce(err);
+    const res = await post("/api/create", { project: "my-app" });
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.error).toBe("session name already exists");
   });
 });
 

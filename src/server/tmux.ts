@@ -227,6 +227,17 @@ export async function tmuxNewSession(
   cmd: string | undefined,
   loadSettings: () => { agentCmd: string },
 ): Promise<void> {
+  // Guard: if a tmux session with this name already exists, bail with a clear error
+  try {
+    await exec(TMUX, ["has-session", "-t", name], { timeout: 2000 });
+    const err = new Error(`duplicate session: ${name}`);
+    (err as any).code = "DUPLICATE_SESSION";
+    throw err;
+  } catch (e: any) {
+    // has-session exits non-zero when session doesn't exist — that's the happy path
+    if (e.code === "DUPLICATE_SESSION") throw e;
+  }
+
   const agentCmd = cmd || loadSettings().agentCmd || "claude";
   if (agentCmd === "shell") {
     await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, SHELL]);
