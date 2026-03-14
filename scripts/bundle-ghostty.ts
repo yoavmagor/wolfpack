@@ -12,7 +12,6 @@
  *   window.Terminal        — drop-in for xterm.js Terminal
  *   window.FitAddon        — { FitAddon: GhosttyWeb.FitAddon }
  *   window.SearchAddon     — { SearchAddon: no-op stub }
- *   window.Unicode11Addon  — { Unicode11Addon: no-op stub }
  *   window.WebglAddon      — { WebglAddon: no-op stub }
  *   window.ghosttyReady    — Promise that resolves when WASM init is done
  *
@@ -68,7 +67,6 @@ window.SearchAddon = { SearchAddon: function() {
   this.clearDecorations = function() {};
 } };
 
-window.Unicode11Addon = { Unicode11Addon: NoopAddon }; // built-in unicode 15.1
 window.WebglAddon = { WebglAddon: NoopAddon };          // built-in canvas renderer
 
 // Auto-init WASM — consumers await window.ghosttyReady before creating terminals

@@ -3239,12 +3239,6 @@
         term.loadAddon(fitAddon);
         const searchAddon = new SearchAddon.SearchAddon();
         term.loadAddon(searchAddon);
-        try {
-          const unicodeAddon = new Unicode11Addon.Unicode11Addon();
-          term.loadAddon(unicodeAddon);
-          term.unicode.activeVersion = '11';
-        } catch {}
-
         // Copy (xterm renders to canvas, so native copy doesn't work)
         term.attachCustomKeyEventHandler((e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {

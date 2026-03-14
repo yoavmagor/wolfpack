@@ -39,7 +39,6 @@ window.SearchAddon = { SearchAddon: function() {
   this.clearDecorations = function() {};
 } };
 
-window.Unicode11Addon = { Unicode11Addon: NoopAddon }; // built-in unicode 15.1
 window.WebglAddon = { WebglAddon: NoopAddon };          // built-in canvas renderer
 
 // Auto-init WASM — consumers await window.ghosttyReady before creating terminals
