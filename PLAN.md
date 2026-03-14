@@ -46,8 +46,8 @@
 ## phase 4: verify
 - [x] desktop single terminal: open, type, scroll, copy/paste
 - [x] desktop grid: 2-6 cells, focus switching, stdin guard
-- [ ] reconnect: close/reopen websocket, hydration prefill
-- [ ] take-control flow: viewer conflict + recovery
+- [x] reconnect: close/reopen websocket, hydration prefill
+- [x] take-control flow: viewer conflict + recovery
 - [ ] mobile: unaffected (uses capture-pane, no xterm)
 - [ ] build: `bun run scripts/build.ts` succeeds
 - [ ] tests: `bun test` passes
