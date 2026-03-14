@@ -3,3 +3,4 @@
 ## 2026-03-15
 - phase 1 complete: replaced xterm.js deps with ghostty-web@0.4.0 in package.json, ran bun install (6 packages removed, ghostty-web added)
 - phase 2 (partial): created scripts/bundle-ghostty.ts — bundles ghostty-web UMD (with inlined WASM) into public/ghostty-web.bundle.js (625KB). Exposes xterm-compatible globals (Terminal, FitAddon.FitAddon) + no-op stubs for SearchAddon/Unicode11Addon/WebglAddon. window.ghosttyReady promise gates WASM init.
+- phase 3: updated gen-assets.ts to invoke bundle-ghostty.ts instead of copying xterm assets. Removed 7 stale xterm files from public/. public/ now contains 4 files (ghostty-web.bundle.js, index.html, manifest.json, wolfpack-icon.svg). All 728 tests pass.
