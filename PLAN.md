@@ -39,12 +39,12 @@
   - option B: implement basic search using buffer API
   - option C: write a thin search addon using ghostty-web buffer access
   - **decision**: start with option A, revisit after testing
-- [ ] update xterm CSS references (ghostty-web may not need xterm.css)
-- [ ] update custom CSS selectors (`.xterm-find-result-decoration` etc.)
-- [ ] test `term.buffer.active` access (used for scroll position tracking)
+- [x] update xterm CSS references (ghostty-web may not need xterm.css)
+- [x] update custom CSS selectors (`.xterm-find-result-decoration` etc.)
+- [x] test `term.buffer.active` access (used for scroll position tracking)
 
 ## phase 4: verify
-- [ ] desktop single terminal: open, type, scroll, copy/paste
+- [x] desktop single terminal: open, type, scroll, copy/paste
 - [ ] desktop grid: 2-6 cells, focus switching, stdin guard
 - [ ] reconnect: close/reopen websocket, hydration prefill
 - [ ] take-control flow: viewer conflict + recovery
