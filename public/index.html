@@ -1430,15 +1430,15 @@
         pointer-events: none;
         z-index: 5;
       }
-      #desktop-terminal-container .xterm {
+      #desktop-terminal-container canvas {
         height: 100%;
         padding: 4px;
       }
-      #desktop-terminal-container.hydrating .xterm {
+      #desktop-terminal-container.hydrating canvas {
         opacity: 0;
         visibility: hidden;
       }
-      #desktop-terminal-container.hydrated .xterm {
+      #desktop-terminal-container.hydrated canvas {
         opacity: 1;
         visibility: visible;
       }
@@ -1481,8 +1481,8 @@
         display: flex;
         flex-direction: column;
       }
-      .grid-cell.grid-loading .xterm,
-      .grid-cell.hydrating .xterm {
+      .grid-cell.grid-loading canvas,
+      .grid-cell.hydrating canvas {
         opacity: 0;
         visibility: hidden;
       }
@@ -1490,12 +1490,12 @@
         border-color: rgba(0,255,65,0.6);
         box-shadow: inset 0 0 12px rgba(0,255,65,0.1), 0 0 8px rgba(0,255,65,0.15);
       }
-      .grid-cell .xterm {
+      .grid-cell canvas {
         flex: 1;
         min-height: 0;
         overflow: hidden;
       }
-      .grid-cell.hydrated:not(.grid-loading) .xterm {
+      .grid-cell.hydrated:not(.grid-loading) canvas {
         opacity: 1;
         visibility: visible;
       }
@@ -3193,7 +3193,7 @@
       const GRID_TERMINAL_SCROLLBACK = 1000;
 
       /**
-       * Creates a configured xterm.js Terminal with addons, copy/paste, and stdin wired up.
+       * Creates a configured ghostty-web Terminal with addons, copy/paste, and stdin wired up.
        * @param {object} opts
        * @param {number} opts.fontSize
        * @param {number} opts.scrollback
@@ -3205,7 +3205,7 @@
        * @param {() => boolean} [opts.canSendResize] - guard for resize messages (defaults to canAcceptInput)
        * @returns {{ term: Terminal, fitAddon: FitAddon }}
        */
-      function createXtermInstance({ fontSize, scrollback, cursorBlink = true, disableStdin = false, sendInput, sendMessage, canAcceptInput, canSendResize }) {
+      function createTerminalInstance({ fontSize, scrollback, cursorBlink = true, disableStdin = false, sendInput, sendMessage, canAcceptInput, canSendResize }) {
         const shouldSendResize = canSendResize || canAcceptInput;
         const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
         const termFontFamily = wpSettings.termFont === "alt"
@@ -3229,7 +3229,7 @@
 
         const fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
-        // Copy (xterm renders to canvas, so native copy doesn't work)
+        // Copy (ghostty renders to canvas, so native copy doesn't work)
         term.attachCustomKeyEventHandler((e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
             navigator.clipboard.writeText(term.getSelection()).catch(() => {});
@@ -3266,7 +3266,7 @@
       const DESKTOP_INITIAL_PREFILL_TIMEOUT_MS = 1000;
 
       /**
-       * Shared hydration controller for xterm.js terminals.
+       * Shared hydration controller for ghostty-web terminals.
        * Owns: pending state, timeout fallback, visibility reveal, scrollToBottom,
        * optional focus, and a short quiet-period debounce so initial history bursts
        * can settle before the terminal becomes visible.
@@ -3341,7 +3341,7 @@
         };
       }
       /**
-       * Shared PTY WebSocket client for xterm.js terminals.
+       * Shared PTY WebSocket client for ghostty-web terminals.
        * Owns: URL construction, socket lifecycle, binary/text frame dispatch,
        *       initial attach handshake, reconnect backoff, control message parsing.
        * @param {object} opts
@@ -3532,14 +3532,14 @@
       }
 
       /**
-       * createPtyTerminalController — composes xterm, hydration, and WebSocket
+       * createPtyTerminalController — composes terminal, hydration, and WebSocket
        * helpers into a single PTY terminal lifecycle controller.
        *
        * @param {object} opts
        * @param {string} opts.session - tmux session name
        * @param {string} [opts.machine=""] - remote machine URL ("" for local)
        * @param {number} [opts.fontSize] - override font size
-       * @param {number} opts.scrollback - xterm scrollback lines
+       * @param {number} opts.scrollback - terminal scrollback lines
        * @param {boolean} [opts.cursorBlink=true]
        * @param {boolean} [opts.disableStdin=false]
        * @param {() => boolean} [opts.shouldFocus] - hydration focus decision
@@ -3588,7 +3588,7 @@
         }
 
         /**
-         * mount(container, { cached }?) — create xterm, open in container, load
+         * mount(container, { cached }?) — create terminal, open in container, load
          * CanvasAddon, fit, create hydration controller (not yet started).
          * Optionally write cached content.
          */
@@ -3597,7 +3597,7 @@
           await window.ghosttyReady;
           _container = container;
 
-          const result = createXtermInstance({
+          const result = createTerminalInstance({
             fontSize: opts.fontSize,
             scrollback: opts.scrollback,
             cursorBlink: opts.cursorBlink,
@@ -3610,7 +3610,7 @@
           _term = result.term;
           _fitAddon = result.fitAddon;
 
-          // Mark hydrating before xterm mounts to avoid first-frame flicker.
+          // Mark hydrating before terminal mounts to avoid first-frame flicker.
           const hydrationEl = _getHydrationElement();
           if (hydrationEl) { hydrationEl.classList.add("hydrating"); hydrationEl.classList.remove("hydrated"); }
 
@@ -4003,7 +4003,7 @@
         if (idx < 0 || idx >= state.gridSessions.length) return;
         const prev = state.gridFocusIndex;
         state.gridFocusIndex = idx;
-        // Update xterm stdin/cursor for old + new focus
+        // Update terminal stdin/cursor for old + new focus
         state.gridSessions.forEach((gs, i) => {
           if (!gs.controller || !gs.controller.term) return;
           const focused = i === idx;
@@ -5432,7 +5432,7 @@
         }
       }
 
-      // ── Desktop Terminal (xterm.js + /ws/pty binary WS) ──
+      // ── Desktop Terminal (ghostty-web + /ws/pty binary WS) ──
 
       function connectDesktopWs() {
         if (!state.desktopController) return;
@@ -6490,7 +6490,7 @@
         else if (state.currentView === "ralph-start" || state.currentView === "ralph-detail" || state.currentView === "settings") { e.preventDefault(); backToSessions(); }
       });
 
-      // ── Desktop keyboard shortcuts (capture phase, before xterm) ──
+      // ── Desktop keyboard shortcuts (capture phase, before terminal) ──
       document.addEventListener("keydown", (e) => {
         if (!isDesktop()) return;
         const mod = e.metaKey || e.ctrlKey;
@@ -7084,7 +7084,7 @@
           }
         });
 
-        // Refit xterm after sidebar transition completes — but ONLY for stable
+        // Refit terminal after sidebar transition completes — but ONLY for stable
         // state changes (pin/unpin), NOT for transient auto-expand hover.
         // Resizing the PTY during hover causes Claude Code's TUI to redraw with
         // a right-margin dot fill (·) that persists after the sidebar collapses.

@@ -1,5 +1,5 @@
 /**
- * WebSocket handlers — terminal (capture-pane polling) and PTY (xterm.js direct).
+ * WebSocket handlers — terminal (capture-pane polling) and PTY (ghostty-web direct).
  */
 import type { WebSocket } from "ws";
 import {
@@ -185,7 +185,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
   });
 }
 
-// ── PTY WS handler (desktop — xterm.js direct) ──
+// ── PTY WS handler (desktop — ghostty-web direct) ──
 
 export function teardownPty(session: string): void {
   const entry = activePtySessions.get(session);
@@ -335,7 +335,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
 
       if (!entry.alive || activePtySessions.get(session) !== entry || entry.viewer !== ws) return;
 
-      // Pre-fill viewer with tmux scrollback so xterm.js has content to scroll through.
+      // Pre-fill viewer with tmux scrollback so terminal has content to scroll through.
       // The attach path can replay part of the visible pane, so strip any overlap from
       // the first PTY bytes only after the prefill has been delivered successfully.
       if (!skipPrefill) {
