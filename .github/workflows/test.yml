@@ -18,6 +18,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Audit dependencies
+        run: npx audit-ci --high
+
       - name: Generate embedded assets
         run: bun run scripts/gen-assets.ts
 

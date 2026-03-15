@@ -3981,26 +3981,30 @@
           canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && state.gridSessions[state.gridFocusIndex] === gs),
           canSendResize: () => !!(gs.controller && gs.controller.isConnected),
           onViewerConflict: () => {
-            // If auto-taking control back (user clicked Take Control on displaced cell),
-            // send take_control immediately instead of showing overlay again
-            if (gs._autoTakeControl) {
-              gs._autoTakeControl = false;
+            var r = WP.handleViewerConflict({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
+            gs._displaced = r.newState.displaced;
+            gs._autoTakeControl = r.newState.autoTakeControl;
+            if (r.action === "auto-take-control") {
               gs.controller.sendTakeControl();
             } else {
               showGridCellConflictOverlay(gs);
             }
           },
           onControlGranted: () => {
-            gs._displaced = false;
+            var s = WP.handleControlGranted({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
+            gs._displaced = s.displaced;
+            gs._autoTakeControl = s.autoTakeControl;
             removeGridCellConflictOverlay(gs);
             if (state.gridSessions[state.gridFocusIndex] === gs) gs.controller.focus();
           },
-          onDisconnected: (code) => {
+          onDisconnected: (code, reason) => {
             removeGridCellConflictOverlay(gs);
             if (!state.gridSessions.includes(gs)) return;
-            if (code === 4002) {
-              // Displaced by another viewer — show conflict overlay, don't auto-reconnect
-              gs._displaced = true;
+            var action = WP.classifyDisconnect(code, reason || "");
+            if (action === "displaced") {
+              var ns = WP.handleDisplaced({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
+              gs._displaced = ns.displaced;
+              gs._autoTakeControl = ns.autoTakeControl;
               showGridCellConflictOverlay(gs);
             } else {
               gs.controller.scheduleReconnect();
@@ -4076,7 +4080,7 @@
                 }
               });
             });
-          });
+          }).catch(err => console.error("[grid] mount failed:", err));
         } else {
           // No new cells — just refit existing (layout may have changed)
           requestAnimationFrame(() => { fitAllGridCells(); });
@@ -4099,11 +4103,13 @@
         const overlay = createConflictOverlay("Active on another device", "Take Control", (e) => {
           e.stopPropagation();
           if (!gs.controller) return;
-          if (gs.controller.isConnected) {
+          var clickAction = WP.handleTakeControlClick(gs.controller.isConnected);
+          if (clickAction === "send-take-control") {
             gs.controller.sendTakeControl();
           } else {
-            // WS closed (displaced) — reconnect, then auto-send take_control on viewer_conflict
-            gs._autoTakeControl = true;
+            var ns = WP.prepareAutoTakeControl({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
+            gs._displaced = ns.displaced;
+            gs._autoTakeControl = ns.autoTakeControl;
             gs.controller.connect();
           }
         });
@@ -5624,17 +5630,18 @@
           },
           onDisconnected: (code, reason) => {
             removeDesktopConflictOverlay();
-            if (code === 4002) {
+            var action = WP.classifyDisconnect(code, reason || "");
+            if (action === "displaced") {
               setConnState("displaced");
               return;
             }
-            if (code === 4001) {
+            if (action === "session-ended") {
               setConnState("session-ended");
               const statusEl = document.getElementById("conn-status");
               if (statusEl) statusEl.textContent = "session unavailable \u2014 use \u2190 to go back";
               return;
             }
-            if (code === 1000 && reason === "pty exited") {
+            if (action === "pty-exited") {
               setConnState("session-ended");
               return;
             }

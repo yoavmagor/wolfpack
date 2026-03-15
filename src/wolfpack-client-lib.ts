@@ -17,3 +17,15 @@ export {
 export {
   shouldRehydrate,
 } from "./reconnect-hydration";
+
+export {
+  CLOSE_CODE_DISPLACED,
+  CLOSE_CODE_SESSION_UNAVAILABLE,
+  CLOSE_CODE_NORMAL,
+  classifyDisconnect,
+  handleViewerConflict,
+  handleControlGranted,
+  handleDisplaced,
+  prepareAutoTakeControl,
+  handleTakeControlClick,
+} from "./take-control-logic";

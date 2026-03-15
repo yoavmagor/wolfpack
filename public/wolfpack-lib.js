@@ -36,6 +36,43 @@ function encodeTerminalBinary(data) {
 function shouldRehydrate(wasReconnect, hydrationStarted, skipInitialPrefill) {
   return wasReconnect || hydrationStarted && !skipInitialPrefill;
 }
-var WP = {shouldRehydrate, shouldInterceptCopy, serializeBufferTail, scrollTargetAfterResize, encodeTerminalBinary, captureScrollState};
+// src/take-control-logic.ts
+var CLOSE_CODE_DISPLACED = 4002;
+var CLOSE_CODE_SESSION_UNAVAILABLE = 4001;
+var CLOSE_CODE_NORMAL = 1000;
+function handleViewerConflict(state) {
+  if (state.autoTakeControl) {
+    return {
+      action: "auto-take-control",
+      newState: { ...state, autoTakeControl: false }
+    };
+  }
+  return {
+    action: "show-overlay",
+    newState: state
+  };
+}
+function handleControlGranted(state) {
+  return { ...state, displaced: false, autoTakeControl: false };
+}
+function classifyDisconnect(code, reason) {
+  if (code === CLOSE_CODE_DISPLACED)
+    return "displaced";
+  if (code === CLOSE_CODE_SESSION_UNAVAILABLE)
+    return "session-ended";
+  if (code === CLOSE_CODE_NORMAL && reason === "pty exited")
+    return "pty-exited";
+  return "reconnect";
+}
+function handleTakeControlClick(isConnected) {
+  return isConnected ? "send-take-control" : "reconnect-with-auto";
+}
+function handleDisplaced(state) {
+  return { ...state, displaced: true };
+}
+function prepareAutoTakeControl(state) {
+  return { ...state, autoTakeControl: true };
+}
+var WP = {shouldRehydrate, shouldInterceptCopy, serializeBufferTail, scrollTargetAfterResize, prepareAutoTakeControl, handleViewerConflict, handleTakeControlClick, handleDisplaced, handleControlGranted, encodeTerminalBinary, classifyDisconnect, captureScrollState, CLOSE_CODE_SESSION_UNAVAILABLE, CLOSE_CODE_NORMAL, CLOSE_CODE_DISPLACED};
 window.WP = WP;
 })();

@@ -7,6 +7,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { WebSocketServer } from "ws";
+
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -165,9 +166,7 @@ server.on("upgrade", async (req, socket, head) => {
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      handleTerminalWs(ws, session);
-    });
+    wss.handleUpgrade(req, socket, head, (ws) => handleTerminalWs(ws, session));
   } else if (url.pathname === "/ws/pty") {
     const session = url.searchParams.get("session");
     if (!session || !(await isAllowedSession(session))) {
@@ -176,9 +175,7 @@ server.on("upgrade", async (req, socket, head) => {
       return;
     }
     const reset = url.searchParams.get("reset") === "1";
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      handlePtyWs(ws, session, reset);
-    });
+    wss.handleUpgrade(req, socket, head, (ws) => handlePtyWs(ws, session, reset));
   } else {
     socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
     socket.destroy();
