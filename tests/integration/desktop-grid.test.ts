@@ -10,113 +10,46 @@
  * multi-session concurrency guarantees.
  */
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from "bun:test";
-import type { AddressInfo } from "node:net";
-
-process.env.WOLFPACK_TEST = "1";
-
-const { server, __setTestOverrides, __getTestState } = await import("../../src/server/index.ts");
-const { activePtySessions, ptySpawnAttempts } = __getTestState();
+import {
+  bootTestServer,
+  closeWs,
+  waitForClose,
+  wait,
+  connectPty as _connectPty,
+  collectJsonMessages,
+  waitForMessage,
+  cleanupSessions,
+  type PtyTestContext,
+} from "./pty-test-helpers";
 
 // ── Test setup ──
 
-let port: number;
-let baseWsUrl: string;
+let ctx: PtyTestContext;
 
 const GRID_SESSIONS = ["grid-a", "grid-b", "grid-c", "grid-d", "grid-e", "grid-f"];
-__setTestOverrides({
-  tmuxList: async () => [...GRID_SESSIONS],
-  capturePane: async () => "$ grid-mock-output\n",
-});
 
-const _realConsoleError = console.error;
-
-beforeAll((done) => {
-  console.error = (...args: any[]) => {
-    const msg = String(args[0] ?? "");
-    if (msg.startsWith("WS error") || msg.startsWith("PTY WS error") || msg.startsWith("Route error")) return;
-    _realConsoleError(...args);
-  };
-  server.listen(0, "127.0.0.1", () => {
-    port = (server.address() as AddressInfo).port;
-    baseWsUrl = `ws://127.0.0.1:${port}`;
-    done();
+beforeAll(async () => {
+  ctx = await bootTestServer({
+    tmuxList: async () => [...GRID_SESSIONS],
+    capturePane: async () => "$ grid-mock-output\n",
   });
 });
 
-afterAll(() => {
-  console.error = _realConsoleError;
-  server.close();
-});
+afterAll(() => ctx.cleanup());
 
-// ── Helpers ──
-
-function closeWs(ws: WebSocket): Promise<void> {
-  return new Promise((resolve) => {
-    if (ws.readyState >= WebSocket.CLOSING) return resolve();
-    ws.addEventListener("close", () => resolve());
-    ws.close();
-  });
+function connectPty(session: string, opts?: { reset?: boolean }) {
+  return _connectPty(ctx.baseWsUrl, session, opts);
 }
 
-function waitForClose(ws: WebSocket, timeoutMs = 5000): Promise<CloseEvent> {
-  return new Promise((resolve, reject) => {
-    if (ws.readyState === WebSocket.CLOSED) return reject(new Error("already closed"));
-    const timer = setTimeout(() => reject(new Error("close timeout")), timeoutMs);
-    ws.addEventListener("close", (ev) => { clearTimeout(timer); resolve(ev); });
-  });
-}
-
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function connectPty(session: string, opts?: { reset?: boolean }): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const resetSuffix = opts?.reset ? "&reset=1" : "";
-    const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}${resetSuffix}`);
-    ws.binaryType = "arraybuffer";
-    ws.addEventListener("open", () => resolve(ws));
-    ws.addEventListener("error", () => reject(new Error("connect failed")));
-  });
-}
-
-function collectJsonMessages(ws: WebSocket): { type: string; [k: string]: any }[] {
-  const msgs: { type: string; [k: string]: any }[] = [];
-  ws.addEventListener("message", (ev) => {
-    if (typeof ev.data === "string") {
-      try { msgs.push(JSON.parse(ev.data)); } catch {}
-    }
-  });
-  return msgs;
-}
-
-function waitForMessage(ws: WebSocket, type: string, timeoutMs = 3000): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`timeout waiting for ${type}`)), timeoutMs);
-    const cleanup = () => { clearTimeout(timer); ws.removeEventListener("message", handler); };
-    function handler(ev: MessageEvent) {
-      if (typeof ev.data === "string") {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === type) { cleanup(); resolve(msg); }
-        } catch {}
-      }
-    }
-    ws.addEventListener("message", handler);
-    ws.addEventListener("close", () => { cleanup(); reject(new Error(`ws closed before ${type}`)); });
-  });
-}
-
-function cleanupSessions(...names: string[]) {
-  for (const name of names) {
-    activePtySessions.delete(name);
-    ptySpawnAttempts.delete(name);
-  }
+function cleanup(...names: string[]) {
+  cleanupSessions(ctx.activePtySessions, ctx.ptySpawnAttempts, ...names);
 }
 
 // ── Multi-session concurrency (2-6 cells) ──
 
 describe("desktop grid: multi-session concurrency", () => {
   beforeEach(async () => {
-    cleanupSessions(...GRID_SESSIONS);
+    cleanup(...GRID_SESSIONS);
     await wait(50);
   });
 
@@ -125,8 +58,8 @@ describe("desktop grid: multi-session concurrency", () => {
     const wsB = await connectPty("grid-b");
     await wait(10);
 
-    const entryA = activePtySessions.get("grid-a");
-    const entryB = activePtySessions.get("grid-b");
+    const entryA = ctx.activePtySessions.get("grid-a");
+    const entryB = ctx.activePtySessions.get("grid-b");
     expect(entryA).toBeTruthy();
     expect(entryB).toBeTruthy();
     expect(entryA!.alive).toBe(true);
@@ -181,13 +114,13 @@ describe("desktop grid: multi-session concurrency", () => {
     await wait(10);
 
     for (const name of GRID_SESSIONS) {
-      const entry = activePtySessions.get(name);
+      const entry = ctx.activePtySessions.get(name);
       expect(entry).toBeTruthy();
       expect(entry!.alive).toBe(true);
     }
 
     // All entries are distinct
-    const entries = GRID_SESSIONS.map(n => activePtySessions.get(n));
+    const entries = GRID_SESSIONS.map(n => ctx.activePtySessions.get(n));
     const unique = new Set(entries);
     expect(unique.size).toBe(6);
 
@@ -210,7 +143,7 @@ describe("desktop grid: multi-session concurrency", () => {
 
     // Each session triggered exactly one spawn attempt
     for (const name of GRID_SESSIONS) {
-      expect(ptySpawnAttempts.get(name) || 0).toBe(1);
+      expect(ctx.ptySpawnAttempts.get(name) || 0).toBe(1);
     }
 
     for (const ws of sockets) await closeWs(ws);
@@ -222,7 +155,7 @@ describe("desktop grid: multi-session concurrency", () => {
 
 describe("desktop grid: session isolation", () => {
   beforeEach(async () => {
-    cleanupSessions(...GRID_SESSIONS);
+    cleanup(...GRID_SESSIONS);
     await wait(50);
   });
 
@@ -236,7 +169,7 @@ describe("desktop grid: session isolation", () => {
     await wait(100);
 
     // B should still be alive and open
-    const entryB = activePtySessions.get("grid-b");
+    const entryB = ctx.activePtySessions.get("grid-b");
     expect(entryB).toBeTruthy();
     expect(entryB!.alive).toBe(true);
     expect(wsB.readyState).toBe(WebSocket.OPEN);
@@ -276,7 +209,7 @@ describe("desktop grid: session isolation", () => {
 
     // B should be unaffected
     expect(wsB.readyState).toBe(WebSocket.OPEN);
-    const entryB = activePtySessions.get("grid-b");
+    const entryB = ctx.activePtySessions.get("grid-b");
     expect(entryB).toBeTruthy();
     expect(entryB!.alive).toBe(true);
 
@@ -299,7 +232,7 @@ describe("desktop grid: session isolation", () => {
 
     // B should still be alive
     expect(wsB.readyState).toBe(WebSocket.OPEN);
-    const entryB = activePtySessions.get("grid-b");
+    const entryB = ctx.activePtySessions.get("grid-b");
     expect(entryB).toBeTruthy();
     expect(entryB!.alive).toBe(true);
 
@@ -317,9 +250,9 @@ describe("desktop grid: session isolation", () => {
     wsC.send(JSON.stringify({ type: "attach", cols: 60, rows: 20, skipPrefill: true }));
     await wait(300);
 
-    expect(ptySpawnAttempts.get("grid-a") || 0).toBe(1);
-    expect(ptySpawnAttempts.get("grid-b") || 0).toBe(0);
-    expect(ptySpawnAttempts.get("grid-c") || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get("grid-a") || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get("grid-b") || 0).toBe(0);
+    expect(ctx.ptySpawnAttempts.get("grid-c") || 0).toBe(1);
 
     await closeWs(wsA);
     await closeWs(wsB);
@@ -332,21 +265,21 @@ describe("desktop grid: session isolation", () => {
 
 describe("desktop grid: reset=1 remount path", () => {
   beforeEach(async () => {
-    cleanupSessions(...GRID_SESSIONS);
+    cleanup(...GRID_SESSIONS);
     await wait(50);
   });
 
   test("reset=1 creates fresh entry even when existing entry is alive", async () => {
     const ws1 = await connectPty("grid-a");
     await wait(10);
-    const entry1 = activePtySessions.get("grid-a");
+    const entry1 = ctx.activePtySessions.get("grid-a");
     expect(entry1).toBeTruthy();
     expect(entry1!.alive).toBe(true);
 
     // Connect with reset=1 — should tear down old and create fresh
     const ws2 = await connectPty("grid-a", { reset: true });
     await wait(10);
-    const entry2 = activePtySessions.get("grid-a");
+    const entry2 = ctx.activePtySessions.get("grid-a");
     expect(entry2).toBeTruthy();
     expect(entry2!.alive).toBe(true);
     // New entry replaces old
@@ -380,13 +313,13 @@ describe("desktop grid: reset=1 remount path", () => {
     const wsB = await connectPty("grid-b");
     await wait(10);
 
-    const entryB_before = activePtySessions.get("grid-b");
+    const entryB_before = ctx.activePtySessions.get("grid-b");
 
     // Reset grid-a — grid-b should be unaffected
     const wsA2 = await connectPty("grid-a", { reset: true });
     await wait(10);
 
-    const entryB_after = activePtySessions.get("grid-b");
+    const entryB_after = ctx.activePtySessions.get("grid-b");
     expect(entryB_after).toBe(entryB_before);
     expect(entryB_after!.alive).toBe(true);
     expect(wsB.readyState).toBe(WebSocket.OPEN);
@@ -401,7 +334,7 @@ describe("desktop grid: reset=1 remount path", () => {
     // No existing entry for grid-a
     const ws = await connectPty("grid-a", { reset: true });
     await wait(10);
-    const entry = activePtySessions.get("grid-a");
+    const entry = ctx.activePtySessions.get("grid-a");
     expect(entry).toBeTruthy();
     expect(entry!.alive).toBe(true);
 
@@ -419,7 +352,7 @@ describe("desktop grid: reset=1 remount path", () => {
 
 describe("desktop grid: per-cell resize independence", () => {
   beforeEach(async () => {
-    cleanupSessions(...GRID_SESSIONS);
+    cleanup(...GRID_SESSIONS);
     await wait(50);
   });
 
@@ -452,8 +385,8 @@ describe("desktop grid: per-cell resize independence", () => {
     wsA.send(JSON.stringify({ type: "resize", cols: 60, rows: 20 }));
     await wait(300);
 
-    expect(ptySpawnAttempts.get("grid-a") || 0).toBe(1);
-    expect(ptySpawnAttempts.get("grid-b") || 0).toBe(0);
+    expect(ctx.ptySpawnAttempts.get("grid-a") || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get("grid-b") || 0).toBe(0);
 
     await closeWs(wsA);
     await closeWs(wsB);
@@ -480,9 +413,9 @@ describe("desktop grid: per-cell resize independence", () => {
     await wait(300);
 
     // Each session triggers exactly one spawn (first resize bootstraps)
-    expect(ptySpawnAttempts.get("grid-a") || 0).toBe(1);
-    expect(ptySpawnAttempts.get("grid-b") || 0).toBe(1);
-    expect(ptySpawnAttempts.get("grid-c") || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get("grid-a") || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get("grid-b") || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get("grid-c") || 0).toBe(1);
 
     await closeWs(wsA);
     await closeWs(wsB);
@@ -495,7 +428,7 @@ describe("desktop grid: per-cell resize independence", () => {
 
 describe("desktop grid: stdin guard (binary isolation)", () => {
   beforeEach(async () => {
-    cleanupSessions(...GRID_SESSIONS);
+    cleanup(...GRID_SESSIONS);
     await wait(50);
   });
 
@@ -538,7 +471,7 @@ describe("desktop grid: stdin guard (binary isolation)", () => {
 
     // B is unaffected — still open, still alive
     expect(wsB.readyState).toBe(WebSocket.OPEN);
-    const entryB = activePtySessions.get("grid-b");
+    const entryB = ctx.activePtySessions.get("grid-b");
     expect(entryB).toBeTruthy();
     expect(entryB!.alive).toBe(true);
 
@@ -576,7 +509,7 @@ describe("desktop grid: stdin guard (binary isolation)", () => {
 
 describe("desktop grid: lifecycle (add/remove/exit)", () => {
   beforeEach(async () => {
-    cleanupSessions(...GRID_SESSIONS);
+    cleanup(...GRID_SESSIONS);
     await wait(50);
   });
 
@@ -593,8 +526,8 @@ describe("desktop grid: lifecycle (add/remove/exit)", () => {
     // A and C still alive
     expect(wsA.readyState).toBe(WebSocket.OPEN);
     expect(wsC.readyState).toBe(WebSocket.OPEN);
-    expect(activePtySessions.get("grid-a")?.alive).toBe(true);
-    expect(activePtySessions.get("grid-c")?.alive).toBe(true);
+    expect(ctx.activePtySessions.get("grid-a")?.alive).toBe(true);
+    expect(ctx.activePtySessions.get("grid-c")?.alive).toBe(true);
 
     // A and C can still attach
     const ackA = waitForMessage(wsA, "attach_ack");
@@ -633,7 +566,7 @@ describe("desktop grid: lifecycle (add/remove/exit)", () => {
   test("reconnect to same session after close gets fresh entry", async () => {
     const ws1 = await connectPty("grid-a");
     await wait(10);
-    const entry1 = activePtySessions.get("grid-a");
+    const entry1 = ctx.activePtySessions.get("grid-a");
     expect(entry1).toBeTruthy();
 
     await closeWs(ws1);
@@ -643,7 +576,7 @@ describe("desktop grid: lifecycle (add/remove/exit)", () => {
     // Reconnect
     const ws2 = await connectPty("grid-a");
     await wait(10);
-    const entry2 = activePtySessions.get("grid-a");
+    const entry2 = ctx.activePtySessions.get("grid-a");
     expect(entry2).toBeTruthy();
     expect(entry2!.alive).toBe(true);
     expect(entry2).not.toBe(entry1);

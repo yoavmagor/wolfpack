@@ -1,49 +1,12 @@
 /**
- * Reconnect hydration logic — verifies that WebSocket reconnection properly
- * clears stale terminal content and restarts hydration with server prefill.
- *
- * Tests the two key decisions extracted from index.html:
- * 1. shouldRehydrate: whether to clear terminal + restart hydration on (re)connect
- * 2. skipPrefill: whether to request server scrollback prefill on attach
- *
- * These functions mirror the exact logic in createPtyTerminalController and
- * createPtySocketClient respectively.
+ * Reconnect hydration logic — tests the production shouldRehydrate function
+ * that determines whether to clear terminal content and restart hydration
+ * when a WebSocket connection opens.
  */
 import { describe, expect, test } from "bun:test";
+import { shouldRehydrate } from "../../src/reconnect-hydration";
 
-// ── Extracted logic from createPtyTerminalController onOpen (index.html) ──
-
-/**
- * Determines if terminal should be cleared and hydration restarted on WS open.
- *
- * - wasReconnect: true when same ptySocketClient reconnects (auto-reconnect)
- * - hydrationStarted: true after first connect (tracks controller lifetime)
- * - skipInitialPrefill: from opts — grid cells set this to skip prefill on fresh ptyClient
- *
- * Auto-reconnect always gets prefill (wasReconnect=true → rehydrate).
- * Manual retry (new ptyClient, hydrationStarted=true) gets prefill unless
- * skipInitialPrefill is set (grid cells skip, desktop doesn't).
- */
-function shouldRehydrate(
-  wasReconnect: boolean,
-  hydrationStarted: boolean,
-  skipInitialPrefill: boolean,
-): boolean {
-  return wasReconnect || (hydrationStarted && !skipInitialPrefill);
-}
-
-// ── Extracted logic from createPtySocketClient sendAttachHandshake (index.html) ──
-
-/**
- * Determines if prefill should be skipped in the attach handshake.
- * After removing the wasReconnect→skipPrefill behavior, only the
- * skipInitialPrefill opt (consumed once on first attach) controls this.
- */
-function computeSkipPrefill(skipInitialPrefill: boolean): boolean {
-  return skipInitialPrefill;
-}
-
-// ── shouldRehydrate tests ──
+// ── shouldRehydrate decision tests ──
 
 describe("reconnect hydration: shouldRehydrate decision", () => {
   test("first connect (no prior hydration) → false", () => {
@@ -83,71 +46,24 @@ describe("reconnect hydration: shouldRehydrate decision", () => {
   });
 });
 
-// ── skipPrefill tests ──
-
-describe("reconnect hydration: skipPrefill on attach", () => {
-  test("default (no skip) → false", () => {
-    expect(computeSkipPrefill(false)).toBe(false);
-  });
-
-  test("skipInitialPrefill set → true", () => {
-    expect(computeSkipPrefill(true)).toBe(true);
-  });
-});
-
 // ── Stateful prefill lifecycle simulation ──
+// These tests verify the expected behavior across the full lifecycle
+// of a controller using shouldRehydrate as the decision function.
 
 describe("reconnect hydration: prefill lifecycle across connects", () => {
-  /**
-   * Simulates the stateful skipPrefill behavior across multiple connections
-   * on the same ptySocketClient (auto-reconnect path).
-   */
-  function createPrefillTracker(initialSkip: boolean) {
-    let skipInitialPrefill = initialSkip;
-    return {
-      /** Returns skipPrefill for current attach, then consumes the flag. */
-      attach(): boolean {
-        const skip = skipInitialPrefill;
-        skipInitialPrefill = false;
-        return skip;
-      },
-    };
-  }
-
-  test("desktop: first connect gets prefill, reconnect gets prefill", () => {
-    const tracker = createPrefillTracker(false);
-    expect(tracker.attach()).toBe(false);  // first connect → prefill
-    expect(tracker.attach()).toBe(false);  // reconnect → prefill
-    expect(tracker.attach()).toBe(false);  // reconnect again → still prefill
-  });
-
-  test("grid: first connect skips prefill, reconnect gets prefill", () => {
-    const tracker = createPrefillTracker(true);
-    expect(tracker.attach()).toBe(true);   // first connect → skip (grid opt)
-    expect(tracker.attach()).toBe(false);  // reconnect → prefill (flag consumed)
-    expect(tracker.attach()).toBe(false);  // reconnect again → still prefill
-  });
-
-  /**
-   * Simulates the full reconnect hydration decision across the lifecycle
-   * of a controller with auto-reconnects.
-   */
   test("full lifecycle: desktop auto-reconnect clears + rehydrates each time", () => {
     let hydrationStarted = false;
     const skipInitialPrefill = false;
 
     // First connect
-    const firstConnect = shouldRehydrate(false, hydrationStarted, skipInitialPrefill);
-    expect(firstConnect).toBe(false); // don't clear on first connect
+    expect(shouldRehydrate(false, hydrationStarted, skipInitialPrefill)).toBe(false);
     hydrationStarted = true;
 
     // Auto-reconnect #1
-    const reconnect1 = shouldRehydrate(true, hydrationStarted, skipInitialPrefill);
-    expect(reconnect1).toBe(true); // clear + rehydrate
+    expect(shouldRehydrate(true, hydrationStarted, skipInitialPrefill)).toBe(true);
 
     // Auto-reconnect #2
-    const reconnect2 = shouldRehydrate(true, hydrationStarted, skipInitialPrefill);
-    expect(reconnect2).toBe(true); // still clears
+    expect(shouldRehydrate(true, hydrationStarted, skipInitialPrefill)).toBe(true);
   });
 
   test("full lifecycle: grid auto-reconnect clears despite skipInitialPrefill", () => {
@@ -155,32 +71,27 @@ describe("reconnect hydration: prefill lifecycle across connects", () => {
     const skipInitialPrefill = true;
 
     // First connect
-    const firstConnect = shouldRehydrate(false, hydrationStarted, skipInitialPrefill);
-    expect(firstConnect).toBe(false);
+    expect(shouldRehydrate(false, hydrationStarted, skipInitialPrefill)).toBe(false);
     hydrationStarted = true;
 
     // Auto-reconnect (wasReconnect=true overrides skipInitialPrefill)
-    const reconnect1 = shouldRehydrate(true, hydrationStarted, skipInitialPrefill);
-    expect(reconnect1).toBe(true);
+    expect(shouldRehydrate(true, hydrationStarted, skipInitialPrefill)).toBe(true);
   });
 
   test("full lifecycle: grid manual retry does NOT clear (skipInitialPrefill)", () => {
-    let hydrationStarted = false;
+    const hydrationStarted = true;
     const skipInitialPrefill = true;
 
-    // First connect
-    hydrationStarted = true;
-
     // Manual retry (new ptyClient, wasReconnect=false)
-    const retry = shouldRehydrate(false, hydrationStarted, skipInitialPrefill);
-    expect(retry).toBe(false); // grid: don't clear, no prefill coming
+    expect(shouldRehydrate(false, hydrationStarted, skipInitialPrefill)).toBe(false);
   });
 });
 
 // ── Rehydration action simulation ──
+// Simulates the sequence of actions taken in createPtyTerminalController's
+// onOpen callback based on shouldRehydrate's decision.
 
 describe("reconnect hydration: rehydration actions", () => {
-  /** Simulate the rehydration sequence from createPtyTerminalController onOpen. */
   function simulateRehydration(opts: {
     wasReconnect: boolean;
     hydrationStarted: boolean;

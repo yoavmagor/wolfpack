@@ -1433,14 +1433,48 @@
       #desktop-terminal-container canvas {
         height: 100%;
         padding: 4px;
-      }
-      #desktop-terminal-container.hydrating canvas {
+        background: #0a0a0a;
+        max-width: 100%;
         opacity: 0;
         visibility: hidden;
+        transition: opacity 80ms ease;
       }
-      #desktop-terminal-container.hydrated canvas {
+      #desktop-terminal-container.hydrated:not(.transitioning) canvas {
         opacity: 1;
         visibility: visible;
+      }
+      /* Instant hide during resize/loading transitions (no 80ms fade-out) */
+      #desktop-terminal-container.hydrating canvas,
+      #desktop-terminal-container.transitioning canvas,
+      .grid-cell.hydrating canvas,
+      .grid-cell.transitioning canvas,
+      .grid-cell.grid-loading canvas {
+        transition: none;
+      }
+      /* Show loading overlay during sidebar transitions */
+      #desktop-terminal-container.transitioning::before {
+        content: "Loading terminal";
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1.2px;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.32);
+        background:
+          linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0.02) 0%,
+            rgba(255, 255, 255, 0.05) 50%,
+            rgba(255, 255, 255, 0.02) 100%
+          );
+        background-size: 200% 100%;
+        animation: grid-loading-sheen 1.1s linear infinite;
+        pointer-events: none;
+        z-index: 5;
       }
 
       /* ── Multi-terminal grid ── */
@@ -1481,11 +1515,6 @@
         display: flex;
         flex-direction: column;
       }
-      .grid-cell.grid-loading canvas,
-      .grid-cell.hydrating canvas {
-        opacity: 0;
-        visibility: hidden;
-      }
       .grid-cell.grid-focused {
         border-color: rgba(0,255,65,0.6);
         box-shadow: inset 0 0 12px rgba(0,255,65,0.1), 0 0 8px rgba(0,255,65,0.15);
@@ -1494,8 +1523,13 @@
         flex: 1;
         min-height: 0;
         overflow: hidden;
+        background: #0a0a0a;
+        max-width: 100%;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 80ms ease;
       }
-      .grid-cell.hydrated:not(.grid-loading) canvas {
+      .grid-cell.hydrated:not(.grid-loading):not(.transitioning) canvas {
         opacity: 1;
         visibility: visible;
       }
@@ -1521,7 +1555,7 @@
         animation: grid-loading-sheen 1.1s linear infinite;
         pointer-events: none;
       }
-      .grid-cell:not(.grid-loading):not(.hydrating) .grid-cell-loading {
+      .grid-cell:not(.grid-loading):not(.hydrating):not(.transitioning) .grid-cell-loading {
         display: none;
       }
       @keyframes grid-loading-sheen {
@@ -2426,6 +2460,7 @@
       .ralph-iter-align { text-align: right; margin-top: 2px; }
 
     </style>
+    <script src="/wolfpack-lib.js"></script>
     <script src="/ghostty-web.bundle.js"></script>
   </head>
   <body>
@@ -3163,6 +3198,8 @@
         sidebarPinned: _initSidebarPinned,
         sidebarCollapsed: !_initSidebarPinned,
         sidebarAutoExpanded: false,
+        sidebarTransitionIsHover: false,
+        sidebarResizeDone: false,
         sessionsExpanded: true,
         // mobile/connection state
         mobileWs: null,
@@ -3230,10 +3267,34 @@
         const fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         // Copy (ghostty renders to canvas, so native copy doesn't work)
+        // ghostty-web: true = "handled, stop", false = "not handled, continue"
         term.attachCustomKeyEventHandler((e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === "c" && e.type === "keydown" && term.hasSelection()) {
+          if (WP.shouldInterceptCopy(e, term.hasSelection())) {
             navigator.clipboard.writeText(term.getSelection()).catch(() => {});
-            return false;
+            return true;
+          }
+          return false;
+        });
+
+        // Mouse wheel → SGR scroll sequences for tmux (ghostty-web doesn't do mouse reporting)
+        // Trackpad sends many small-deltaY events; accumulate before emitting scroll lines.
+        let _scrollAccum = 0;
+        const SCROLL_THRESHOLD = 60; // px of deltaY per scroll line (tuned for trackpad)
+        term.attachCustomWheelEventHandler((ev) => {
+          try {
+            const hasMouse = term.getMode(1000) || term.getMode(1002) || term.getMode(1003);
+            if (!hasMouse) return false;
+          } catch { return false; }
+          _scrollAccum += ev.deltaY;
+          const lines = Math.trunc(_scrollAccum / SCROLL_THRESHOLD);
+          if (lines === 0) return true; // accumulate more before scrolling
+          _scrollAccum -= lines * SCROLL_THRESHOLD;
+          const btn = lines > 0 ? 65 : 64;
+          const seq = `\x1b[<${btn};1;1M`;
+          const encoded = new TextEncoder().encode(seq);
+          const count = Math.min(Math.abs(lines), 5);
+          for (let i = 0; i < count; i++) {
+            if (canAcceptInput()) sendInput(encoded);
           }
           return true;
         });
@@ -3242,13 +3303,15 @@
         term.onData((data) => {
           if (canAcceptInput()) sendInput(new TextEncoder().encode(data));
         });
-        term.onBinary((data) => {
-          if (canAcceptInput()) {
-            const buf = new Uint8Array(data.length);
-            for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
-            sendInput(buf);
-          }
-        });
+        if (term.onBinary) {
+          term.onBinary((data) => {
+            if (canAcceptInput()) {
+              const buf = new Uint8Array(data.length);
+              for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
+              sendInput(buf);
+            }
+          });
+        }
 
         // Resize forwarding (debounced to prevent resize storms)
         let _termResizeTimer = null;
@@ -3564,8 +3627,8 @@
         let _ptyClient = null;
         let _hydrationStarted = false;
         let _hydrationWritesInFlight = 0;
-        let _lastHydrationOutputAt = 0;
-        const HYDRATION_QUIET_MS = 120;
+        let _reconnectPendingReset = false;
+        let _mounting = false;
 
         const _canAcceptInput = opts.canAcceptInput || (() => !!(_ptyClient && _ptyClient.isOpen));
         const _canSendResize = opts.canSendResize || _canAcceptInput;
@@ -3573,13 +3636,10 @@
 
         function fitTerminalPreserveScroll() {
           if (!_fitAddon || !_term) return;
-          const buffer = _term.buffer.active;
-          const wasAtBottom = buffer.viewportY >= buffer.baseY;
-          const distanceFromBottom = Math.max(0, buffer.baseY - buffer.viewportY);
+          const scrollState = WP.captureScrollState(_term.buffer.active);
           _fitAddon.fit();
-          if (!wasAtBottom) {
-            const nextBaseY = _term.buffer.active.baseY;
-            const target = Math.max(0, nextBaseY - distanceFromBottom);
+          if (!scrollState.wasAtBottom) {
+            const target = WP.scrollTargetAfterResize(_term.buffer.active.baseY, scrollState.distanceFromBottom);
             try { _term.scrollToLine(target); } catch {}
           }
         }
@@ -3590,8 +3650,14 @@
          * Optionally write cached content.
          */
         async function mount(container, mountOpts) {
-          if (_term) return; // already mounted
-          await window.ghosttyReady;
+          if (_term || _mounting) return; // already mounted or in progress
+          _mounting = true;
+          try { await window.ghosttyReady; } catch (err) {
+            console.error("[ghostty-web] WASM init failed:", err);
+            _mounting = false;
+            return;
+          }
+          if (_term) { _mounting = false; return; } // double-mount during async gap
           _container = container;
 
           const result = createTerminalInstance({
@@ -3613,16 +3679,25 @@
 
           _term.open(container);
 
+          // Let browser shortcuts through — ghostty-web's keydown handler
+          // calls preventDefault() on everything, swallowing Cmd+R etc.
+          container.addEventListener("keydown", (e) => {
+            if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+              const k = e.key.toLowerCase();
+              if ("rwtlnq".includes(k) || (e.shiftKey && k === "r")) {
+                e.stopImmediatePropagation();
+              }
+            }
+          }, true);
+
           // Create hydration controller (started in connect())
           _hydration = createInitialHydrationController({
             getElement: _getHydrationElement,
             getTerm: () => _term,
             shouldFocus: opts.shouldFocus || (() => true),
-            canFinish: () => (
-              _hydrationWritesInFlight === 0 &&
-              (_lastHydrationOutputAt === 0 || Date.now() - _lastHydrationOutputAt >= HYDRATION_QUIET_MS)
-            ),
+            canFinish: () => _hydrationWritesInFlight === 0,
             timeoutMs: opts.hydrationTimeoutMs,
+            settleMs: 50,
           });
 
           fitTerminalPreserveScroll();
@@ -3631,6 +3706,7 @@
               try { _term.scrollToBottom(); } catch {}
             });
           }
+          _mounting = false;
         }
 
         /**
@@ -3663,24 +3739,30 @@
               if (!isCurrent()) return;
               // On reconnect, clear stale content and restart hydration —
               // server sends fresh prefill scrollback on the new connection.
-              // Auto-reconnect (wasReconnect) always gets prefill.
-              // Manual retry (_hydrationStarted) gets prefill unless skipInitialPrefill
-              // is set (grid cells skip prefill on fresh ptyClient creation).
-              const shouldRehydrate = wasReconnect || (_hydrationStarted && !opts.skipInitialPrefill);
-              if (shouldRehydrate && _term) {
-                _term.reset();
+              const rehydrate = WP.shouldRehydrate(wasReconnect, _hydrationStarted, opts.skipInitialPrefill);
+              if (rehydrate && _term) {
                 _hydrationWritesInFlight = 0;
-                _lastHydrationOutputAt = 0;
-                if (_hydration) _hydration.start();
-                const el = _getHydrationElement();
-                if (el) { el.classList.add("hydrating"); el.classList.remove("hydrated"); }
+                if (wasReconnect) {
+                  // Defer terminal reset until first data arrives — keeps old
+                  // content visible so there's no blank flash during reconnect.
+                  _reconnectPendingReset = true;
+                  if (_hydration) _hydration.start();
+                } else {
+                  _term.reset();
+                  if (_hydration) _hydration.start();
+                  const el = _getHydrationElement();
+                  if (el) { el.classList.add("hydrating"); el.classList.remove("hydrated"); }
+                }
               }
               if (opts.onOpen) opts.onOpen(wasReconnect);
             },
             onBinaryData: (data) => {
               if (!_term) return;
+              if (_reconnectPendingReset) {
+                _reconnectPendingReset = false;
+                _term.reset();
+              }
               if (_hydration && _hydration.pending) {
-                _lastHydrationOutputAt = Date.now();
                 _hydrationWritesInFlight++;
                 _term.write(data, () => {
                   _hydrationWritesInFlight = Math.max(0, _hydrationWritesInFlight - 1);
@@ -3709,6 +3791,27 @@
           fitTerminalPreserveScroll();
         }
 
+        let _resizeTransitionId = 0;
+        /** Blank canvas → fit → reveal. No loading overlay — just instant hide/show. */
+        function resizeWithTransition() {
+          const el = _getHydrationElement();
+          if (!el || !_fitAddon || !_term) { fitTerminalPreserveScroll(); return; }
+          if (_hydration && _hydration.pending) { fitTerminalPreserveScroll(); return; }
+          if (!el.classList.contains('hydrated')) { fitTerminalPreserveScroll(); return; }
+          const id = ++_resizeTransitionId;
+          const canvas = el.querySelector('canvas');
+          if (canvas) { canvas.style.opacity = '0'; canvas.style.visibility = 'hidden'; }
+          requestAnimationFrame(() => {
+            if (_resizeTransitionId !== id) return;
+            fitTerminalPreserveScroll();
+            requestAnimationFrame(() => {
+              if (_resizeTransitionId !== id) return;
+              if (canvas) { canvas.style.opacity = ''; canvas.style.visibility = ''; }
+              el.classList.remove('transitioning');
+            });
+          });
+        }
+
         /**
          * dispose() — close socket, cancel hydration, dispose addons and terminal.
          * Does NOT clean up view-specific DOM (containers, overlays, event listeners).
@@ -3718,7 +3821,8 @@
           if (_hydration) { _hydration.cancel(); _hydration = null; }
           _hydrationStarted = false;
           _hydrationWritesInFlight = 0;
-          _lastHydrationOutputAt = 0;
+          _reconnectPendingReset = false;
+          _mounting = false;
           if (_term) { try { _term.dispose(); } catch {} _term = null; }
           _fitAddon = null;
           _container = null;
@@ -3729,6 +3833,7 @@
           connect,
           focus,
           resize,
+          resizeWithTransition,
           dispose,
           // Delegation to pty client
           scheduleReconnect: () => { if (_ptyClient) _ptyClient.scheduleReconnect(); },
@@ -3752,11 +3857,7 @@
           : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
       }
 
-      function encodeTerminalBinary(data) {
-        const buf = new Uint8Array(data.length);
-        for (let i = 0; i < data.length; i++) buf[i] = data.charCodeAt(i) & 0xff;
-        return buf;
-      }
+      var encodeTerminalBinary = WP.encodeTerminalBinary;
 
       function createConflictOverlay(message, buttonLabel, onClick) {
         const overlay = document.createElement("div");
@@ -3784,16 +3885,13 @@
         return transitionId === state.gridRelayoutTransitionId;
       }
 
-      const GRID_RELAYOUT_MIN_MS = 180;
-
-      function endGridRelayoutTransition(transitionId, startedAt) {
+      function endGridRelayoutTransition(transitionId) {
         if (!isGridRelayoutTransitionCurrent(transitionId)) return;
-        const elapsed = Date.now() - (startedAt || 0);
-        const remaining = Math.max(0, GRID_RELAYOUT_MIN_MS - elapsed);
-        setTimeout(() => {
+        // Reveal on next paint — fit already rendered canvas content synchronously.
+        requestAnimationFrame(() => {
           if (!isGridRelayoutTransitionCurrent(transitionId)) return;
           for (const gs of state.gridSessions) setGridCellLoading(gs, false);
-        }, remaining);
+        });
       }
 
       function cancelGridRelayoutTransition() {
@@ -3803,7 +3901,6 @@
       /** Run a two-pass relayout while keeping loading overlay visible. */
       function runGridRelayoutTransition(primaryFit) {
         if (!isGridActive()) return;
-        const startedAt = Date.now();
         const transitionId = beginGridRelayoutTransition();
         requestAnimationFrame(() => {
           if (!isGridRelayoutTransitionCurrent(transitionId) || !isGridActive()) return;
@@ -3811,12 +3908,13 @@
           requestAnimationFrame(() => {
             if (!isGridRelayoutTransitionCurrent(transitionId) || !isGridActive()) return;
             fitAllGridCells();
-            endGridRelayoutTransition(transitionId, startedAt);
+            endGridRelayoutTransition(transitionId);
           });
         });
       }
 
       // ── Multi-terminal grid state ──
+      let _gridRenderGeneration = 0;
       const MAX_GRID_CELLS = 6;
 
       function isGridActive() { return state.gridSessions.length >= 2; }
@@ -3920,7 +4018,9 @@
         if (!state.gridResizeHandler) {
           state.gridResizeHandler = () => {
             if (!isGridActive()) return;
-            runGridRelayoutTransition(() => { fitAllGridCells(); });
+            for (const gs of state.gridSessions) {
+              if (gs.controller) gs.controller.resizeWithTransition();
+            }
           };
           window.addEventListener("resize", state.gridResizeHandler);
         }
@@ -3961,8 +4061,12 @@
         updateGridLayout();
         // Add-flow relayout + connect in one transition to avoid visible flicker.
         // Wait for all mounts (WASM init gate) before connecting.
+        // Capture render generation so stale Promise.all callbacks bail out
+        // if renderGridCells is called again before mounts resolve.
+        const renderGen = ++_gridRenderGeneration;
         if (newCellSessions.length > 0) {
           Promise.all(mountPromises).then(() => {
+            if (_gridRenderGeneration !== renderGen) return; // stale render
             runGridRelayoutTransition(() => {
               fitAllGridCells();
               newCellSessions.forEach(gs => {
@@ -4042,6 +4146,7 @@
       function addToGrid(session, machine) {
         if (!isDesktop()) return;
         if (state.gridSessions.length >= MAX_GRID_CELLS) return;
+        state.sidebarResizeDone = false;
         // Already in grid?
         if (state.gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
         // Track which session had a full-width PTY (needs reset on grid connect)
@@ -4088,6 +4193,7 @@
 
       function removeFromGrid(idx) {
         if (idx < 0 || idx >= state.gridSessions.length) return;
+        state.sidebarResizeDone = false;
         const gs = state.gridSessions[idx];
         // Remove cell DOM immediately (avoids full rebuild flash)
         if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
@@ -4112,8 +4218,10 @@
             }
           });
           updateGridLayout();
-          // Remove-flow relayout while preserving scroll on first fit pass.
-          runGridRelayoutTransition(() => { fitGridCellsPreserveScroll(); });
+          // Remove-flow relayout — per-cell transition hides canvas during refit.
+          for (const gs of state.gridSessions) {
+            if (gs.controller) gs.controller.resizeWithTransition();
+          }
           setGridFocus(state.gridFocusIndex);
         }
         renderSidebar();
@@ -4165,23 +4273,37 @@
         }
       }
 
-      /** Fit grid cells but preserve each terminal's scroll position to avoid visible history jump. */
-      function fitGridCellsPreserveScroll() {
-        for (const gs of state.gridSessions) {
-          if (!gs.controller) continue;
-          // controller.resize() already preserves distance-from-bottom internally.
-          // Do not apply an additional absolute scroll restore here (it can drift down).
-          try { gs.controller.resize(); } catch {}
+      /** Hide terminal canvases + show loading overlay (before sidebar CSS transition). */
+      function hideGridCellsForTransition() {
+        if (isGridActive()) {
+          for (const gs of state.gridSessions) {
+            const el = gs._cellElement;
+            if (el) el.classList.add('transitioning');
+          }
+        } else {
+          const el = document.getElementById("desktop-terminal-container");
+          if (el) el.classList.add('transitioning');
+        }
+      }
+
+      /** Remove loading overlay + reveal canvases (no PTY resize). */
+      function revealGridCellsWithoutResize() {
+        if (isGridActive()) {
+          for (const gs of state.gridSessions) {
+            const el = gs._cellElement;
+            if (el) el.classList.remove('transitioning');
+          }
+        } else {
+          const el = document.getElementById("desktop-terminal-container");
+          if (el) el.classList.remove('transitioning');
         }
       }
 
       function scheduleGridStabilizedFit() {
         if (!isGridActive()) return;
-        // Sidebar open/close should feel instant: refit without grid loading overlays.
-        requestAnimationFrame(() => {
-          if (!isGridActive()) return;
-          fitGridCellsPreserveScroll();
-        });
+        for (const gs of state.gridSessions) {
+          if (gs.controller) gs.controller.resizeWithTransition();
+        }
       }
 
       function isSessionInGrid(session, machine) {
@@ -4284,14 +4406,7 @@
         if (text) saveSnapshot(state.currentMachine, state.currentSession, text);
       }
       function serializeXtermTail(term, maxLines) {
-        const buf = term.buffer.active;
-        const start = Math.max(0, buf.length - maxLines);
-        const lines = [];
-        for (let i = start; i < buf.length; i++) {
-          const line = buf.getLine(i);
-          if (line) lines.push(line.translateToString(true));
-        }
-        return lines.join('\n');
+        return WP.serializeBufferTail(term.buffer.active, maxLines);
       }
       function formatSnapshotTtl(seconds) {
         seconds = +seconds;
@@ -5536,7 +5651,7 @@
           if (state.desktopResizeTimer) clearTimeout(state.desktopResizeTimer);
           state.desktopResizeTimer = setTimeout(() => {
             state.desktopResizeTimer = null;
-            if (state.desktopController) state.desktopController.resize();
+            if (state.desktopController) state.desktopController.resizeWithTransition();
           }, 60);
         };
         window.addEventListener("resize", onResize);
@@ -6141,6 +6256,7 @@
       })();
 
       async function switchSession(val) {
+        state.sidebarResizeDone = false;
         let name, machineUrl;
         // Values with | are remote: "url|sessionName"
         const pipeIdx = val.indexOf("|");
@@ -7035,6 +7151,8 @@
         document.getElementById("sidebar-collapse-btn").onclick = () => {
           state.sidebarPinned = !state.sidebarPinned;
           localStorage.setItem("wolfpack-sidebar-pinned", state.sidebarPinned ? "1" : "0");
+          state.sidebarTransitionIsHover = false;
+          if (!state.sidebarResizeDone) hideGridCellsForTransition();
           if (state.sidebarPinned) {
             // Pin: ensure visible
             sidebar.classList.remove("collapsed");
@@ -7053,6 +7171,8 @@
           state.sessionsExpanded = !state.sessionsExpanded;
           document.body.classList.toggle("sessions-expanded", state.sessionsExpanded);
           document.getElementById("sidebar-expand-btn").classList.toggle("active", state.sessionsExpanded);
+          state.sidebarTransitionIsHover = false;
+          if (!state.sidebarResizeDone) hideGridCellsForTransition();
           if (state.sessionsExpanded) {
             // Collapse sidebar when expanded — main area has all sessions
             sidebar.classList.add("collapsed");
@@ -7074,6 +7194,8 @@
         // Hover edge — expand on hover (only when unpinned and not in expanded mode)
         hoverEdge.addEventListener("mouseenter", () => {
           if (state.sidebarCollapsed && !state.sidebarPinned && !state.sessionsExpanded) {
+            state.sidebarTransitionIsHover = true;
+            if (!state.sidebarResizeDone) hideGridCellsForTransition();
             sidebar.classList.remove("collapsed");
             state.sidebarAutoExpanded = true;
           }
@@ -7084,6 +7206,8 @@
           if (state.sidebarAutoExpanded && !state.sidebarPinned) {
             sidebarAutoCollapseTimer = setTimeout(() => {
               if (state.sidebarAutoExpanded) {
+                state.sidebarTransitionIsHover = true;
+                if (!state.sidebarResizeDone) hideGridCellsForTransition();
                 sidebar.classList.add("collapsed");
                 state.sidebarCollapsed = true;
                 state.sidebarAutoExpanded = false;
@@ -7098,18 +7222,23 @@
           }
         });
 
-        // Refit terminal after sidebar transition completes — but ONLY for stable
-        // state changes (pin/unpin), NOT for transient auto-expand hover.
-        // Resizing the PTY during hover causes Claude Code's TUI to redraw with
-        // a right-margin dot fill (·) that persists after the sidebar collapses.
+        // Refit terminal after sidebar transition completes.
+        // Hover transitions: just reveal canvases (no PTY resize — causes dot fill).
+        // Pin/unpin transitions: resize PTY to new dimensions + reveal.
         sidebar.addEventListener("transitionend", (e) => {
-          if (e.propertyName === "margin-left" && !state.sidebarAutoExpanded) {
+          if (e.propertyName !== "margin-left") return;
+          if (state.sidebarTransitionIsHover) {
+            // Hover expand/collapse — reveal without resizing PTY
+            revealGridCellsWithoutResize();
+          } else if (!state.sidebarAutoExpanded) {
+            // Pin/unpin — resize PTY to fit new layout
             if (isGridActive()) {
               scheduleGridStabilizedFit();
             } else if (state.desktopController) {
-              state.desktopController.resize();
+              state.desktopController.resizeWithTransition();
             }
           }
+          state.sidebarResizeDone = true;
         });
 
         // Nav buttons

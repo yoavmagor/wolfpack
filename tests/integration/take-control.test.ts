@@ -9,98 +9,34 @@
  * pending message filtering, and edge cases.
  */
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from "bun:test";
-import type { AddressInfo } from "node:net";
-
-process.env.WOLFPACK_TEST = "1";
-
-const { server, __setTestOverrides, __getTestState } = await import("../../src/server/index.ts");
-const { activePtySessions, ptySpawnAttempts } = __getTestState();
+import {
+  bootTestServer,
+  closeWs,
+  waitForClose,
+  wait,
+  connectPty as _connectPty,
+  collectJsonMessages,
+  waitForMessage,
+  type PtyTestContext,
+} from "./pty-test-helpers";
 
 // ── Test setup ──
 
-let port: number;
-let baseWsUrl: string;
+let ctx: PtyTestContext;
 
 const FAKE_SESSIONS = ["tc-session", "tc-session-2"];
-__setTestOverrides({
-  tmuxList: async () => [...FAKE_SESSIONS],
-  capturePane: async () => "$ mock-take-control\n",
-});
 
-const _realConsoleError = console.error;
-
-beforeAll((done) => {
-  console.error = (...args: any[]) => {
-    const msg = String(args[0] ?? "");
-    if (msg.startsWith("WS error") || msg.startsWith("PTY WS error") || msg.startsWith("Route error")) return;
-    _realConsoleError(...args);
-  };
-  server.listen(0, "127.0.0.1", () => {
-    port = (server.address() as AddressInfo).port;
-    baseWsUrl = `ws://127.0.0.1:${port}`;
-    done();
+beforeAll(async () => {
+  ctx = await bootTestServer({
+    tmuxList: async () => [...FAKE_SESSIONS],
+    capturePane: async () => "$ mock-take-control\n",
   });
 });
 
-afterAll(() => {
-  console.error = _realConsoleError;
-  server.close();
-});
+afterAll(() => ctx.cleanup());
 
-// ── Helpers ──
-
-function closeWs(ws: WebSocket): Promise<void> {
-  return new Promise((resolve) => {
-    if (ws.readyState >= WebSocket.CLOSING) return resolve();
-    ws.addEventListener("close", () => resolve());
-    ws.close();
-  });
-}
-
-function waitForClose(ws: WebSocket, timeoutMs = 5000): Promise<CloseEvent> {
-  return new Promise((resolve, reject) => {
-    if (ws.readyState === WebSocket.CLOSED) return reject(new Error("already closed"));
-    const timer = setTimeout(() => reject(new Error("close timeout")), timeoutMs);
-    ws.addEventListener("close", (ev) => { clearTimeout(timer); resolve(ev); });
-  });
-}
-
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function connectPty(session: string): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
-    ws.binaryType = "arraybuffer";
-    ws.addEventListener("open", () => resolve(ws));
-    ws.addEventListener("error", () => reject(new Error("connect failed")));
-  });
-}
-
-function collectJsonMessages(ws: WebSocket): { type: string; [k: string]: any }[] {
-  const msgs: { type: string; [k: string]: any }[] = [];
-  ws.addEventListener("message", (ev) => {
-    if (typeof ev.data === "string") {
-      try { msgs.push(JSON.parse(ev.data)); } catch {}
-    }
-  });
-  return msgs;
-}
-
-function waitForMessage(ws: WebSocket, type: string, timeoutMs = 3000): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`timeout waiting for ${type}`)), timeoutMs);
-    const cleanup = () => { clearTimeout(timer); ws.removeEventListener("message", handler); };
-    function handler(ev: MessageEvent) {
-      if (typeof ev.data === "string") {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === type) { cleanup(); resolve(msg); }
-        } catch {}
-      }
-    }
-    ws.addEventListener("message", handler);
-    ws.addEventListener("close", () => { cleanup(); reject(new Error(`ws closed before ${type}`)); });
-  });
+function connectPty(session: string) {
+  return _connectPty(ctx.baseWsUrl, session);
 }
 
 /** Connect as second viewer and wait for viewer_conflict */
@@ -127,8 +63,8 @@ describe("take-control: control_granted", () => {
   const session = "tc-session";
 
   beforeEach(async () => {
-    activePtySessions.delete(session);
-    ptySpawnAttempts.delete(session);
+    ctx.activePtySessions.delete(session);
+    ctx.ptySpawnAttempts.delete(session);
     await wait(50);
   });
 
@@ -174,14 +110,14 @@ describe("take-control: entry promotion", () => {
   const session = "tc-session";
 
   beforeEach(async () => {
-    activePtySessions.delete(session);
-    ptySpawnAttempts.delete(session);
+    ctx.activePtySessions.delete(session);
+    ctx.ptySpawnAttempts.delete(session);
     await wait(50);
   });
 
   test("after take_control, new entry is created with promoted viewer", async () => {
     const ws1 = await connectPty(session);
-    const entry1 = activePtySessions.get(session)!;
+    const entry1 = ctx.activePtySessions.get(session)!;
     expect(entry1.viewer).toBeTruthy();
 
     const { ws: ws2, closeEvent } = await takeControlFrom(session, ws1);
@@ -192,7 +128,7 @@ describe("take-control: entry promotion", () => {
     expect(entry1.alive).toBe(false);
 
     // New entry exists with ws2 as viewer
-    const entry2 = activePtySessions.get(session);
+    const entry2 = ctx.activePtySessions.get(session);
     expect(entry2).toBeDefined();
     expect(entry2!.alive).toBe(true);
     expect(entry2!.viewer).toBeTruthy();
@@ -209,7 +145,7 @@ describe("take-control: entry promotion", () => {
     const ws2 = await connectPty(session);
     await waitForMessage(ws2, "viewer_conflict");
     // Before take_control, ws2 is the pendingViewer
-    const entry = activePtySessions.get(session)!;
+    const entry = ctx.activePtySessions.get(session)!;
     expect(entry.pendingViewer).toBeTruthy();
 
     ws2.send(JSON.stringify({ type: "take_control" }));
@@ -230,8 +166,8 @@ describe("take-control: re-attach after takeover", () => {
   const session = "tc-session";
 
   beforeEach(async () => {
-    activePtySessions.delete(session);
-    ptySpawnAttempts.delete(session);
+    ctx.activePtySessions.delete(session);
+    ctx.ptySpawnAttempts.delete(session);
     await wait(50);
   });
 
@@ -260,8 +196,8 @@ describe("take-control: re-attach after takeover", () => {
 
     // Entry may or may not still be alive depending on spawn timing.
     // Start fresh for a clean test:
-    activePtySessions.delete(session);
-    ptySpawnAttempts.delete(session);
+    ctx.activePtySessions.delete(session);
+    ctx.ptySpawnAttempts.delete(session);
     await wait(50);
 
     const ws1b = await connectPty(session);
@@ -272,7 +208,7 @@ describe("take-control: re-attach after takeover", () => {
     // Send attach — triggers spawn attempt on the new entry
     ws2.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
     await wait(300);
-    expect(ptySpawnAttempts.get(session) || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get(session) || 0).toBe(1);
 
     await closeWs(ws2);
     await wait(100);
@@ -285,14 +221,14 @@ describe("take-control: old PTY teardown", () => {
   const session = "tc-session";
 
   beforeEach(async () => {
-    activePtySessions.delete(session);
-    ptySpawnAttempts.delete(session);
+    ctx.activePtySessions.delete(session);
+    ctx.ptySpawnAttempts.delete(session);
     await wait(50);
   });
 
   test("old entry alive=false after take_control", async () => {
     const ws1 = await connectPty(session);
-    const entry1 = activePtySessions.get(session)!;
+    const entry1 = ctx.activePtySessions.get(session)!;
     expect(entry1.alive).toBe(true);
 
     const { ws: ws2, closeEvent } = await takeControlFrom(session, ws1);
@@ -306,7 +242,7 @@ describe("take-control: old PTY teardown", () => {
 
   test("old proc is killed during takeover (mock proc)", async () => {
     const ws1 = await connectPty(session);
-    const entry = activePtySessions.get(session) as any;
+    const entry = ctx.activePtySessions.get(session) as any;
 
     // Install a mock proc to verify teardown
     let terminalClosed = false;
@@ -340,7 +276,7 @@ describe("take-control: old PTY teardown", () => {
     await wait(200);
 
     // New entry should still be alive — old close handler must NOT destroy it
-    const newEntry = activePtySessions.get(session);
+    const newEntry = ctx.activePtySessions.get(session);
     expect(newEntry).toBeDefined();
     expect(newEntry!.alive).toBe(true);
     expect(newEntry!.viewer).toBeTruthy();
@@ -356,14 +292,14 @@ describe("take-control: pending viewer cleanup", () => {
   const session = "tc-session";
 
   beforeEach(async () => {
-    activePtySessions.delete(session);
-    ptySpawnAttempts.delete(session);
+    ctx.activePtySessions.delete(session);
+    ctx.ptySpawnAttempts.delete(session);
     await wait(50);
   });
 
   test("pending viewer disconnect clears pendingViewer without affecting active", async () => {
     const ws1 = await connectPty(session);
-    const entry = activePtySessions.get(session)!;
+    const entry = ctx.activePtySessions.get(session)!;
     expect(entry.viewer).toBeTruthy();
 
     const ws2 = await connectPending(session);
@@ -405,7 +341,7 @@ describe("take-control: pending viewer cleanup", () => {
     expect(ev1.code).toBe(4002);
 
     // ws3 is now the active viewer
-    const entry = activePtySessions.get(session);
+    const entry = ctx.activePtySessions.get(session);
     expect(entry).toBeDefined();
     expect(entry!.alive).toBe(true);
 
@@ -420,15 +356,15 @@ describe("take-control: multi-hop chain (A → B → C)", () => {
   const session = "tc-session";
 
   beforeEach(async () => {
-    activePtySessions.delete(session);
-    ptySpawnAttempts.delete(session);
+    ctx.activePtySessions.delete(session);
+    ctx.ptySpawnAttempts.delete(session);
     await wait(50);
   });
 
   test("three successive takeovers all succeed", async () => {
     // A connects
     const wsA = await connectPty(session);
-    const entryA = activePtySessions.get(session)!;
+    const entryA = ctx.activePtySessions.get(session)!;
 
     // B takes control from A
     const { ws: wsB, closeEvent: closeA } = await takeControlFrom(session, wsA);
@@ -436,7 +372,7 @@ describe("take-control: multi-hop chain (A → B → C)", () => {
     expect(evA.code).toBe(4002);
     expect(entryA.alive).toBe(false);
 
-    const entryB = activePtySessions.get(session)!;
+    const entryB = ctx.activePtySessions.get(session)!;
     expect(entryB.alive).toBe(true);
     expect(entryB).not.toBe(entryA);
 
@@ -446,7 +382,7 @@ describe("take-control: multi-hop chain (A → B → C)", () => {
     expect(evB.code).toBe(4002);
     expect(entryB.alive).toBe(false);
 
-    const entryC = activePtySessions.get(session)!;
+    const entryC = ctx.activePtySessions.get(session)!;
     expect(entryC.alive).toBe(true);
     expect(entryC).not.toBe(entryB);
 
@@ -481,7 +417,7 @@ describe("take-control: multi-hop chain (A → B → C)", () => {
     expect(evC.code).toBe(4002);
 
     // A2 is now active
-    const entry = activePtySessions.get(session);
+    const entry = ctx.activePtySessions.get(session);
     expect(entry).toBeDefined();
     expect(entry!.alive).toBe(true);
 
@@ -496,14 +432,14 @@ describe("take-control: pending viewer message filtering", () => {
   const session = "tc-session";
 
   beforeEach(async () => {
-    activePtySessions.delete(session);
-    ptySpawnAttempts.delete(session);
+    ctx.activePtySessions.delete(session);
+    ctx.ptySpawnAttempts.delete(session);
     await wait(50);
   });
 
   test("non-take_control JSON messages from pending viewer are ignored", async () => {
     const ws1 = await connectPty(session);
-    const entry = activePtySessions.get(session)!;
+    const entry = ctx.activePtySessions.get(session)!;
 
     const ws2 = await connectPending(session);
 
@@ -567,21 +503,21 @@ describe("take-control: pending viewer message filtering", () => {
 
 describe("take-control: cross-session isolation", () => {
   beforeEach(async () => {
-    activePtySessions.delete("tc-session");
-    activePtySessions.delete("tc-session-2");
-    ptySpawnAttempts.delete("tc-session");
-    ptySpawnAttempts.delete("tc-session-2");
+    ctx.activePtySessions.delete("tc-session");
+    ctx.activePtySessions.delete("tc-session-2");
+    ctx.ptySpawnAttempts.delete("tc-session");
+    ctx.ptySpawnAttempts.delete("tc-session-2");
     await wait(50);
   });
 
   test("take-control on one session doesn't affect another session", async () => {
     // Session 1: active viewer
     const ws1a = await connectPty("tc-session");
-    const entry1 = activePtySessions.get("tc-session")!;
+    const entry1 = ctx.activePtySessions.get("tc-session")!;
 
     // Session 2: active viewer
     const ws2a = await connectPty("tc-session-2");
-    const entry2 = activePtySessions.get("tc-session-2")!;
+    const entry2 = ctx.activePtySessions.get("tc-session-2")!;
 
     // Take control on session 1 only
     const { ws: ws1b, closeEvent } = await takeControlFrom("tc-session", ws1a);
@@ -604,8 +540,8 @@ describe("take-control: edge cases", () => {
   const session = "tc-session";
 
   beforeEach(async () => {
-    activePtySessions.delete(session);
-    ptySpawnAttempts.delete(session);
+    ctx.activePtySessions.delete(session);
+    ctx.ptySpawnAttempts.delete(session);
     await wait(50);
   });
 
@@ -643,7 +579,7 @@ describe("take-control: edge cases", () => {
     await wait(200);
 
     // Entry should be torn down (viewer disconnected)
-    const entry = activePtySessions.get(session);
+    const entry = ctx.activePtySessions.get(session);
     if (entry) {
       expect(entry.alive).toBe(false);
     }
@@ -665,7 +601,7 @@ describe("take-control: edge cases", () => {
     }
 
     // Only one entry should exist
-    const entry = activePtySessions.get(session);
+    const entry = ctx.activePtySessions.get(session);
     expect(entry).toBeDefined();
     expect(entry!.alive).toBe(true);
 

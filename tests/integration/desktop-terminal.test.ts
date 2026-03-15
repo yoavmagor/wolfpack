@@ -9,107 +9,42 @@
  * The attach_ack is sent synchronously (before async spawn), so it always arrives.
  */
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from "bun:test";
-import type { AddressInfo } from "node:net";
-
-process.env.WOLFPACK_TEST = "1";
-
-const { server, __setTestOverrides, __getTestState } = await import("../../src/server/index.ts");
-const { activePtySessions, ptySpawnAttempts } = __getTestState();
+import {
+  bootTestServer,
+  closeWs,
+  waitForClose,
+  wait,
+  connectPty as _connectPty,
+  collectJsonMessages,
+  waitForMessage,
+  type PtyTestContext,
+} from "./pty-test-helpers";
 
 // ── Test setup ──
 
-let port: number;
-let baseWsUrl: string;
+let ctx: PtyTestContext;
 
 const FAKE_SESSIONS = ["desktop-test"];
-__setTestOverrides({
-  tmuxList: async () => [...FAKE_SESSIONS],
-  capturePane: async () => "$ mock-desktop-output\n",
-});
 
-const _realConsoleError = console.error;
-
-beforeAll((done) => {
-  console.error = (...args: any[]) => {
-    const msg = String(args[0] ?? "");
-    if (msg.startsWith("WS error") || msg.startsWith("PTY WS error") || msg.startsWith("Route error")) return;
-    _realConsoleError(...args);
-  };
-  server.listen(0, "127.0.0.1", () => {
-    port = (server.address() as AddressInfo).port;
-    baseWsUrl = `ws://127.0.0.1:${port}`;
-    done();
+beforeAll(async () => {
+  ctx = await bootTestServer({
+    tmuxList: async () => [...FAKE_SESSIONS],
+    capturePane: async () => "$ mock-desktop-output\n",
   });
 });
 
-afterAll(() => {
-  console.error = _realConsoleError;
-  server.close();
-});
+afterAll(() => ctx.cleanup());
 
-// ── Helpers ──
-
-function closeWs(ws: WebSocket): Promise<void> {
-  return new Promise((resolve) => {
-    if (ws.readyState >= WebSocket.CLOSING) return resolve();
-    ws.addEventListener("close", () => resolve());
-    ws.close();
-  });
-}
-
-function waitForClose(ws: WebSocket, timeoutMs = 5000): Promise<CloseEvent> {
-  return new Promise((resolve, reject) => {
-    if (ws.readyState === WebSocket.CLOSED) return reject(new Error("already closed"));
-    const timer = setTimeout(() => reject(new Error("close timeout")), timeoutMs);
-    ws.addEventListener("close", (ev) => { clearTimeout(timer); resolve(ev); });
-  });
-}
-
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function connectPty(session: string): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${baseWsUrl}/ws/pty?session=${session}`);
-    ws.binaryType = "arraybuffer";
-    ws.addEventListener("open", () => resolve(ws));
-    ws.addEventListener("error", () => reject(new Error("connect failed")));
-  });
-}
-
-function collectJsonMessages(ws: WebSocket): { type: string; [k: string]: any }[] {
-  const msgs: { type: string; [k: string]: any }[] = [];
-  ws.addEventListener("message", (ev) => {
-    if (typeof ev.data === "string") {
-      try { msgs.push(JSON.parse(ev.data)); } catch {}
-    }
-  });
-  return msgs;
-}
-
-function waitForMessage(ws: WebSocket, type: string, timeoutMs = 3000): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`timeout waiting for ${type}`)), timeoutMs);
-    const cleanup = () => { clearTimeout(timer); ws.removeEventListener("message", handler); };
-    function handler(ev: MessageEvent) {
-      if (typeof ev.data === "string") {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === type) { cleanup(); resolve(msg); }
-        } catch {}
-      }
-    }
-    ws.addEventListener("message", handler);
-    // Also reject on close (spawn failure closes the WS)
-    ws.addEventListener("close", () => { cleanup(); reject(new Error(`ws closed before ${type}`)); });
-  });
+function connectPty(session: string) {
+  return _connectPty(ctx.baseWsUrl, session);
 }
 
 // ── Open: attach handshake ──
 
 describe("desktop terminal: open (attach handshake)", () => {
   beforeEach(async () => {
-    activePtySessions.delete("desktop-test");
-    ptySpawnAttempts.delete("desktop-test");
+    ctx.activePtySessions.delete("desktop-test");
+    ctx.ptySpawnAttempts.delete("desktop-test");
     await wait(50);
   });
 
@@ -117,7 +52,7 @@ describe("desktop terminal: open (attach handshake)", () => {
     const ws = await connectPty("desktop-test");
     // Entry is created synchronously in setupNewPtyEntry on WS open
     await wait(10);
-    const entry = activePtySessions.get("desktop-test");
+    const entry = ctx.activePtySessions.get("desktop-test");
     expect(entry).toBeTruthy();
     expect(entry!.alive).toBe(true);
     expect(entry!.viewer).toBeTruthy();
@@ -178,7 +113,7 @@ describe("desktop terminal: open (attach handshake)", () => {
     ws.send(JSON.stringify({ type: "attach", cols: 100, rows: 30, skipPrefill: true }));
     ws.send(JSON.stringify({ type: "attach", cols: 120, rows: 40, skipPrefill: true }));
     await wait(300);
-    expect(ptySpawnAttempts.get("desktop-test") || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get("desktop-test") || 0).toBe(1);
     await closeWs(ws);
     await wait(100);
   });
@@ -198,8 +133,8 @@ describe("desktop terminal: open (attach handshake)", () => {
 
 describe("desktop terminal: type (binary stdin)", () => {
   beforeEach(async () => {
-    activePtySessions.delete("desktop-test");
-    ptySpawnAttempts.delete("desktop-test");
+    ctx.activePtySessions.delete("desktop-test");
+    ctx.ptySpawnAttempts.delete("desktop-test");
     await wait(50);
   });
 
@@ -265,8 +200,8 @@ describe("desktop terminal: type (binary stdin)", () => {
 
 describe("desktop terminal: scroll (resize)", () => {
   beforeEach(async () => {
-    activePtySessions.delete("desktop-test");
-    ptySpawnAttempts.delete("desktop-test");
+    ctx.activePtySessions.delete("desktop-test");
+    ctx.ptySpawnAttempts.delete("desktop-test");
     await wait(50);
   });
 
@@ -274,7 +209,7 @@ describe("desktop terminal: scroll (resize)", () => {
     const ws = await connectPty("desktop-test");
     ws.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
     await wait(300);
-    expect(ptySpawnAttempts.get("desktop-test") || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get("desktop-test") || 0).toBe(1);
     await closeWs(ws);
     await wait(100);
   });
@@ -290,7 +225,7 @@ describe("desktop terminal: scroll (resize)", () => {
     // attach_ack should arrive regardless of spawn outcome
     expect(msgs.some(m => m.type === "attach_ack")).toBe(true);
     // Only one spawn attempt (resize while spawning doesn't re-spawn)
-    expect(ptySpawnAttempts.get("desktop-test") || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get("desktop-test") || 0).toBe(1);
     await closeWs(ws);
     await wait(100);
   });
@@ -309,7 +244,7 @@ describe("desktop terminal: scroll (resize)", () => {
     }
     await wait(300);
     // First resize triggers spawn, rest are queued as latestRequestedSize
-    expect(ptySpawnAttempts.get("desktop-test") || 0).toBe(1);
+    expect(ctx.ptySpawnAttempts.get("desktop-test") || 0).toBe(1);
     await closeWs(ws);
     await wait(100);
   });
@@ -335,15 +270,15 @@ describe("desktop terminal: scroll (resize)", () => {
 
 describe("desktop terminal: session lifecycle", () => {
   beforeEach(async () => {
-    activePtySessions.delete("desktop-test");
-    ptySpawnAttempts.delete("desktop-test");
+    ctx.activePtySessions.delete("desktop-test");
+    ctx.ptySpawnAttempts.delete("desktop-test");
     await wait(50);
   });
 
   test("client close before spawn tears down entry", async () => {
     const ws = await connectPty("desktop-test");
     await wait(10);
-    const entry = activePtySessions.get("desktop-test");
+    const entry = ctx.activePtySessions.get("desktop-test");
     expect(entry).toBeTruthy();
     expect(entry!.alive).toBe(true);
     // Close immediately (before sending any messages)
