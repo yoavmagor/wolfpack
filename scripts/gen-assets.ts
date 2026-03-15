@@ -1,49 +1,18 @@
 #!/usr/bin/env bun
 /**
- * Syncs browser xterm assets from node_modules into public/, then generates
- * public-assets.ts — a module that embeds all files from public/ as a
+ * Bundles ghostty-web into public/, then generates public-assets.ts — a module
+ * that embeds all files from public/ as a
  * Map<string, { content: string | Uint8Array; mime: string }>.
  *
  * Run: bun run scripts/gen-assets.ts
- * Output: public-assets.ts (project root)
+ * Output: src/public-assets.ts
  */
-import { copyFileSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
+import { execSync } from "node:child_process";
 
 const PUBLIC_DIR = join(import.meta.dirname, "..", "public");
 const OUT_FILE = join(import.meta.dirname, "..", "src", "public-assets.ts");
-const NODE_MODULES_DIR = join(import.meta.dirname, "..", "node_modules");
-
-const XTERM_ASSETS = [
-  {
-    source: join(NODE_MODULES_DIR, "@xterm", "xterm", "lib", "xterm.js"),
-    target: join(PUBLIC_DIR, "xterm.min.js"),
-  },
-  {
-    source: join(NODE_MODULES_DIR, "@xterm", "xterm", "css", "xterm.css"),
-    target: join(PUBLIC_DIR, "xterm.css"),
-  },
-  {
-    source: join(NODE_MODULES_DIR, "@xterm", "addon-fit", "lib", "addon-fit.js"),
-    target: join(PUBLIC_DIR, "xterm-addon-fit.min.js"),
-  },
-  {
-    source: join(NODE_MODULES_DIR, "@xterm", "addon-search", "lib", "addon-search.js"),
-    target: join(PUBLIC_DIR, "xterm-addon-search.min.js"),
-  },
-  {
-    source: join(NODE_MODULES_DIR, "@xterm", "addon-unicode11", "lib", "addon-unicode11.js"),
-    target: join(PUBLIC_DIR, "xterm-addon-unicode11.min.js"),
-  },
-  {
-    source: join(NODE_MODULES_DIR, "@xterm", "addon-webgl", "lib", "addon-webgl.js"),
-    target: join(PUBLIC_DIR, "xterm-addon-webgl.min.js"),
-  },
-  {
-    source: join(NODE_MODULES_DIR, "@xterm", "addon-web-links", "lib", "addon-web-links.js"),
-    target: join(PUBLIC_DIR, "xterm-addon-web-links.min.js"),
-  },
-] as const;
 
 const MIME_MAP: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -67,9 +36,19 @@ function isText(ext: string): boolean {
   return TEXT_EXTS.has(ext);
 }
 
-for (const asset of XTERM_ASSETS) {
-  copyFileSync(asset.source, asset.target);
-}
+// Bundle ghostty-web into public/ (replaces old xterm copy step)
+console.log("bundling ghostty-web...");
+execSync("bun run scripts/bundle-ghostty.ts", {
+  cwd: join(import.meta.dirname, ".."),
+  stdio: "inherit",
+});
+
+// Bundle client-side pure logic modules into public/wolfpack-lib.js
+console.log("bundling wolfpack-lib...");
+execSync("bun run scripts/bundle-client-lib.ts", {
+  cwd: join(import.meta.dirname, ".."),
+  stdio: "inherit",
+});
 
 const files = readdirSync(PUBLIC_DIR).sort();
 const entries: string[] = [];

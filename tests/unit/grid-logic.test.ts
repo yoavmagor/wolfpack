@@ -370,3 +370,165 @@ describe("computeInputGate", () => {
     expect(canSendResize(gate)).toBe(false);
   });
 });
+
+// ─── Focus Switching + Stdin Guard (multi-cell scenarios) ───────────
+
+describe("focus switching: stdin guard across grid transitions", () => {
+  test("exactly one cell accepts input at any time in a 4-cell grid", () => {
+    const sessions: GridSession[] = [
+      { session: "a", machine: "" },
+      { session: "b", machine: "" },
+      { session: "c", machine: "" },
+      { session: "d", machine: "" },
+    ];
+
+    for (let focusIdx = 0; focusIdx < 4; focusIdx++) {
+      const accepting = [];
+      for (let cellIdx = 0; cellIdx < 4; cellIdx++) {
+        const gate = computeInputGate(sessions, focusIdx, cellIdx, true);
+        if (canAcceptInput(gate)) accepting.push(cellIdx);
+      }
+      expect(accepting).toEqual([focusIdx]);
+    }
+  });
+
+  test("all cells can resize regardless of focus in a 6-cell grid", () => {
+    const sessions: GridSession[] = Array.from({ length: 6 }, (_, i) => ({
+      session: `s${i}`,
+      machine: "",
+    }));
+
+    const focusIdx = 2;
+    for (let cellIdx = 0; cellIdx < 6; cellIdx++) {
+      const gate = computeInputGate(sessions, focusIdx, cellIdx, true);
+      expect(canSendResize(gate)).toBe(true);
+    }
+  });
+
+  test("disconnected cells block both input AND resize regardless of focus", () => {
+    const sessions: GridSession[] = [
+      { session: "a", machine: "" },
+      { session: "b", machine: "" },
+      { session: "c", machine: "" },
+    ];
+
+    // Cell 1 is focused but disconnected
+    const gate = computeInputGate(sessions, 1, 1, false);
+    expect(canAcceptInput(gate)).toBe(false);
+    expect(canSendResize(gate)).toBe(false);
+  });
+
+  test("focus change: old cell loses input, new cell gains it", () => {
+    const sessions: GridSession[] = [
+      { session: "a", machine: "" },
+      { session: "b", machine: "" },
+    ];
+
+    // Focus on cell 0
+    const gate0_before = computeInputGate(sessions, 0, 0, true);
+    const gate1_before = computeInputGate(sessions, 0, 1, true);
+    expect(canAcceptInput(gate0_before)).toBe(true);
+    expect(canAcceptInput(gate1_before)).toBe(false);
+
+    // Focus switches to cell 1
+    const gate0_after = computeInputGate(sessions, 1, 0, true);
+    const gate1_after = computeInputGate(sessions, 1, 1, true);
+    expect(canAcceptInput(gate0_after)).toBe(false);
+    expect(canAcceptInput(gate1_after)).toBe(true);
+  });
+
+  test("after removing a cell, focus index is recomputed correctly", () => {
+    const sessions: GridSession[] = [
+      { session: "a", machine: "" },
+      { session: "b", machine: "" },
+      { session: "c", machine: "" },
+    ];
+
+    // Focus on "c" (index 2), remove "a" (index 0)
+    const result = removeFromGridState(sessions, 0, 2);
+    expect(result.exitGrid).toBe(false);
+    expect(result.focusIndex).toBe(1); // "c" shifted to index 1
+
+    // Verify "c" at new index 1 still accepts input
+    const gate = computeInputGate(result.sessions, result.focusIndex, 1, true);
+    expect(canAcceptInput(gate)).toBe(true);
+    expect(result.sessions[1].session).toBe("c");
+
+    // And "b" at index 0 does NOT accept input
+    const gateB = computeInputGate(result.sessions, result.focusIndex, 0, true);
+    expect(canAcceptInput(gateB)).toBe(false);
+  });
+
+  test("after adding a cell, new cell is focused and accepts input", () => {
+    const sessions: GridSession[] = [
+      { session: "a", machine: "" },
+      { session: "b", machine: "" },
+    ];
+
+    const result = addToGridState(sessions, "c", "", "a", "");
+    expect(result).not.toBeNull();
+    expect(result!.focusIndex).toBe(2); // new cell focused
+
+    // New cell accepts input
+    const gateNew = computeInputGate(result!.sessions, result!.focusIndex, 2, true);
+    expect(canAcceptInput(gateNew)).toBe(true);
+
+    // Old cells don't
+    const gateA = computeInputGate(result!.sessions, result!.focusIndex, 0, true);
+    const gateB = computeInputGate(result!.sessions, result!.focusIndex, 1, true);
+    expect(canAcceptInput(gateA)).toBe(false);
+    expect(canAcceptInput(gateB)).toBe(false);
+  });
+
+  test("exit grid on remove: last remaining session has no grid gate", () => {
+    const sessions: GridSession[] = [
+      { session: "a", machine: "" },
+      { session: "b", machine: "" },
+    ];
+
+    const result = removeFromGridState(sessions, 0, 0);
+    expect(result.exitGrid).toBe(true);
+    expect(result.restoreSession?.session).toBe("b");
+    // After exit, single-terminal mode uses canAcceptInputDefault (no focus gating)
+    expect(canAcceptInputDefault(true, true)).toBe(true);
+  });
+});
+
+describe("gridArrowNav: focus switching across all grid sizes", () => {
+  test("5 cells (3+2 layout): full navigation map", () => {
+    // Layout: [0][1][2]
+    //         [ 3 ][ 4 ]
+    // cols=3 for 5-cell grid
+    expect(gridArrowNav("right", 0, 5)).toBe(1);
+    expect(gridArrowNav("right", 1, 5)).toBe(2);
+    expect(gridArrowNav("right", 2, 5)).toBe(3);
+    expect(gridArrowNav("down", 0, 5)).toBe(3);
+    expect(gridArrowNav("down", 1, 5)).toBe(4);
+    expect(gridArrowNav("down", 2, 5)).toBe(2); // 2+3=5, OOB
+    expect(gridArrowNav("up", 3, 5)).toBe(0);
+    expect(gridArrowNav("up", 4, 5)).toBe(1);
+    expect(gridArrowNav("left", 4, 5)).toBe(3);
+    // Boundary: can't go past edges
+    expect(gridArrowNav("left", 0, 5)).toBe(0);
+    expect(gridArrowNav("right", 4, 5)).toBe(4);
+  });
+
+  test("6 cells (3x2): complete boundary checks", () => {
+    // Layout: [0][1][2]
+    //         [3][4][5]
+    // Top-left corner: can't go up or left
+    expect(gridArrowNav("up", 0, 6)).toBe(0);
+    expect(gridArrowNav("left", 0, 6)).toBe(0);
+    // Bottom-right corner: can't go down or right
+    expect(gridArrowNav("down", 5, 6)).toBe(5);
+    expect(gridArrowNav("right", 5, 6)).toBe(5);
+    // Full traversal right→down→left→up back to start
+    let pos = 0;
+    pos = gridArrowNav("right", pos, 6); expect(pos).toBe(1);
+    pos = gridArrowNav("right", pos, 6); expect(pos).toBe(2);
+    pos = gridArrowNav("down", pos, 6); expect(pos).toBe(5);
+    pos = gridArrowNav("left", pos, 6); expect(pos).toBe(4);
+    pos = gridArrowNav("left", pos, 6); expect(pos).toBe(3);
+    pos = gridArrowNav("up", pos, 6); expect(pos).toBe(0);
+  });
+});

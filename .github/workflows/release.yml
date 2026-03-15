@@ -27,6 +27,7 @@ jobs:
       - name: Generate checksums
         working-directory: dist
         run: sha256sum wolfpack-* > checksums-sha256.txt
+      # TODO: add GitHub attestations (gh attestation) or code signing for release binaries
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
