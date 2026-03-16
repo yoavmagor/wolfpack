@@ -285,7 +285,14 @@ export const routes: Record<
     }
     if (!validateProjectDir(res, projectDir)) return;
     const finalName = customName || await uniqueSessionName(folderName);
-    await tmuxNewSession(finalName, projectDir, cmd, loadSettings);
+    try {
+      await tmuxNewSession(finalName, projectDir, cmd, loadSettings);
+    } catch (e: any) {
+      if (e.code === "DUPLICATE_SESSION") {
+        return json(res, { error: "session name already exists" }, 409);
+      }
+      throw e;
+    }
     json(res, { ok: true, session: finalName });
   },
 
