@@ -152,6 +152,10 @@ function extractCurrentTask(): { task: string; checkbox: boolean } | null {
           if (nextMatch && nextMatch[1].length <= level.length) break;
           sectionLines.push(lines[j]);
         }
+        // skip sections where all child checkboxes are already done
+        const childChecked = sectionLines.filter(l => /^- \[x\] /.test(l)).length;
+        const childUnchecked = sectionLines.filter(l => /^- \[ \] /.test(l)).length;
+        if (childChecked > 0 && childUnchecked === 0) continue;
         return { task: sectionLines.join("\n").trim(), checkbox: false };
       }
     }
@@ -179,9 +183,50 @@ function markCheckboxDone(taskText: string): void {
     const plan = readPlan();
     const escaped = taskText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp("^- \\[ \\] " + escaped + "$", "m");
-    const updated = plan.replace(re, `- [x] ${taskText}`);
+    let updated = plan.replace(re, `- [x] ${taskText}`);
+    // auto-strikethrough parent section header if all its child checkboxes are now done
+    updated = strikethroughCompletedParent(updated, taskText);
     writeFileSync(PLAN_PATH, updated);
   } catch {}
+}
+
+/** Find the parent section header for a checkbox line and strikethrough it if all children are done. */
+function strikethroughCompletedParent(plan: string, checkboxText: string): string {
+  const lines = plan.split("\n");
+  // find the checkbox line index
+  const cbIndex = lines.findIndex(l => l === `- [x] ${checkboxText}`);
+  if (cbIndex === -1) return plan;
+  // walk backwards to find the parent section header
+  let parentIndex = -1;
+  let parentLevel = "";
+  for (let i = cbIndex - 1; i >= 0; i--) {
+    const m = lines[i].match(/^(#{2,3}) /);
+    if (m) {
+      parentIndex = i;
+      parentLevel = m[1];
+      break;
+    }
+  }
+  if (parentIndex === -1) return plan;
+  const parentLine = lines[parentIndex];
+  // skip if already struck through or not a task header
+  if (parentLine.includes("~~") || !TASK_HEADER.test(parentLine)) return plan;
+  // collect child lines of this section
+  let hasUnchecked = false;
+  let hasChecked = false;
+  for (let j = parentIndex + 1; j < lines.length; j++) {
+    const nextMatch = lines[j].match(/^(#{1,3}) /);
+    if (nextMatch && nextMatch[1].length <= parentLevel.length) break;
+    if (/^- \[ \] /.test(lines[j])) { hasUnchecked = true; break; }
+    if (/^- \[x\] /.test(lines[j])) hasChecked = true;
+  }
+  if (hasChecked && !hasUnchecked) {
+    const prefix = parentLine.match(/^(#{2,3} )/)?.[1] || "## ";
+    const rest = parentLine.slice(prefix.length);
+    lines[parentIndex] = `${prefix}~~${rest}~~`;
+    return lines.join("\n");
+  }
+  return plan;
 }
 
 function numberPlanTasks(): Promise<{ exitCode: number; output: string }> {

@@ -22,13 +22,52 @@ function markSectionDone(planPath: string, taskText: string): void {
   } catch {}
 }
 
-/** Mirrors ralph-macchio.ts markCheckboxDone() */
+/** Matches plan task headers: ## 1. Title, ### 2a. Title, etc. */
+const TASK_HEADER = /^#{2,3} (?:~~)?(?:\w+ )?\d+[a-z]?[\.\):]\s+/;
+
+/** Mirrors ralph-macchio.ts strikethroughCompletedParent() */
+function strikethroughCompletedParent(plan: string, checkboxText: string): string {
+  const lines = plan.split("\n");
+  const cbIndex = lines.findIndex(l => l === `- [x] ${checkboxText}`);
+  if (cbIndex === -1) return plan;
+  let parentIndex = -1;
+  let parentLevel = "";
+  for (let i = cbIndex - 1; i >= 0; i--) {
+    const m = lines[i].match(/^(#{2,3}) /);
+    if (m) {
+      parentIndex = i;
+      parentLevel = m[1];
+      break;
+    }
+  }
+  if (parentIndex === -1) return plan;
+  const parentLine = lines[parentIndex];
+  if (parentLine.includes("~~") || !TASK_HEADER.test(parentLine)) return plan;
+  let hasUnchecked = false;
+  let hasChecked = false;
+  for (let j = parentIndex + 1; j < lines.length; j++) {
+    const nextMatch = lines[j].match(/^(#{1,3}) /);
+    if (nextMatch && nextMatch[1].length <= parentLevel.length) break;
+    if (/^- \[ \] /.test(lines[j])) { hasUnchecked = true; break; }
+    if (/^- \[x\] /.test(lines[j])) hasChecked = true;
+  }
+  if (hasChecked && !hasUnchecked) {
+    const prefix = parentLine.match(/^(#{2,3} )/)?.[1] || "## ";
+    const rest = parentLine.slice(prefix.length);
+    lines[parentIndex] = `${prefix}~~${rest}~~`;
+    return lines.join("\n");
+  }
+  return plan;
+}
+
+/** Mirrors ralph-macchio.ts markCheckboxDone() — with auto-strikethrough */
 function markCheckboxDone(planPath: string, taskText: string): void {
   try {
     const plan = readFileSync(planPath, "utf-8");
     const escaped = taskText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp("^- \\[ \\] " + escaped + "$", "m");
-    const updated = plan.replace(re, `- [x] ${taskText}`);
+    let updated = plan.replace(re, `- [x] ${taskText}`);
+    updated = strikethroughCompletedParent(updated, taskText);
     writeFileSync(planPath, updated);
   } catch {}
 }
@@ -434,5 +473,72 @@ describe("mark parent done on subtask emission", () => {
     const match = plan.match(/^- \[ \] (.+)$/m);
     expect(match).not.toBeNull();
     expect(match![1]).toBe("Sub A");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #74: auto-strikethrough parent section when last child checkbox done
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("auto-strikethrough parent section on last checkbox done", () => {
+  test("strikes parent header when last child checkbox is marked done", () => {
+    writePlan("## 1. Setup\n- [x] Install deps\n- [ ] Configure build\n\n## 2. Next\nstuff\n");
+    markCheckboxDone(planPath, "Configure build");
+    const result = readPlan();
+    expect(result).toContain("## ~~1. Setup~~");
+    expect(result).toContain("- [x] Configure build");
+  });
+
+  test("does not strike parent when unchecked children remain", () => {
+    writePlan("## 1. Setup\n- [x] Done\n- [ ] Still open\n- [ ] Mark this\n");
+    markCheckboxDone(planPath, "Mark this");
+    const result = readPlan();
+    // "Still open" is still unchecked → parent stays
+    expect(result).toContain("## 1. Setup");
+    expect(result).not.toContain("~~1. Setup~~");
+  });
+
+  test("does not strike non-task header (unnumbered)", () => {
+    writePlan("## Overview\n- [ ] Only child\n");
+    markCheckboxDone(planPath, "Only child");
+    const result = readPlan();
+    // "## Overview" is not a TASK_HEADER → no strikethrough
+    expect(result).toContain("## Overview");
+    expect(result).not.toContain("~~Overview~~");
+  });
+
+  test("does not strike already-struck parent", () => {
+    writePlan("## ~~1. Already done~~\n- [ ] Straggler\n");
+    markCheckboxDone(planPath, "Straggler");
+    const result = readPlan();
+    // should not double-wrap in ~~
+    expect(result).toContain("## ~~1. Already done~~");
+    expect(result).not.toContain("~~~~");
+  });
+
+  test("only affects the immediate parent section, not grandparent", () => {
+    writePlan("## 1. Big phase\nOverview\n### 1a. Sub-phase\n- [ ] Last item\n\n## 2. Other\nstuff\n");
+    markCheckboxDone(planPath, "Last item");
+    const result = readPlan();
+    // ### 1a should be struck (immediate parent)
+    expect(result).toContain("### ~~1a. Sub-phase~~");
+    // ## 1 should NOT be struck (grandparent)
+    expect(result).toContain("## 1. Big phase");
+    expect(result).not.toContain("~~1. Big phase~~");
+  });
+
+  test("handles section with mixed content and checkboxes", () => {
+    writePlan("## 1. Setup\nSome notes\n- [x] Step A\nMore notes\n- [ ] Step B\n\n## 2. Next\n");
+    markCheckboxDone(planPath, "Step B");
+    const result = readPlan();
+    expect(result).toContain("## ~~1. Setup~~");
+  });
+
+  test("checkbox with no parent header — no crash", () => {
+    writePlan("- [ ] Orphan checkbox\n");
+    markCheckboxDone(planPath, "Orphan checkbox");
+    const result = readPlan();
+    expect(result).toContain("- [x] Orphan checkbox");
+    // no header to strike — just works
   });
 });

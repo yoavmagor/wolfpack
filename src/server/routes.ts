@@ -74,6 +74,14 @@ function validateProjectDir(res: ServerResponse, projectDir: string): boolean {
   }
   return true;
 }
+
+/** Validate project name + directory in one call. Returns resolved path or sends error and returns null. */
+function resolveProjectDir(res: ServerResponse, project: string | null | undefined): string | null {
+  if (!validateProject(res, project)) return null;
+  const dir = join(DEV_DIR, project);
+  if (!validateProjectDir(res, dir)) return null;
+  return dir;
+}
 import {
   uniqueSessionName,
   isAllowedSession,
@@ -441,9 +449,8 @@ export const routes: Record<
   "GET /api/ralph/branches": async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const project = url.searchParams.get("project");
-    if (!validateProject(res, project)) return;
-    const projectDir = join(DEV_DIR, project);
-    if (!validateProjectDir(res, projectDir)) return;
+    const projectDir = resolveProjectDir(res, project);
+    if (!projectDir) return;
     try {
       const out = execFileSync("git", ["branch", "--list", "--no-color"], {
         cwd: projectDir,
@@ -472,8 +479,8 @@ export const routes: Record<
   "GET /api/ralph/plans": async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const project = url.searchParams.get("project");
-    if (!validateProject(res, project)) return;
-    const projectDir = join(DEV_DIR, project);
+    const projectDir = resolveProjectDir(res, project);
+    if (!projectDir) return;
     try {
       const files = readdirSync(projectDir)
         .filter((f) => f.endsWith(".md") && !f.startsWith(".") && !/^(readme|doc|changelog|contributing|license|code.of.conduct)\.md$/i.test(f))
@@ -488,8 +495,9 @@ export const routes: Record<
   "GET /api/ralph/log": async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const project = url.searchParams.get("project");
-    if (!validateProject(res, project)) return;
-    const logPath = join(DEV_DIR, project, ".ralph.log");
+    const projectDir = resolveProjectDir(res, project);
+    if (!projectDir) return;
+    const logPath = join(projectDir, ".ralph.log");
     if (!existsSync(logPath)) {
       return json(res, { error: "no ralph log found" }, 404);
     }
@@ -529,9 +537,8 @@ export const routes: Record<
     }>(req, res);
     if (!body) return;
     const { project, iterations, planFile, agent, newBranch, sourceBranch, format, cleanup, auditFix } = body;
-    if (!validateProject(res, project)) return;
-    const projectDir = join(DEV_DIR, project);
-    if (!validateProjectDir(res, projectDir)) return;
+    const projectDir = resolveProjectDir(res, project);
+    if (!projectDir) return;
     const existing = parseRalphLog(projectDir);
     if (existing?.active) {
       return json(res, { error: "ralph loop already running", pid: existing.pid }, 409);
@@ -637,11 +644,12 @@ export const routes: Record<
     const url = new URL(req.url ?? "/", "http://localhost");
     const project = url.searchParams.get("project");
     const plan = url.searchParams.get("plan");
-    if (!validateProject(res, project)) return;
+    const projectDir = resolveProjectDir(res, project);
+    if (!projectDir) return;
     if (!plan || !isValidPlanFile(plan)) {
       return json(res, { error: "invalid plan file" }, 400);
     }
-    const planPath = join(DEV_DIR, project, plan);
+    const planPath = join(projectDir, plan);
     if (!existsSync(planPath)) {
       return json(res, { error: "plan not found" }, 404);
     }
@@ -652,8 +660,8 @@ export const routes: Record<
     const body = await parseBody<{ project?: string }>(req, res);
     if (!body) return;
     const { project } = body;
-    if (!validateProject(res, project)) return;
-    const projectDir = join(DEV_DIR, project);
+    const projectDir = resolveProjectDir(res, project);
+    if (!projectDir) return;
     const status = parseRalphLog(projectDir);
     if (!status?.active || !status.pid || status.pid <= 1) {
       return json(res, { error: "no active ralph loop found" }, 404);
@@ -679,8 +687,8 @@ export const routes: Record<
     const body = await parseBody<{ project?: string; deletePlan?: boolean }>(req, res);
     if (!body) return;
     const { project, deletePlan } = body;
-    if (!validateProject(res, project)) return;
-    const projectDir = join(DEV_DIR, project);
+    const projectDir = resolveProjectDir(res, project);
+    if (!projectDir) return;
     const status = parseRalphLog(projectDir);
     if (status?.active) {
       return json(res, { error: "cannot dismiss active loop — cancel it first" }, 409);
