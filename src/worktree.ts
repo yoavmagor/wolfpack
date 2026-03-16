@@ -101,8 +101,7 @@ export function listWorktrees(projectDir: string): WorktreeInfo[] {
 
 /**
  * Remove all worktrees under .wolfpack/worktrees/ except the last one
- * (by alphabetical order of directory name, which matches creation order
- * when branch names are prefixed with task number).
+ * (by numeric-aware sort of directory name, so task 10 sorts after task 9).
  */
 export function cleanupAllExceptFinal(
   projectDir: string,
@@ -117,8 +116,8 @@ export function cleanupAllExceptFinal(
     return { removed: [], kept: "" };
   }
 
-  // Sort by path — task numbering ensures chronological order
-  managed.sort((a, b) => a.path.localeCompare(b.path));
+  // Sort by path with numeric-aware comparison so task 10 sorts after task 9
+  managed.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
 
   const final = managed[managed.length - 1];
   const toRemove = managed.slice(0, -1);

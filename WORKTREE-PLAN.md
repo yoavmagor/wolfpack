@@ -29,7 +29,7 @@ source branch (e.g. main)
 
 ---
 
-## 1. Add `.wolfpack/` to .gitignore and create worktree utility module
+## ~~1. Add `.wolfpack/` to .gitignore and create worktree utility module~~
 
 **Files**: `.gitignore`, `src/worktree.ts` (new)
 
@@ -42,7 +42,7 @@ New module `src/worktree.ts` with:
 
 Add `.wolfpack/` to `.gitignore`.
 
-## 2. Extend ralph worker to support worktree modes
+## ~~2. Extend ralph worker to support worktree modes~~
 
 **Files**: `src/ralph-macchio.ts`
 
@@ -63,7 +63,7 @@ Add `.wolfpack/` to `.gitignore`.
 - **Key detail**: `buildPrompt()` line 239 needs to use worktree path instead of PROJECT_DIR when in worktree mode
 - Cleanup/audit phases run in the final worktree (task mode) or the single worktree (plan mode)
 
-## 3. Extend start API to accept worktree param
+## ~~3. Extend start API to accept worktree param~~
 
 **Files**: `src/server/routes.ts`
 
@@ -73,7 +73,7 @@ Add `.wolfpack/` to `.gitignore`.
 - For plan mode: create the worktree before spawning worker, pass worktree path as `cwd`
 - For task mode: worker handles worktree creation internally (per iteration)
 
-## 4. Extend dismiss API for worktree cleanup
+## ~~4. Extend dismiss API for worktree cleanup~~
 
 **Files**: `src/server/routes.ts`
 
@@ -84,7 +84,7 @@ Add `.wolfpack/` to `.gitignore`.
   - Return `{ kept: "ralph/3-final-task", removed: ["ralph/1-add-auth", "ralph/2-write-tests"] }` in response
   - Also run `git worktree prune` to clean stale refs
 
-## 5. Tests
+## ~~5. Tests~~
 
 **Files**: `tests/unit/worktree.test.ts` (new), `tests/integration/ralph-api.test.ts` (extend)
 

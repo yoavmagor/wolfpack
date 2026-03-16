@@ -29,7 +29,7 @@ import {
   clampCols,
   clampRows,
 } from "../validation.js";
-import { createWorktree, cleanupAllExceptFinal } from "../worktree.js";
+import { cleanupAllExceptFinal } from "../worktree.js";
 import { assets } from "../public-assets.js";
 import { isInputPrompt, isJunkLine, type TriageStatus } from "../triage.js";
 import pkg from "../../package.json";
@@ -639,20 +639,9 @@ export const routes: Record<
       return json(res, { error: `plan file '${resolvedPlan}' not found` }, 404);
     }
 
-    // For plan mode: create the worktree before spawning the worker so
-    // it runs entirely inside the worktree directory.
-    let workerCwd = projectDir;
-    if (worktreeMode === "plan") {
-      try {
-        const branchName = `ralph/plan-${resolvedPlan.replace(/\.md$/i, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`;
-        const baseBranch = newBranch || execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-          cwd: projectDir, encoding: "utf-8", timeout: 5000,
-        }).trim();
-        workerCwd = createWorktree(projectDir, branchName, baseBranch);
-      } catch (e: any) {
-        return json(res, { error: `failed to create plan worktree: ${e.message || e}` }, 500);
-      }
-    }
+    // Worktree creation is handled by the worker process itself
+    // (plan mode creates one worktree at startup, task mode creates per-iteration).
+    // The route only passes the mode flag — the worker manages the lifecycle.
 
     const workerArgs = [
       ...RALPH_BIN_ARGS.slice(1),
@@ -667,7 +656,7 @@ export const routes: Record<
       "--worktree", worktreeMode,
     ];
     const child = spawn(RALPH_BIN_ARGS[0], workerArgs, {
-      cwd: workerCwd,
+      cwd: projectDir,
       detached: true,
       stdio: "ignore",
     });
@@ -680,7 +669,6 @@ export const routes: Record<
       pid: child.pid ?? 0,
       branch: newBranch || undefined,
       worktree: worktreeMode !== "false" ? worktreeMode : undefined,
-      worktreePath: workerCwd !== projectDir ? workerCwd : undefined,
     });
   },
 

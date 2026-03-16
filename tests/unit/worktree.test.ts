@@ -142,4 +142,22 @@ describe("worktree lifecycle", () => {
     expect(result.removed).toEqual([]);
     expect(result.kept).toBe("");
   });
+
+  test("cleanupAllExceptFinal keeps numerically highest worktree (10 > 9)", () => {
+    createWorktree(repoDir, "ralph/9-early", "HEAD");
+    createWorktree(repoDir, "ralph/10-final", "HEAD");
+
+    const result = cleanupAllExceptFinal(repoDir);
+
+    expect(result.removed).toContain("ralph/9-early");
+    expect(result.kept).toBe("ralph/10-final");
+
+    // Cleanup
+    const wts = listWorktrees(repoDir);
+    for (const wt of wts) {
+      if (wt.path !== repoDir) {
+        try { removeWorktree(wt.path, repoDir); } catch {}
+      }
+    }
+  });
 });
