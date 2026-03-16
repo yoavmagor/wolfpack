@@ -9,6 +9,7 @@ import {
   mkdirSync,
   statSync,
   lstatSync,
+  realpathSync,
   existsSync,
   unlinkSync,
   openSync,
@@ -35,6 +36,7 @@ import {
   DEV_DIR,
   TMUX,
   RALPH_AGENTS,
+  isUnderDevDir,
   tmuxList,
   tmuxSend,
   tmuxSendKey,
@@ -61,10 +63,15 @@ function validateProject(res: ServerResponse, project: string | null | undefined
   return true;
 }
 
-/** Validate project directory exists and is not a symlink. Returns true or sends error and returns false. */
+/** Validate project directory exists, is not a symlink, and resolves under DEV_DIR. */
 function validateProjectDir(res: ServerResponse, projectDir: string): boolean {
   try {
     if (lstatSync(projectDir).isSymbolicLink() || !statSync(projectDir).isDirectory()) {
+      json(res, { error: "not a directory" }, 400);
+      return false;
+    }
+    // defense-in-depth: verify realpath is contained under DEV_DIR
+    if (!isUnderDevDir(realpathSync(projectDir))) {
       json(res, { error: "not a directory" }, 400);
       return false;
     }
@@ -75,13 +82,6 @@ function validateProjectDir(res: ServerResponse, projectDir: string): boolean {
   return true;
 }
 
-/** Validate project name + directory in one call. Returns resolved path or sends error and returns null. */
-function resolveProjectDir(res: ServerResponse, project: string | null | undefined): string | null {
-  if (!validateProject(res, project)) return null;
-  const dir = join(DEV_DIR, project);
-  if (!validateProjectDir(res, dir)) return null;
-  return dir;
-}
 import {
   uniqueSessionName,
   isAllowedSession,
@@ -92,6 +92,14 @@ import {
   discoverPeers,
 } from "./http.js";
 import { activePtySessions, teardownPty } from "./websocket.js";
+
+/** Validate project name + directory in one call. Returns resolved path or sends error and returns null. */
+function resolveProjectDir(res: ServerResponse, project: string | null | undefined): string | null {
+  if (!validateProject(res, project)) return null;
+  const dir = join(DEV_DIR, project);
+  if (!validateProjectDir(res, dir)) return null;
+  return dir;
+}
 
 const VERSION: string = pkg.version;
 const SETTINGS_PATH = join(homedir(), ".wolfpack", "bridge-settings.json");

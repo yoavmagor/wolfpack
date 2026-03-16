@@ -181,21 +181,18 @@ function markSectionDone(taskText: string): void {
 function markCheckboxDone(taskText: string): void {
   try {
     const plan = readPlan();
-    const escaped = taskText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp("^- \\[ \\] " + escaped + "$", "m");
-    let updated = plan.replace(re, `- [x] ${taskText}`);
+    const lines = plan.split("\n");
+    const cbIndex = lines.findIndex(l => l === `- [ ] ${taskText}`);
+    if (cbIndex === -1) return;
+    lines[cbIndex] = `- [x] ${taskText}`;
     // auto-strikethrough parent section header if all its child checkboxes are now done
-    updated = strikethroughCompletedParent(updated, taskText);
+    const updated = strikethroughCompletedParent(lines, cbIndex);
     writeFileSync(PLAN_PATH, updated);
   } catch {}
 }
 
-/** Find the parent section header for a checkbox line and strikethrough it if all children are done. */
-function strikethroughCompletedParent(plan: string, checkboxText: string): string {
-  const lines = plan.split("\n");
-  // find the checkbox line index
-  const cbIndex = lines.findIndex(l => l === `- [x] ${checkboxText}`);
-  if (cbIndex === -1) return plan;
+/** Strikethrough parent section header if all its child checkboxes are done. Takes lines array and the index of the just-checked checkbox. */
+function strikethroughCompletedParent(lines: string[], cbIndex: number): string {
   // walk backwards to find the parent section header
   let parentIndex = -1;
   let parentLevel = "";
@@ -207,10 +204,10 @@ function strikethroughCompletedParent(plan: string, checkboxText: string): strin
       break;
     }
   }
-  if (parentIndex === -1) return plan;
+  if (parentIndex === -1) return lines.join("\n");
   const parentLine = lines[parentIndex];
   // skip if already struck through or not a task header
-  if (parentLine.includes("~~") || !TASK_HEADER.test(parentLine)) return plan;
+  if (parentLine.includes("~~") || !TASK_HEADER.test(parentLine)) return lines.join("\n");
   // collect child lines of this section
   let hasUnchecked = false;
   let hasChecked = false;
@@ -224,9 +221,8 @@ function strikethroughCompletedParent(plan: string, checkboxText: string): strin
     const prefix = parentLine.match(/^(#{2,3} )/)?.[1] || "## ";
     const rest = parentLine.slice(prefix.length);
     lines[parentIndex] = `${prefix}~~${rest}~~`;
-    return lines.join("\n");
   }
-  return plan;
+  return lines.join("\n");
 }
 
 function numberPlanTasks(): Promise<{ exitCode: number; output: string }> {

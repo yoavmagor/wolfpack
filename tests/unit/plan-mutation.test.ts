@@ -26,10 +26,7 @@ function markSectionDone(planPath: string, taskText: string): void {
 const TASK_HEADER = /^#{2,3} (?:~~)?(?:\w+ )?\d+[a-z]?[\.\):]\s+/;
 
 /** Mirrors ralph-macchio.ts strikethroughCompletedParent() */
-function strikethroughCompletedParent(plan: string, checkboxText: string): string {
-  const lines = plan.split("\n");
-  const cbIndex = lines.findIndex(l => l === `- [x] ${checkboxText}`);
-  if (cbIndex === -1) return plan;
+function strikethroughCompletedParent(lines: string[], cbIndex: number): string {
   let parentIndex = -1;
   let parentLevel = "";
   for (let i = cbIndex - 1; i >= 0; i--) {
@@ -40,9 +37,9 @@ function strikethroughCompletedParent(plan: string, checkboxText: string): strin
       break;
     }
   }
-  if (parentIndex === -1) return plan;
+  if (parentIndex === -1) return lines.join("\n");
   const parentLine = lines[parentIndex];
-  if (parentLine.includes("~~") || !TASK_HEADER.test(parentLine)) return plan;
+  if (parentLine.includes("~~") || !TASK_HEADER.test(parentLine)) return lines.join("\n");
   let hasUnchecked = false;
   let hasChecked = false;
   for (let j = parentIndex + 1; j < lines.length; j++) {
@@ -55,19 +52,19 @@ function strikethroughCompletedParent(plan: string, checkboxText: string): strin
     const prefix = parentLine.match(/^(#{2,3} )/)?.[1] || "## ";
     const rest = parentLine.slice(prefix.length);
     lines[parentIndex] = `${prefix}~~${rest}~~`;
-    return lines.join("\n");
   }
-  return plan;
+  return lines.join("\n");
 }
 
 /** Mirrors ralph-macchio.ts markCheckboxDone() — with auto-strikethrough */
 function markCheckboxDone(planPath: string, taskText: string): void {
   try {
     const plan = readFileSync(planPath, "utf-8");
-    const escaped = taskText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp("^- \\[ \\] " + escaped + "$", "m");
-    let updated = plan.replace(re, `- [x] ${taskText}`);
-    updated = strikethroughCompletedParent(updated, taskText);
+    const lines = plan.split("\n");
+    const cbIndex = lines.findIndex(l => l === `- [ ] ${taskText}`);
+    if (cbIndex === -1) return;
+    lines[cbIndex] = `- [x] ${taskText}`;
+    const updated = strikethroughCompletedParent(lines, cbIndex);
     writeFileSync(planPath, updated);
   } catch {}
 }

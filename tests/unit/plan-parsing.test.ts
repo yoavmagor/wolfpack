@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { countTasksInContent } from "../../src/wolfpack-context.js";
+import { TASK_HEADER, countTasksInContent } from "../../src/wolfpack-context.js";
 
 // ── Plan-parsing functions from ralph-macchio.ts and serve.ts ──
 // These are module-private, replicated here as pure functions for testing.
@@ -15,7 +15,6 @@ function extractCurrentTask(plan: string): { task: string; checkbox: boolean } |
 
   // then section headers: find first ## or ### numbered header not struck through
   const lines = plan.split("\n");
-  const TASK_HEADER = /^(#{2,3}) \d+[a-z]?[\.\)]\s+/;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (TASK_HEADER.test(line) && !line.includes("~~")) {
@@ -52,7 +51,6 @@ function countPlanTasks(plan: string): { done: number; total: number } {
     return { done, total: done + pending };
   }
   // section mode: ## or ### numbered headers (with optional ~~ strikethrough)
-  const TASK_HEADER = /^#{2,3} (?:~~)?\d+[a-z]?[\.\)]\s+/;
   let total = 0;
   let done = 0;
   for (const line of plan.split("\n")) {
