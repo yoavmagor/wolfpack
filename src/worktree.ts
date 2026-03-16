@@ -6,9 +6,10 @@
  */
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { realpathSync } from "node:fs";
+import { realpathSync, existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync } from "node:fs";
 
 const WORKTREE_DIR = ".wolfpack/worktrees";
+const WORKTREE_ORDER_FILE = ".wolfpack/worktree-order.txt";
 
 export interface WorktreeInfo {
   path: string;
@@ -49,17 +50,28 @@ export function createWorktree(
     ["worktree", "add", worktreePath, "-b", branchName, baseBranch],
     { cwd: realProjectDir, stdio: "pipe" },
   );
+  // Track creation order so cleanup can reliably identify the final worktree
+  const orderFile = join(realProjectDir, WORKTREE_ORDER_FILE);
+  try {
+    mkdirSync(join(realProjectDir, ".wolfpack"), { recursive: true });
+    appendFileSync(orderFile, `${worktreePath}\n`);
+  } catch {}
   return worktreePath;
 }
 
 /**
  * Remove a git worktree by path.
+ * Uses --force which discards uncommitted changes — caller should be aware.
  */
 export function removeWorktree(worktreePath: string, projectDir?: string): void {
-  const opts = projectDir
-    ? { cwd: realpathSync(projectDir), stdio: "pipe" as const }
-    : { stdio: "pipe" as const };
-  execFileSync("git", ["worktree", "remove", worktreePath, "--force"], opts);
+  const cwd = projectDir ? realpathSync(projectDir) : undefined;
+  const opts = cwd ? { cwd, stdio: "pipe" as const } : { stdio: "pipe" as const };
+  // Try graceful removal first; fall back to --force if there are uncommitted changes
+  try {
+    execFileSync("git", ["worktree", "remove", worktreePath], opts);
+  } catch {
+    execFileSync("git", ["worktree", "remove", worktreePath, "--force"], opts);
+  }
 }
 
 /**
@@ -116,8 +128,24 @@ export function cleanupAllExceptFinal(
     return { removed: [], kept: "" };
   }
 
-  // Sort by path with numeric-aware comparison so task 10 sorts after task 9
-  managed.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+  // Use creation-order file if available (written by createWorktree),
+  // fall back to numeric path sort
+  const orderFile = join(realProjectDir, WORKTREE_ORDER_FILE);
+  let orderedPaths: string[] | null = null;
+  try {
+    if (existsSync(orderFile)) {
+      orderedPaths = readFileSync(orderFile, "utf-8").trim().split("\n").filter(Boolean);
+    }
+  } catch {}
+
+  if (orderedPaths && orderedPaths.length > 0) {
+    // Order managed worktrees by creation order
+    const pathOrder = new Map(orderedPaths.map((p, i) => [p, i]));
+    managed.sort((a, b) => (pathOrder.get(a.path) ?? 999) - (pathOrder.get(b.path) ?? 999));
+  } else {
+    // Fallback: numeric-aware path sort
+    managed.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+  }
 
   const final = managed[managed.length - 1];
   const toRemove = managed.slice(0, -1);
@@ -128,11 +156,12 @@ export function cleanupAllExceptFinal(
     removed.push(wt.branch);
   }
 
-  // Prune stale worktree refs
+  // Prune stale worktree refs and clean up order file
   execFileSync("git", ["worktree", "prune"], {
     cwd: realProjectDir,
     stdio: "pipe",
   });
+  try { writeFileSync(orderFile, `${final.path}\n`); } catch {}
 
   return { removed, kept: final.branch };
 }

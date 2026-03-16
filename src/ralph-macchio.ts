@@ -14,7 +14,7 @@
  *   --worktree MODE   worktree isolation: false|plan|task (default false)
  */
 import { execFileSync, spawn as nodeSpawn } from "node:child_process";
-import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
+import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanFormat } from "./wolfpack-context.js";
@@ -500,29 +500,29 @@ function logSummary(tasksCompleted: number, subtasksAdded: number): void {
   appendFileSync(LOG_FILE, `==================\n`);
 }
 
+/** Copy plan and progress files into worktree so the agent can reference them. */
+function syncFilesToWorktree(): void {
+  if (workingDir === PROJECT_DIR) return;
+  try { copyFileSync(PLAN_PATH, join(workingDir, PLAN_FILE)); } catch {}
+  if (existsSync(PROGRESS_PATH)) {
+    try { copyFileSync(PROGRESS_PATH, join(workingDir, PROGRESS_FILE)); } catch {}
+  }
+}
+
+/** Copy progress file back from worktree to PROJECT_DIR after agent iteration. */
+function syncProgressBack(): void {
+  if (workingDir === PROJECT_DIR) return;
+  const wtProgress = join(workingDir, PROGRESS_FILE);
+  if (existsSync(wtProgress)) {
+    try { copyFileSync(wtProgress, PROGRESS_PATH); } catch {}
+  }
+}
+
 async function main() {
   let maxIterations = ITERATIONS;
 
-  // --- Worktree: plan mode setup (one worktree for the entire run) ---
-  if (WORKTREE_MODE === "plan") {
-    const baseBranch = getCurrentBranch(PROJECT_DIR);
-    const planSlug = PLAN_FILE.replace(/\.md$/i, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
-    const branchName = `ralph/plan-${planSlug}`;
-    try {
-      workingDir = createWorktree(PROJECT_DIR, branchName, baseBranch);
-      appendFileSync(LOG_FILE, `worktree created: ${workingDir} (branch ${branchName}, base ${baseBranch})\n\n`);
-      // re-capture start commit in worktree context
-      try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workingDir, encoding: "utf-8" }).trim(); } catch {}
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      appendFileSync(LOG_FILE, `\n=== ❌ Failed to create plan worktree: ${msg} ===\n`);
-      removeLock();
-      process.exit(1);
-    }
-  }
-
-  // Track previous branch for task-mode chaining
-  let previousBranch = WORKTREE_MODE === "task" ? getCurrentBranch(PROJECT_DIR) : "";
+  // Format/dedup/validate run BEFORE worktree creation — they operate on the
+  // plan in PROJECT_DIR and need agent cwd to match (workingDir === PROJECT_DIR here).
 
   // Number plan tasks if requested by the server
   if (FORMAT_PLAN) {
@@ -548,6 +548,27 @@ async function main() {
     removeLock();
     process.exit(1);
   }
+
+  // --- Worktree setup (AFTER format/dedup/validate so those run in PROJECT_DIR) ---
+  if (WORKTREE_MODE === "plan") {
+    const baseBranch = getCurrentBranch(PROJECT_DIR);
+    const planSlug = PLAN_FILE.replace(/\.md$/i, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    const branchName = `ralph/plan-${planSlug}`;
+    try {
+      workingDir = createWorktree(PROJECT_DIR, branchName, baseBranch);
+      appendFileSync(LOG_FILE, `worktree created: ${workingDir} (branch ${branchName}, base ${baseBranch})\n\n`);
+      try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workingDir, encoding: "utf-8" }).trim(); } catch {}
+      syncFilesToWorktree();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      appendFileSync(LOG_FILE, `\n=== ❌ Failed to create plan worktree: ${msg} ===\n`);
+      removeLock();
+      process.exit(1);
+    }
+  }
+
+  // Track previous branch for task-mode chaining
+  let previousBranch = WORKTREE_MODE === "task" ? getCurrentBranch(PROJECT_DIR) : "";
 
   let subtaskExpansions = 0;
   let tasksCompleted = 0;
@@ -589,15 +610,20 @@ async function main() {
     // --- Worktree: task mode — create a new worktree per iteration ---
     if (WORKTREE_MODE === "task") {
       const taskHeader = task.split("\n")[0];
-      const branchName = worktreeBranchName(taskHeader);
+      let branchName = worktreeBranchName(taskHeader);
+      // Fix #2: avoid branch collision on task retry — append suffix if branch exists
+      try {
+        execFileSync("git", ["rev-parse", "--verify", branchName], { cwd: PROJECT_DIR, stdio: "pipe" });
+        branchName = `${branchName}-${Date.now() % 100000}`;
+      } catch { /* branch doesn't exist — good */ }
       try {
         workingDir = createWorktree(PROJECT_DIR, branchName, previousBranch);
         appendFileSync(LOG_FILE, `worktree created: ${workingDir} (branch ${branchName}, base ${previousBranch})\n`);
         previousBranch = branchName;
-        // re-capture start commit on first task
         if (i === 1) {
           try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workingDir, encoding: "utf-8" }).trim(); } catch {}
         }
+        syncFilesToWorktree();
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         appendFileSync(LOG_FILE, `\n=== ⚠️ Failed to create task worktree: ${msg} — falling back to main tree ===\n`);
@@ -673,6 +699,9 @@ async function main() {
 
     appendFileSync(LOG_FILE, `\n=== ✅ Iteration ${i} complete — ${new Date().toString()} ===\n`);
     tasksCompleted++;
+
+    // sync progress back from worktree to main project dir
+    syncProgressBack();
 
     // mark task done in plan file
     if (checkbox) {

@@ -329,15 +329,18 @@ const routes: Record<
       }
     }
 
-    // Clean up worktrees if any exist
+    // Clean up worktrees if the worktree directory exists
     let worktreeCleanup: { removed: string[]; kept: string } | undefined;
-    try {
-      const result = cleanupAllExceptFinal(projectDir);
-      if (result.removed.length > 0 || result.kept) {
-        worktreeCleanup = result;
+    const worktreeDir = join(projectDir, ".wolfpack", "worktrees");
+    if (existsSync(worktreeDir)) {
+      try {
+        const result = cleanupAllExceptFinal(projectDir);
+        if (result.removed.length > 0 || result.kept) {
+          worktreeCleanup = result;
+        }
+      } catch {
+        // Cleanup failed — not critical
       }
-    } catch {
-      // No worktrees or cleanup failed — not critical
     }
 
     json(res, { ok: true, deleted, failed, ...(worktreeCleanup && { worktreeCleanup }) });

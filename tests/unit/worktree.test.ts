@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync, readFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -159,5 +159,52 @@ describe("worktree lifecycle", () => {
         try { removeWorktree(wt.path, repoDir); } catch {}
       }
     }
+  });
+
+  test("createWorktree tracks creation order in worktree-order.txt", () => {
+    createWorktree(repoDir, "ralph/20-first", "HEAD");
+    createWorktree(repoDir, "ralph/21-second", "HEAD");
+
+    const orderFile = join(repoDir, ".wolfpack", "worktree-order.txt");
+    expect(existsSync(orderFile)).toBe(true);
+    const lines = readFileSync(orderFile, "utf-8").trim().split("\n");
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(lines[lines.length - 2]).toContain("20-first");
+    expect(lines[lines.length - 1]).toContain("21-second");
+
+    // Cleanup
+    const wts = listWorktrees(repoDir);
+    for (const wt of wts) {
+      if (wt.path !== repoDir) {
+        try { removeWorktree(wt.path, repoDir); } catch {}
+      }
+    }
+  });
+
+  test("plan file can be copied into worktree for agent access", () => {
+    // Simulate plan file in project root
+    const planContent = "## 1. Add auth\n## 2. Write tests\n";
+    writeFileSync(join(repoDir, "PLAN.md"), planContent);
+
+    const wtPath = createWorktree(repoDir, "ralph/30-plan-copy", "HEAD");
+
+    // Copy plan into worktree (as ralph-macchio does via syncFilesToWorktree)
+    copyFileSync(join(repoDir, "PLAN.md"), join(wtPath, "PLAN.md"));
+
+    expect(existsSync(join(wtPath, "PLAN.md"))).toBe(true);
+    expect(readFileSync(join(wtPath, "PLAN.md"), "utf-8")).toBe(planContent);
+
+    // Cleanup
+    removeWorktree(wtPath, repoDir);
+  });
+
+  test("removeWorktree tries graceful removal before force", () => {
+    const wtPath = createWorktree(repoDir, "ralph/31-graceful", "HEAD");
+
+    // No uncommitted changes — should succeed without --force
+    removeWorktree(wtPath, repoDir);
+
+    const wts = listWorktrees(repoDir);
+    expect(wts.find(w => w.branch === "ralph/31-graceful")).toBeUndefined();
   });
 });
