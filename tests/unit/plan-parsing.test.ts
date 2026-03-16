@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { countTasksInContent } from "../../src/wolfpack-context.js";
+import { TASK_HEADER, countTasksInContent } from "../../src/wolfpack-context.js";
 
 // ── Plan-parsing functions from ralph-macchio.ts and serve.ts ──
 // These are module-private, replicated here as pure functions for testing.
@@ -15,7 +15,6 @@ function extractCurrentTask(plan: string): { task: string; checkbox: boolean } |
 
   // then section headers: find first ## or ### numbered header not struck through
   const lines = plan.split("\n");
-  const TASK_HEADER = /^(#{2,3}) \d+[a-z]?[\.\)]\s+/;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (TASK_HEADER.test(line) && !line.includes("~~")) {
@@ -26,6 +25,10 @@ function extractCurrentTask(plan: string): { task: string; checkbox: boolean } |
         if (nextMatch && nextMatch[1].length <= level.length) break;
         sectionLines.push(lines[j]);
       }
+      // skip sections where all child checkboxes are already done
+      const childChecked = sectionLines.filter(l => /^- \[x\] /.test(l)).length;
+      const childUnchecked = sectionLines.filter(l => /^- \[ \] /.test(l)).length;
+      if (childChecked > 0 && childUnchecked === 0) continue;
       return { task: sectionLines.join("\n").trim(), checkbox: false };
     }
   }
@@ -48,7 +51,6 @@ function countPlanTasks(plan: string): { done: number; total: number } {
     return { done, total: done + pending };
   }
   // section mode: ## or ### numbered headers (with optional ~~ strikethrough)
-  const TASK_HEADER = /^#{2,3} (?:~~)?\d+[a-z]?[\.\)]\s+/;
   let total = 0;
   let done = 0;
   for (const line of plan.split("\n")) {
@@ -516,5 +518,103 @@ describe("plan corruption detection", () => {
     const afterCounts = countTasksInContent(after);
     expect(afterCounts.total < beforeCounts.total).toBe(false);
     expect(afterCounts.done < beforeCounts.done).toBe(false);
+  });
+});
+
+// ── #74: skip fully-completed sections ──
+
+describe("extractCurrentTask skips fully-completed sections", () => {
+  test("skips section where all child checkboxes are [x]", () => {
+    const plan = [
+      "## 1. Package setup",
+      "- [x] Create package.json",
+      "- [x] Add dependencies",
+      "",
+      "## 2. Implementation",
+      "Some description",
+    ].join("\n");
+    const result = extractCurrentTask(plan);
+    expect(result).not.toBeNull();
+    expect(result!.task).toContain("## 2. Implementation");
+    expect(result!.checkbox).toBe(false);
+  });
+
+  test("does not skip section with mix of checked and unchecked", () => {
+    const plan = [
+      "## 1. Setup",
+      "- [x] Done subtask",
+      "- [ ] Pending subtask",
+      "",
+      "## 2. Next",
+      "stuff",
+    ].join("\n");
+    // unchecked checkbox found first (checkbox mode takes priority)
+    const result = extractCurrentTask(plan);
+    expect(result).toEqual({ task: "Pending subtask", checkbox: true });
+  });
+
+  test("does not skip section with zero checkboxes (backward compat)", () => {
+    const plan = [
+      "## 1. Design the API",
+      "Write the spec document",
+      "",
+      "## 2. Implement",
+      "Build it",
+    ].join("\n");
+    const result = extractCurrentTask(plan);
+    expect(result).not.toBeNull();
+    expect(result!.task).toContain("## 1. Design the API");
+  });
+
+  test("skips multiple completed sections to find active one", () => {
+    const plan = [
+      "## 1. Phase one",
+      "- [x] Step A",
+      "- [x] Step B",
+      "",
+      "## 2. Phase two",
+      "- [x] Step C",
+      "- [x] Step D",
+      "",
+      "## 3. Phase three",
+      "- [x] Step E",
+      "- [ ] Step F",
+      "",
+      "## 4. Phase four",
+      "Details",
+    ].join("\n");
+    // unchecked checkbox found first
+    const result = extractCurrentTask(plan);
+    expect(result).toEqual({ task: "Step F", checkbox: true });
+  });
+
+  test("returns null when all sections fully completed and no unchecked checkboxes", () => {
+    const plan = [
+      "## ~~1. Done one~~",
+      "- [x] Sub A",
+      "",
+      "## 2. Done two",
+      "- [x] Sub B",
+      "- [x] Sub C",
+    ].join("\n");
+    // section 1 is struck through → skipped
+    // section 2 has all [x] → skipped by new logic
+    expect(extractCurrentTask(plan)).toBeNull();
+  });
+
+  test("skips completed section even with non-checkbox content mixed in", () => {
+    const plan = [
+      "## 1. Setup",
+      "Some description paragraph",
+      "- [x] Install deps",
+      "More notes here",
+      "- [x] Configure build",
+      "",
+      "## 2. Next task",
+      "Do things",
+    ].join("\n");
+    const result = extractCurrentTask(plan);
+    expect(result).not.toBeNull();
+    expect(result!.task).toContain("## 2. Next task");
   });
 });
