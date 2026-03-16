@@ -123,5 +123,5 @@ Integration tests:
 - [x] 1. Worktree utility module + .gitignore
 - [x] 2. Ralph worker worktree support
 - [x] 3. Start API extension
-- [ ] 4. Dismiss API worktree cleanup
-- [ ] 5. Tests
+- [x] 4. Dismiss API worktree cleanup
+- [x] 5. Tests
