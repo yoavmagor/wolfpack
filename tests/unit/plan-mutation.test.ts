@@ -538,4 +538,22 @@ describe("auto-strikethrough parent section on last checkbox done", () => {
     expect(result).toContain("- [x] Orphan checkbox");
     // no header to strike — just works
   });
+
+  test("duplicate checkbox text across sections — only strikes correct parent", () => {
+    writePlan([
+      "## 1. Phase one",
+      "- [x] Deploy",
+      "",
+      "## 2. Phase two",
+      "- [ ] Deploy",
+    ].join("\n"));
+    markCheckboxDone(planPath, "Deploy");
+    const result = readPlan();
+    // phase two's "Deploy" was the one just checked → phase two should be struck
+    expect(result).toContain("## ~~2. Phase two~~");
+    // phase one should NOT be struck (it has no unchecked items but the checked
+    // "Deploy" there is not the one we just marked — index-based lookup ensures this)
+    expect(result).toContain("## 1. Phase one");
+    expect(result).not.toContain("~~1. Phase one~~");
+  });
 });
