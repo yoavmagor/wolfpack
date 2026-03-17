@@ -2422,7 +2422,12 @@
       .range-input { width: 100%; accent-color: var(--accent); margin-top: 4px; }
       .ralph-checkbox { width: 18px; height: 18px; min-height: 0; padding: 0; accent-color: var(--ralph); flex-shrink: 0; cursor: pointer; }
       .ralph-start-form label.ralph-branch-label { margin: 0; cursor: pointer; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text-secondary); }
-      .ralph-inline-select { width: auto; min-height: 0; padding: 4px 8px; font-size: 13px; margin-left: auto; flex-shrink: 0; }
+      .ralph-segmented { display: flex; margin-left: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); overflow: hidden; flex-shrink: 0; }
+      .ralph-segmented input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
+      .ralph-segmented label { padding: 4px 10px; font-size: 11px; font-family: inherit; color: var(--text-dim); cursor: pointer; border-right: 1px solid var(--border-subtle); transition: background 0.15s, color 0.15s; user-select: none; -webkit-user-select: none; white-space: nowrap; }
+      .ralph-segmented label:last-of-type { border-right: none; }
+      .ralph-segmented input[type="radio"]:checked + label { background: rgba(155,89,182,0.15); color: var(--ralph); border-color: var(--ralph-border); }
+      .ralph-segmented label:active { background: rgba(155,89,182,0.08); }
       .ralph-toggles { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 10px; }
       .settings-description { padding: 4px 0; font-size: 11px; color: var(--text-dim); line-height: 1.5; }
       .quick-cmds-list { display: flex; flex-direction: column; gap: 4px; }
@@ -2757,12 +2762,15 @@
             <label for="ralph-branch-toggle" class="ralph-branch-label">New branch</label>
           </div>
           <div class="flex-row" style="align-items: center;">
-            <label for="ralph-worktree-select" class="ralph-branch-label">Worktree isolation</label>
-            <select id="ralph-worktree-select" class="ralph-inline-select">
-              <option value="false">Off</option>
-              <option value="plan">Per plan</option>
-              <option value="task">Per task</option>
-            </select>
+            <span class="ralph-branch-label">Worktree</span>
+            <div class="ralph-segmented">
+              <input type="radio" name="ralph-worktree" id="ralph-wt-off" value="false" checked />
+              <label for="ralph-wt-off">Off</label>
+              <input type="radio" name="ralph-worktree" id="ralph-wt-plan" value="plan" />
+              <label for="ralph-wt-plan">Plan</label>
+              <input type="radio" name="ralph-worktree" id="ralph-wt-task" value="task" />
+              <label for="ralph-wt-task">Task</label>
+            </div>
           </div>
         </div>
         <div id="ralph-branch-fields" class="ralph-branch-fields">
@@ -5225,7 +5233,8 @@
           }
         } catch {}
 
-        const worktreeVal = document.getElementById("ralph-worktree-select").value;
+        const worktreeEl = document.querySelector('input[name="ralph-worktree"]:checked');
+        const worktreeVal = worktreeEl ? worktreeEl.value : "false";
         const worktree = worktreeVal === "false" ? false : worktreeVal;
         const body = { project, iterations, planFile, agent, format, cleanup, auditFix, worktree };
         const branchToggle = document.getElementById("ralph-branch-toggle").checked;
