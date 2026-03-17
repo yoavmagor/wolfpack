@@ -2757,21 +2757,25 @@
             <input type="checkbox" id="ralph-audit-fix-toggle" class="ralph-checkbox" />
             <label for="ralph-audit-fix-toggle" class="ralph-branch-label">Run audit+fix phase</label>
           </div>
-          <div class="flex-row">
-            <input type="checkbox" id="ralph-branch-toggle" onchange="toggleBranchFields()" class="ralph-checkbox" />
-            <label for="ralph-branch-toggle" class="ralph-branch-label">New branch</label>
-          </div>
           <div class="flex-row" style="align-items: center;">
-            <span class="ralph-branch-label">Worktree</span>
-            <div class="ralph-segmented">
-              <input type="radio" name="ralph-worktree" id="ralph-wt-off" value="false" checked />
-              <label for="ralph-wt-off">Off</label>
-              <input type="radio" name="ralph-worktree" id="ralph-wt-plan" value="plan" />
-              <label for="ralph-wt-plan">Plan</label>
-              <input type="radio" name="ralph-worktree" id="ralph-wt-task" value="task" />
-              <label for="ralph-wt-task">Task</label>
+            <span class="ralph-branch-label">Isolation</span>
+            <div class="ralph-segmented" onchange="onIsolationChange()">
+              <input type="radio" name="ralph-isolation" id="ralph-iso-off" value="false" checked />
+              <label for="ralph-iso-off">Off</label>
+              <input type="radio" name="ralph-isolation" id="ralph-iso-plan" value="plan" />
+              <label for="ralph-iso-plan">Plan</label>
+              <input type="radio" name="ralph-isolation" id="ralph-iso-task" value="task" />
+              <label for="ralph-iso-task">Task</label>
+              <input type="radio" name="ralph-isolation" id="ralph-iso-branch" value="branch" />
+              <label for="ralph-iso-branch">Branch</label>
             </div>
           </div>
+        </div>
+        <div id="ralph-worktree-fields" class="ralph-branch-fields">
+          <label for="ralph-worktree-name">Worktree branch prefix</label>
+          <input id="ralph-worktree-name" type="text" placeholder="ralph/plan-my-feature" autocomplete="off" autocorrect="off" autocapitalize="off" />
+          <label for="ralph-worktree-base">Base branch</label>
+          <select id="ralph-worktree-base"></select>
         </div>
         <div id="ralph-branch-fields" class="ralph-branch-fields">
           <label for="ralph-branch-name">Branch name</label>
@@ -5128,17 +5132,18 @@
         }
         sel.onchange = function() {
           loadPlanFiles(sel.value);
-          if (document.getElementById("ralph-branch-toggle").checked) {
-            loadBranches(sel.value);
-          }
+          const isoVal = (document.querySelector('input[name="ralph-isolation"]:checked') || {}).value;
+          if (isoVal === "branch") loadBranches(sel.value);
+          if (isoVal === "plan" || isoVal === "task") loadWorktreeBranches(sel.value);
         };
         // Reset toggles on form load (restore from state if restarting)
         document.getElementById("ralph-cleanup-toggle").checked = state.currentRalphCleanup != null ? state.currentRalphCleanup : true;
         document.getElementById("ralph-audit-fix-toggle").checked = state.currentRalphAuditFix != null ? state.currentRalphAuditFix : false;
         state.currentRalphCleanup = undefined;
         state.currentRalphAuditFix = undefined;
-        document.getElementById("ralph-branch-toggle").checked = false;
+        document.getElementById("ralph-iso-off").checked = true;
         document.getElementById("ralph-branch-fields").style.display = "none";
+        document.getElementById("ralph-worktree-fields").style.display = "none";
         await loadPlanFiles(sel.value);
         if (state.currentRalphPlanFile) {
           document.getElementById("ralph-plan-select").value = state.currentRalphPlanFile;
@@ -5178,12 +5183,35 @@
         } catch {}
       }
 
-      function toggleBranchFields() {
-        const checked = document.getElementById("ralph-branch-toggle").checked;
-        const fields = document.getElementById("ralph-branch-fields");
-        fields.style.display = checked ? "flex" : "none";
-        if (checked) {
-          loadBranches(document.getElementById("ralph-project-select").value);
+      function onIsolationChange() {
+        const val = (document.querySelector('input[name="ralph-isolation"]:checked') || {}).value || "false";
+        const isWorktree = val === "plan" || val === "task";
+        document.getElementById("ralph-branch-fields").style.display = val === "branch" ? "flex" : "none";
+        document.getElementById("ralph-worktree-fields").style.display = isWorktree ? "flex" : "none";
+        const project = document.getElementById("ralph-project-select").value;
+        if (val === "branch") loadBranches(project);
+        if (isWorktree) {
+          loadWorktreeBranches(project);
+          updateWorktreePlaceholder(val);
+        }
+      }
+
+      function updateWorktreePlaceholder(mode) {
+        const input = document.getElementById("ralph-worktree-name");
+        input.placeholder = mode === "task" ? "ralph/1-task-slug (auto per task)" : "ralph/plan-my-feature";
+        if (mode === "task") { input.value = ""; input.disabled = true; }
+        else { input.disabled = false; }
+      }
+
+      async function loadWorktreeBranches(project) {
+        const sel = document.getElementById("ralph-worktree-base");
+        if (!project) { sel.innerHTML = '<option value="">select a project first</option>'; return; }
+        try {
+          const data = await api("/ralph/branches?project=" + encodeURIComponent(project), undefined, getStartMachine());
+          const branches = data.branches || [];
+          sel.innerHTML = branches.map(b => '<option value="' + escAttr(b) + '"' + (b === "main" ? " selected" : "") + '>' + escHtml(b) + '</option>').join("");
+        } catch {
+          sel.innerHTML = '<option value="">failed to load</option>';
         }
       }
 
@@ -5233,12 +5261,16 @@
           }
         } catch {}
 
-        const worktreeEl = document.querySelector('input[name="ralph-worktree"]:checked');
-        const worktreeVal = worktreeEl ? worktreeEl.value : "false";
-        const worktree = worktreeVal === "false" ? false : worktreeVal;
+        const isoVal = (document.querySelector('input[name="ralph-isolation"]:checked') || {}).value || "false";
+        const worktree = (isoVal === "plan" || isoVal === "task") ? isoVal : false;
         const body = { project, iterations, planFile, agent, format, cleanup, auditFix, worktree };
-        const branchToggle = document.getElementById("ralph-branch-toggle").checked;
-        if (branchToggle) {
+        if (worktree) {
+          const wtName = document.getElementById("ralph-worktree-name").value.trim();
+          const wtBase = document.getElementById("ralph-worktree-base").value;
+          if (wtName) body.worktreeBranch = wtName;
+          if (wtBase) body.worktreeBase = wtBase;
+        }
+        if (isoVal === "branch") {
           const newBranch = document.getElementById("ralph-branch-name").value.trim();
           const sourceBranch = document.getElementById("ralph-source-branch").value;
           if (!newBranch) { alert("enter a branch name"); return; }

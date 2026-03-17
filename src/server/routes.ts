@@ -554,9 +554,11 @@ export const routes: Record<
       cleanup?: boolean;
       auditFix?: boolean;
       worktree?: false | "plan" | "task";
+      worktreeBranch?: string;
+      worktreeBase?: string;
     }>(req, res);
     if (!body) return;
-    const { project, iterations, planFile, agent, newBranch, sourceBranch, format, cleanup, auditFix, worktree } = body;
+    const { project, iterations, planFile, agent, newBranch, sourceBranch, format, cleanup, auditFix, worktree, worktreeBranch, worktreeBase } = body;
     const projectDir = resolveProjectDir(res, project);
     if (!projectDir) return;
     const existing = parseRalphLog(projectDir);
@@ -607,6 +609,18 @@ export const routes: Record<
       return json(res, { error: "invalid worktree mode — must be false, \"plan\", or \"task\"" }, 400);
     }
     const worktreeMode = (worktree === "plan" || worktree === "task") ? worktree : "false";
+    if (worktreeBranch != null && typeof worktreeBranch !== "string") {
+      return json(res, { error: "invalid worktreeBranch" }, 400);
+    }
+    if (worktreeBranch && !BRANCH_REGEX.test(worktreeBranch)) {
+      return json(res, { error: "invalid worktree branch name" }, 400);
+    }
+    if (worktreeBase != null && typeof worktreeBase !== "string") {
+      return json(res, { error: "invalid worktreeBase" }, 400);
+    }
+    if (worktreeBase && !BRANCH_REGEX.test(worktreeBase)) {
+      return json(res, { error: "invalid worktree base branch name" }, 400);
+    }
     const cleanupEnabled = cleanup ?? true;
     const auditFixEnabled = auditFix ?? false;
 
@@ -661,6 +675,8 @@ export const routes: Record<
       "--audit-fix", String(auditFixEnabled),
       ...(format ? ["--format"] : []),
       "--worktree", worktreeMode,
+      ...(worktreeBranch ? ["--worktree-branch", worktreeBranch] : []),
+      ...(worktreeBase ? ["--worktree-base", worktreeBase] : []),
     ];
     const child = spawn(RALPH_BIN_ARGS[0], workerArgs, {
       cwd: projectDir,

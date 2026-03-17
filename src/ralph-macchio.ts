@@ -35,6 +35,8 @@ const { values: args } = parseArgs({
     cleanup: { type: "string", default: "true" },
     "audit-fix": { type: "string", default: "false" },
     worktree: { type: "string", default: "false" },
+    "worktree-branch": { type: "string" },
+    "worktree-base": { type: "string" },
   },
 });
 
@@ -46,6 +48,8 @@ const FORMAT_PLAN = args.format!;
 const CLEANUP_ENABLED = args.cleanup !== "false";
 const AUDIT_FIX_ENABLED = args["audit-fix"] === "true";
 const WORKTREE_MODE = (args.worktree === "plan" || args.worktree === "task") ? args.worktree : "false" as const;
+const WORKTREE_BRANCH = args["worktree-branch"] || undefined;
+const WORKTREE_BASE = args["worktree-base"] || undefined;
 const PROJECT_DIR = process.cwd();
 /** Working directory for agent execution — may differ from PROJECT_DIR in worktree mode */
 let workingDir = PROJECT_DIR;
@@ -601,9 +605,9 @@ async function main() {
 
   // --- Worktree setup (AFTER format/dedup/validate so those run in PROJECT_DIR) ---
   if (WORKTREE_MODE === "plan") {
-    const baseBranch = getCurrentBranch(PROJECT_DIR);
+    const baseBranch = WORKTREE_BASE || getCurrentBranch(PROJECT_DIR);
     const planSlug = PLAN_FILE.replace(/\.md$/i, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
-    const branchName = `ralph/plan-${planSlug}`;
+    const branchName = WORKTREE_BRANCH || `ralph/plan-${planSlug}`;
     try {
       workingDir = createWorktree(PROJECT_DIR, branchName, baseBranch);
       appendFileSync(LOG_FILE, `worktree created: ${workingDir} (branch ${branchName}, base ${baseBranch})\n\n`);
@@ -620,7 +624,7 @@ async function main() {
   }
 
   // Track previous branch for task-mode chaining
-  let previousBranch = WORKTREE_MODE === "task" ? getCurrentBranch(PROJECT_DIR) : "";
+  let previousBranch = WORKTREE_MODE === "task" ? (WORKTREE_BASE || getCurrentBranch(PROJECT_DIR)) : "";
 
   let subtaskExpansions = 0;
   let tasksCompleted = 0;
