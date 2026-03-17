@@ -2422,6 +2422,7 @@
       .range-input { width: 100%; accent-color: var(--accent); margin-top: 4px; }
       .ralph-checkbox { width: 18px; height: 18px; min-height: 0; padding: 0; accent-color: var(--ralph); flex-shrink: 0; cursor: pointer; }
       .ralph-start-form label.ralph-branch-label { margin: 0; cursor: pointer; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text-secondary); }
+      .ralph-inline-select { width: auto; min-height: 0; padding: 4px 8px; font-size: 13px; margin-left: auto; flex-shrink: 0; }
       .ralph-toggles { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 10px; }
       .settings-description { padding: 4px 0; font-size: 11px; color: var(--text-dim); line-height: 1.5; }
       .quick-cmds-list { display: flex; flex-direction: column; gap: 4px; }
@@ -2756,8 +2757,8 @@
             <label for="ralph-branch-toggle" class="ralph-branch-label">New branch</label>
           </div>
           <div class="flex-row" style="align-items: center;">
-            <label for="ralph-worktree-select" class="ralph-branch-label" style="flex-shrink: 0;">Worktree isolation</label>
-            <select id="ralph-worktree-select" style="margin-left: auto; width: auto; min-height: 0; padding: 4px 8px; font-size: 13px;">
+            <label for="ralph-worktree-select" class="ralph-branch-label">Worktree isolation</label>
+            <select id="ralph-worktree-select" class="ralph-inline-select">
               <option value="false">Off</option>
               <option value="plan">Per plan</option>
               <option value="task">Per task</option>
