@@ -29,6 +29,7 @@ import {
   clampCols,
   clampRows,
 } from "../validation.js";
+import { cleanupAllExceptFinal } from "../worktree.js";
 import { assets } from "../public-assets.js";
 import { isInputPrompt, isJunkLine, type TriageStatus } from "../triage.js";
 import pkg from "../../package.json";
@@ -549,9 +550,10 @@ export const routes: Record<
       format?: boolean;
       cleanup?: boolean;
       auditFix?: boolean;
+      worktree?: false | "plan" | "task";
     }>(req, res);
     if (!body) return;
-    const { project, iterations, planFile, agent, newBranch, sourceBranch, format, cleanup, auditFix } = body;
+    const { project, iterations, planFile, agent, newBranch, sourceBranch, format, cleanup, auditFix, worktree } = body;
     const projectDir = resolveProjectDir(res, project);
     if (!projectDir) return;
     const existing = parseRalphLog(projectDir);
@@ -593,6 +595,11 @@ export const routes: Record<
     if (auditFix != null && typeof auditFix !== "boolean") {
       return json(res, { error: "invalid auditFix flag" }, 400);
     }
+    const VALID_WORKTREE_MODES = [false, "false", "plan", "task"];
+    if (worktree != null && !VALID_WORKTREE_MODES.includes(worktree as any)) {
+      return json(res, { error: "invalid worktree mode — must be false, \"plan\", or \"task\"" }, 400);
+    }
+    const worktreeMode = (worktree === "plan" || worktree === "task") ? worktree : "false";
     const cleanupEnabled = cleanup ?? true;
     const auditFixEnabled = auditFix ?? false;
 
@@ -632,6 +639,10 @@ export const routes: Record<
       return json(res, { error: `plan file '${resolvedPlan}' not found` }, 404);
     }
 
+    // Worktree creation is handled by the worker process itself
+    // (plan mode creates one worktree at startup, task mode creates per-iteration).
+    // The route only passes the mode flag — the worker manages the lifecycle.
+
     const workerArgs = [
       ...RALPH_BIN_ARGS.slice(1),
       "worker",
@@ -642,6 +653,7 @@ export const routes: Record<
       "--cleanup", String(cleanupEnabled),
       "--audit-fix", String(auditFixEnabled),
       ...(format ? ["--format"] : []),
+      "--worktree", worktreeMode,
     ];
     const child = spawn(RALPH_BIN_ARGS[0], workerArgs, {
       cwd: projectDir,
@@ -652,7 +664,12 @@ export const routes: Record<
 
     try { writeFileSync(lockPath, String(child.pid ?? 0)); } catch {}
 
-    json(res, { ok: true, pid: child.pid ?? 0, branch: newBranch || undefined });
+    json(res, {
+      ok: true,
+      pid: child.pid ?? 0,
+      branch: newBranch || undefined,
+      worktree: worktreeMode !== "false" ? worktreeMode : undefined,
+    });
   },
 
   "GET /api/ralph/task-count": async (req, res) => {
@@ -737,6 +754,20 @@ export const routes: Record<
       }
     }
 
-    json(res, { ok: true, deleted, failed });
+    // Clean up worktrees if the worktree directory exists
+    let worktreeCleanup: { removed: string[]; kept: string } | undefined;
+    const worktreeDir = join(projectDir, ".wolfpack", "worktrees");
+    if (existsSync(worktreeDir)) {
+      try {
+        const result = cleanupAllExceptFinal(projectDir);
+        if (result.removed.length > 0 || result.kept) {
+          worktreeCleanup = result;
+        }
+      } catch {
+        // Cleanup failed — not critical
+      }
+    }
+
+    json(res, { ok: true, deleted, failed, ...(worktreeCleanup && { worktreeCleanup }) });
   },
 };

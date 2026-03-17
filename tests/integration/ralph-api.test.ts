@@ -7,12 +7,14 @@ import {
 import type { AddressInfo } from "node:net";
 import {
   mkdirSync,
+  mkdtempSync,
   writeFileSync,
   existsSync,
   rmSync,
   readFileSync,
   unlinkSync,
   readdirSync,
+  realpathSync,
   statSync,
   lstatSync,
 } from "node:fs";
@@ -20,6 +22,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseRalphLog, countPlanTasks, type RalphStatus } from "../../src/server/ralph.ts";
 import { isValidPlanFile } from "../../src/validation.ts";
+import { execFileSync } from "node:child_process";
+import { cleanupAllExceptFinal, createWorktree, listWorktrees, removeWorktree } from "../../src/worktree.js";
 
 // ─── Temp directory for fake DEV_DIR ─────────────────────────────────────────
 
@@ -155,9 +159,10 @@ const routes: Record<
       format?: boolean;
       cleanup?: boolean;
       auditFix?: boolean;
+      worktree?: false | "plan" | "task";
     }>(req, res);
     if (!body) return;
-    const { project, iterations, planFile, agent, format, cleanup, auditFix } = body;
+    const { project, iterations, planFile, agent, format, cleanup, auditFix, worktree } = body;
     if (!project || !isValidProjectName(project)) {
       return json(res, { error: "invalid project name" }, 400);
     }
@@ -213,6 +218,11 @@ const routes: Record<
     if (auditFix != null && typeof auditFix !== "boolean") {
       return json(res, { error: "invalid auditFix flag" }, 400);
     }
+    const VALID_WORKTREE_MODES = [false, "false", "plan", "task"];
+    if (worktree != null && !VALID_WORKTREE_MODES.includes(worktree as any)) {
+      return json(res, { error: 'invalid worktree mode — must be false, "plan", or "task"' }, 400);
+    }
+    const worktreeMode = (worktree === "plan" || worktree === "task") ? worktree : "false";
     const cleanupEnabled = cleanup ?? true;
     const auditFixEnabled = auditFix ?? false;
     if (!existsSync(join(projectDir, resolvedPlan))) {
@@ -229,10 +239,15 @@ const routes: Record<
       "--cleanup", String(cleanupEnabled),
       "--audit-fix", String(auditFixEnabled),
       ...(format ? ["--format"] : []),
+      "--worktree", worktreeMode,
     ];
     lastSpawnArgs = { bin: "bun", args: workerArgs, cwd: projectDir };
 
-    json(res, { ok: true, pid: 99999 });
+    json(res, {
+      ok: true,
+      pid: 99999,
+      worktree: worktreeMode !== "false" ? worktreeMode : undefined,
+    });
   },
 
   "POST /api/ralph/cancel": async (req, res) => {
@@ -314,7 +329,21 @@ const routes: Record<
       }
     }
 
-    json(res, { ok: true, deleted, failed });
+    // Clean up worktrees if the worktree directory exists
+    let worktreeCleanup: { removed: string[]; kept: string } | undefined;
+    const worktreeDir = join(projectDir, ".wolfpack", "worktrees");
+    if (existsSync(worktreeDir)) {
+      try {
+        const result = cleanupAllExceptFinal(projectDir);
+        if (result.removed.length > 0 || result.kept) {
+          worktreeCleanup = result;
+        }
+      } catch {
+        // Cleanup failed — not critical
+      }
+    }
+
+    json(res, { ok: true, deleted, failed, ...(worktreeCleanup && { worktreeCleanup }) });
   },
 };
 
@@ -1089,5 +1118,175 @@ describe("GET /api/ralph/task-count", () => {
     expect(data.total).toBe(0);
     expect(data.issues.length).toBeGreaterThan(0);
     expect(data.issues[0]).toMatch(/No parseable tasks/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Worktree integration tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("POST /api/ralph/start — worktree param", () => {
+  afterEach(() => {
+    cleanupProject("wt-start");
+  });
+
+  test("worktree: 'plan' — passes --worktree plan to worker args", async () => {
+    setupProject("wt-start", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "wt-start",
+      worktree: "plan",
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.worktree).toBe("plan");
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--worktree")).toBe("plan");
+  });
+
+  test("worktree: 'task' — passes --worktree task to worker args", async () => {
+    setupProject("wt-start", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "wt-start",
+      worktree: "task",
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.worktree).toBe("task");
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--worktree")).toBe("task");
+  });
+
+  test("worktree: false — passes --worktree false, no worktree field in response", async () => {
+    setupProject("wt-start", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "wt-start",
+      worktree: false,
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.worktree).toBeUndefined();
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--worktree")).toBe("false");
+  });
+
+  test("worktree omitted — defaults to --worktree false", async () => {
+    setupProject("wt-start", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "wt-start",
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.worktree).toBeUndefined();
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--worktree")).toBe("false");
+  });
+
+  test("invalid worktree mode → 400", async () => {
+    setupProject("wt-start", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "wt-start",
+      worktree: "invalid" as any,
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("invalid worktree mode");
+  });
+});
+
+describe("POST /api/ralph/dismiss — worktree cleanup", () => {
+  let gitRepoDir: string;
+
+  // These tests need a real git repo to test worktree cleanup
+  beforeAll(() => {
+    gitRepoDir = realpathSync(mkdtempSync(join(tmpdir(), "wt-dismiss-")));
+    execFileSync("git", ["init", gitRepoDir], { stdio: "pipe" });
+    execFileSync("git", ["-C", gitRepoDir, "config", "user.name", "test"], { stdio: "pipe" });
+    execFileSync("git", ["-C", gitRepoDir, "config", "user.email", "test@test.com"], { stdio: "pipe" });
+    execFileSync("git", ["-C", gitRepoDir, "commit", "--allow-empty", "-m", "init"], { stdio: "pipe" });
+  });
+
+  afterAll(() => {
+    // Clean up all worktrees before removing
+    try {
+      const wts = listWorktrees(gitRepoDir);
+      for (const wt of wts) {
+        if (wt.path !== gitRepoDir) {
+          try { removeWorktree(wt.path, gitRepoDir); } catch {}
+        }
+      }
+    } catch {}
+    rmSync(gitRepoDir, { recursive: true, force: true });
+  });
+
+  test("dismiss with no worktrees — no worktreeCleanup in response", async () => {
+    const name = `dismiss-nowt-${Date.now()}`;
+    const dir = setupProject(name, {
+      log: `ralph — 5 iterations\nagent: claude\nplan: PLAN.md\npid: 2\nstarted: 2025-01-01\nfinished: 2025-01-01\n`,
+    });
+
+    const res = await post("/api/ralph/dismiss", { project: name });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.worktreeCleanup).toBeUndefined();
+
+    cleanupProject(name);
+  });
+
+  test("cleanupAllExceptFinal — integration: creates worktrees, keeps final on cleanup", () => {
+    // Direct integration test of the cleanup function with a real git repo
+    createWorktree(gitRepoDir, "ralph/10-first-task", "HEAD");
+    createWorktree(gitRepoDir, "ralph/11-second-task", "HEAD");
+    createWorktree(gitRepoDir, "ralph/12-final-task", "HEAD");
+
+    const result = cleanupAllExceptFinal(gitRepoDir);
+
+    expect(result.removed).toContain("ralph/10-first-task");
+    expect(result.removed).toContain("ralph/11-second-task");
+    expect(result.kept).toBe("ralph/12-final-task");
+
+    // Verify only final worktree remains
+    const remaining = listWorktrees(gitRepoDir).filter(w => w.path !== gitRepoDir);
+    expect(remaining.length).toBe(1);
+    expect(remaining[0].branch).toBe("ralph/12-final-task");
+
+    // Cleanup
+    removeWorktree(remaining[0].path, gitRepoDir);
+  });
+
+  test("chained worktrees — task N branches off task N-1", () => {
+    // Simulate task-mode chaining
+    const wt1 = createWorktree(gitRepoDir, "ralph/20-auth", "HEAD");
+    const wt2 = createWorktree(gitRepoDir, "ralph/21-tests", "ralph/20-auth");
+    const wt3 = createWorktree(gitRepoDir, "ralph/22-docs", "ralph/21-tests");
+
+    // All three should exist
+    const all = listWorktrees(gitRepoDir).filter(w => w.path !== gitRepoDir);
+    expect(all.length).toBe(3);
+
+    // Cleanup keeps only the final
+    const result = cleanupAllExceptFinal(gitRepoDir);
+    expect(result.removed).toEqual(["ralph/20-auth", "ralph/21-tests"]);
+    expect(result.kept).toBe("ralph/22-docs");
+
+    // Cleanup
+    const final = listWorktrees(gitRepoDir).filter(w => w.path !== gitRepoDir);
+    for (const wt of final) {
+      removeWorktree(wt.path, gitRepoDir);
+    }
   });
 });

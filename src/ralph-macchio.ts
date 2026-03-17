@@ -11,15 +11,17 @@
  *   --format          number plan tasks before starting
  *   --cleanup BOOL    run cleanup phase: true|false (default true)
  *   --audit-fix BOOL  run audit+fix phase: true|false (default false)
+ *   --worktree MODE   worktree isolation: false|plan|task (default false)
  */
 import { execFileSync, spawn as nodeSpawn } from "node:child_process";
-import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
+import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanFormat } from "./wolfpack-context.js";
 import { expandBudget, resolveCleanupDiffBase } from "./validation.js";
 import { buildAuditFixPrompt } from "./ralph-skill-audit.js";
 import { buildCleanupPrompt } from "./ralph-skill-cleanup.js";
+import { createWorktree, cleanupAllExceptFinal, slugifyTaskName } from "./worktree.js";
 
 const { values: args } = parseArgs({
   args: process.argv.slice(2),
@@ -31,6 +33,7 @@ const { values: args } = parseArgs({
     format: { type: "boolean", default: false },
     cleanup: { type: "string", default: "true" },
     "audit-fix": { type: "string", default: "false" },
+    worktree: { type: "string", default: "false" },
   },
 });
 
@@ -41,7 +44,10 @@ const AGENT = args.agent!;
 const FORMAT_PLAN = args.format!;
 const CLEANUP_ENABLED = args.cleanup !== "false";
 const AUDIT_FIX_ENABLED = args["audit-fix"] === "true";
+const WORKTREE_MODE = (args.worktree === "plan" || args.worktree === "task") ? args.worktree : "false" as const;
 const PROJECT_DIR = process.cwd();
+/** Working directory for agent execution — may differ from PROJECT_DIR in worktree mode */
+let workingDir = PROJECT_DIR;
 const LOG_FILE = join(PROJECT_DIR, ".ralph.log");
 const ITER_FILE = join(PROJECT_DIR, ".ralph_iter.tmp");
 
@@ -277,7 +283,7 @@ BEGIN.`;
 function buildPrompt(taskDesc: string): string {
   return `${RALPH_AGENT_CONTEXT}
 
-You may ONLY create/edit/delete files under ${PROJECT_DIR}. Do NOT touch files outside this directory.
+You may ONLY create/edit/delete files under ${workingDir}. Do NOT touch files outside this directory.
 
 YOUR TASK:
 ${taskDesc}
@@ -322,6 +328,7 @@ appendFileSync(LOG_FILE, `plan: ${PLAN_FILE}\n`);
 appendFileSync(LOG_FILE, `progress: ${PROGRESS_FILE}\n`);
 appendFileSync(LOG_FILE, `phase_cleanup: ${CLEANUP_ENABLED ? "on" : "off"}\n`);
 appendFileSync(LOG_FILE, `phase_audit_fix: ${AUDIT_FIX_ENABLED ? "on" : "off"}\n`);
+appendFileSync(LOG_FILE, `worktree: ${WORKTREE_MODE}\n`);
 appendFileSync(LOG_FILE, `pid: ${process.pid}\n`);
 appendFileSync(LOG_FILE, `bin: ${agent.bin}\n`);
 appendFileSync(LOG_FILE, `started: ${new Date().toString()}\n\n`);
@@ -329,6 +336,20 @@ appendFileSync(LOG_FILE, `started: ${new Date().toString()}\n\n`);
 // capture starting commit for summary diff
 let START_COMMIT = "";
 try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_DIR, encoding: "utf-8" }).trim(); } catch {}
+
+function getCurrentBranch(cwd: string): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, encoding: "utf-8" }).trim();
+  } catch { return "HEAD"; }
+}
+
+/** Generate a worktree branch name from task header. */
+function worktreeBranchName(taskHeader: string, iterationIndex: number): string {
+  const numMatch = taskHeader.match(/^##\s*(\d+[a-z]?)\./);
+  const num = numMatch ? numMatch[1] : String(iterationIndex);
+  const slug = slugifyTaskName(taskHeader);
+  return `ralph/${num}-${slug}`;
+}
 
 function parseSubtasks(output: string): string[] {
   const match = output.match(/<subtasks>([\s\S]*?)<\/subtasks>/);
@@ -384,7 +405,7 @@ function runIteration(prompt: string): Promise<{ exitCode: number; output: strin
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     const child = nodeSpawn(agent.bin, agent.args(prompt), {
-      cwd: PROJECT_DIR,
+      cwd: workingDir,
       stdio: ["ignore", "pipe", "pipe"],
     });
     activeChild = child;
@@ -422,12 +443,22 @@ function runIteration(prompt: string): Promise<{ exitCode: number; output: strin
 // last-resort lock cleanup on any exit (covers unhandled exceptions, SIGINT, etc.)
 process.on("exit", removeLock);
 
-// clean up child process and lock on SIGTERM
+// clean up child process, worktrees, and lock on SIGTERM
 process.on("SIGTERM", () => {
   appendFileSync(LOG_FILE, `\n=== 🛑 Received SIGTERM — cleaning up ===\n`);
   if (activeChild) {
     activeChild.kill("SIGTERM");
     setTimeout(() => { try { activeChild?.kill("SIGKILL"); } catch {} }, 3000);
+  }
+  if (WORKTREE_MODE !== "false") {
+    try {
+      const result = cleanupAllExceptFinal(PROJECT_DIR);
+      if (result.removed.length > 0) {
+        appendFileSync(LOG_FILE, `worktrees cleaned up: removed ${result.removed.join(", ")}, kept ${result.kept}\n`);
+      }
+    } catch (err: unknown) {
+      appendFileSync(LOG_FILE, `worktree cleanup failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
   }
   appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
   removeLock();
@@ -450,12 +481,12 @@ function logSummary(tasksCompleted: number, subtasksAdded: number): void {
   let uncommitted: string[] = [];
   try {
     const ref = START_COMMIT || "HEAD";
-    const diff = execFileSync("git", ["diff", "--name-only", ref, "HEAD"], { cwd: PROJECT_DIR, encoding: "utf-8" });
+    const diff = execFileSync("git", ["diff", "--name-only", ref, "HEAD"], { cwd: workingDir, encoding: "utf-8" });
     filesChanged = diff.trim().split("\n").filter(Boolean);
   } catch {}
   try {
-    const wt = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: PROJECT_DIR, encoding: "utf-8" });
-    const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: PROJECT_DIR, encoding: "utf-8" });
+    const wt = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: workingDir, encoding: "utf-8" });
+    const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: workingDir, encoding: "utf-8" });
     uncommitted = [...wt.trim().split("\n"), ...untracked.trim().split("\n")].filter(Boolean);
   } catch {}
 
@@ -479,8 +510,38 @@ function logSummary(tasksCompleted: number, subtasksAdded: number): void {
   appendFileSync(LOG_FILE, `==================\n`);
 }
 
+/** Copy plan and progress files into worktree so the agent can reference them. */
+function syncFilesToWorktree(): void {
+  if (workingDir === PROJECT_DIR) return;
+  try { copyFileSync(PLAN_PATH, join(workingDir, PLAN_FILE)); } catch {}
+  if (existsSync(PROGRESS_PATH)) {
+    try { copyFileSync(PROGRESS_PATH, join(workingDir, PROGRESS_FILE)); } catch {}
+  }
+}
+
+/** Copy progress file back from worktree to PROJECT_DIR after agent iteration. */
+function syncProgressBack(): void {
+  if (workingDir === PROJECT_DIR) return;
+  const wtProgress = join(workingDir, PROGRESS_FILE);
+  if (existsSync(wtProgress)) {
+    try { copyFileSync(wtProgress, PROGRESS_PATH); } catch {}
+  }
+}
+
+/** Copy plan file back from worktree to PROJECT_DIR so agent plan edits aren't lost. */
+function syncPlanBack(): void {
+  if (workingDir === PROJECT_DIR) return;
+  const wtPlan = join(workingDir, PLAN_FILE);
+  if (existsSync(wtPlan)) {
+    try { copyFileSync(wtPlan, PLAN_PATH); } catch {}
+  }
+}
+
 async function main() {
   let maxIterations = ITERATIONS;
+
+  // Format/dedup/validate run BEFORE worktree creation — they operate on the
+  // plan in PROJECT_DIR and need agent cwd to match (workingDir === PROJECT_DIR here).
 
   // Number plan tasks if requested by the server
   if (FORMAT_PLAN) {
@@ -506,6 +567,27 @@ async function main() {
     removeLock();
     process.exit(1);
   }
+
+  // --- Worktree setup (AFTER format/dedup/validate so those run in PROJECT_DIR) ---
+  if (WORKTREE_MODE === "plan") {
+    const baseBranch = getCurrentBranch(PROJECT_DIR);
+    const planSlug = PLAN_FILE.replace(/\.md$/i, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    const branchName = `ralph/plan-${planSlug}`;
+    try {
+      workingDir = createWorktree(PROJECT_DIR, branchName, baseBranch);
+      appendFileSync(LOG_FILE, `worktree created: ${workingDir} (branch ${branchName}, base ${baseBranch})\n\n`);
+      try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workingDir, encoding: "utf-8" }).trim(); } catch {}
+      syncFilesToWorktree();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      appendFileSync(LOG_FILE, `\n=== ❌ Failed to create plan worktree: ${msg} ===\n`);
+      removeLock();
+      process.exit(1);
+    }
+  }
+
+  // Track previous branch for task-mode chaining
+  let previousBranch = WORKTREE_MODE === "task" ? getCurrentBranch(PROJECT_DIR) : "";
 
   let subtaskExpansions = 0;
   let tasksCompleted = 0;
@@ -542,6 +624,30 @@ async function main() {
       lastTask = null;
       lastWasSubtaskEmission = false;
       continue;
+    }
+
+    // --- Worktree: task mode — create a new worktree per iteration ---
+    if (WORKTREE_MODE === "task") {
+      const taskHeader = task.split("\n")[0];
+      let branchName = worktreeBranchName(taskHeader, i);
+      // Fix #2: avoid branch collision on task retry — append suffix if branch exists
+      try {
+        execFileSync("git", ["rev-parse", "--verify", branchName], { cwd: PROJECT_DIR, stdio: "pipe" });
+        branchName = `${branchName}-${Date.now() % 100000}`;
+      } catch { /* branch doesn't exist — good */ }
+      try {
+        workingDir = createWorktree(PROJECT_DIR, branchName, previousBranch);
+        appendFileSync(LOG_FILE, `worktree created: ${workingDir} (branch ${branchName}, base ${previousBranch})\n`);
+        previousBranch = branchName;
+        if (i === 1) {
+          try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workingDir, encoding: "utf-8" }).trim(); } catch {}
+        }
+        syncFilesToWorktree();
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        appendFileSync(LOG_FILE, `\n=== ⚠️ Failed to create task worktree: ${msg} — falling back to main tree ===\n`);
+        workingDir = PROJECT_DIR;
+      }
     }
 
     // snapshot plan state before iteration for corruption detection
@@ -613,6 +719,10 @@ async function main() {
     appendFileSync(LOG_FILE, `\n=== ✅ Iteration ${i} complete — ${new Date().toString()} ===\n`);
     tasksCompleted++;
 
+    // sync progress and plan back from worktree to main project dir
+    syncProgressBack();
+    syncPlanBack();
+
     // mark task done in plan file
     if (checkbox) {
       markCheckboxDone(task);
@@ -636,7 +746,7 @@ async function main() {
 
 function getAuditFixPrompt(): string {
   return buildAuditFixPrompt({
-    projectDir: PROJECT_DIR,
+    projectDir: workingDir,
     planFile: PLAN_FILE,
     progressFile: PROGRESS_FILE,
     diffBase: resolveCleanupDiffBase(START_COMMIT),
@@ -645,7 +755,7 @@ function getAuditFixPrompt(): string {
 
 function getCleanupPrompt(): string {
   return buildCleanupPrompt({
-    projectDir: PROJECT_DIR,
+    projectDir: workingDir,
     planFile: PLAN_FILE,
     progressFile: PROGRESS_FILE,
     diffBase: resolveCleanupDiffBase(START_COMMIT),
