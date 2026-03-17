@@ -64,7 +64,7 @@ const TAILNET_SUFFIX = (() => {
     const h = cfg.tailscaleHostname as string;
     const dot = h.indexOf(".");
     if (dot !== -1) return h.substring(dot + 1);
-  } catch {}
+  } catch { /* config not yet written — handled by warning below */ }
   return "";
 })();
 
@@ -79,7 +79,7 @@ function isAllowedOrigin(origin: string): boolean {
     try {
       const url = new URL(origin);
       if (url.protocol === "https:" && url.hostname.endsWith("." + TAILNET_SUFFIX)) return true;
-    } catch {}
+    } catch { /* expected: malformed origin URL */ }
   }
   return false;
 }
@@ -199,7 +199,7 @@ export function startServer(port = PORT, host = "127.0.0.1"): void {
     console.log(`Wolfpack PWA: http://localhost:${port}/`);
     discoverPeers().then(() => {
       if (cachedPeers.length) console.log(`Discovered ${cachedPeers.length} peer(s): ${cachedPeers.map(p => p.name).join(", ")}`);
-    }).catch(() => {});
+    }).catch((err: any) => { console.warn(`peer discovery failed at startup:`, err?.message); });
   });
 }
 

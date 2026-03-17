@@ -155,7 +155,9 @@ export function killPortHolder(port: number): boolean {
       print(dim(`  Killed stale process (PID ${pid}) on port ${p}`));
       return true;
     }
-  } catch {}
+  } catch (err: any) {
+    console.warn(`killPortHolder: port check failed:`, err?.message);
+  }
   return false;
 }
 

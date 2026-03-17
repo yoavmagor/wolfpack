@@ -106,7 +106,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
         if (!(await isAllowedSession(session))) {
           alive = false;
           updating = false;
-          try { ws.close(4001, "session ended"); } catch {}
+          try { ws.close(4001, "session ended"); } catch (err: any) { console.warn(`ws.close failed [${session}]:`, err?.message); }
           return;
         }
       }
@@ -115,7 +115,9 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
         prev = pane;
         ws.send(JSON.stringify({ type: "output", data: pane }));
       }
-    } catch {}
+    } catch (err: any) {
+      console.error(`sendUpdate failed [${session}]:`, err?.message);
+    }
     updating = false;
     schedulePoll();
   }
@@ -130,7 +132,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
 
   const pingTimer = setInterval(() => {
     if (alive && ws.readyState === 1) {
-      try { ws.ping(); } catch {}
+      try { ws.ping(); } catch (err: any) { console.warn(`ws ping failed [${session}]:`, err?.message); }
     } else {
       clearInterval(pingTimer);
     }
@@ -193,16 +195,16 @@ export function teardownPty(session: string): void {
   entry.alive = false;
   activePtySessions.delete(session);
   if (entry.viewer) {
-    try { entry.viewer.close(1000, "pty teardown"); } catch {}
+    try { entry.viewer.close(1000, "pty teardown"); } catch (err: any) { console.warn(`teardownPty: viewer close failed [${session}]:`, err?.message); }
     entry.viewer = null;
   }
   if (entry.pendingViewer) {
-    try { entry.pendingViewer.close(1000, "pty teardown"); } catch {}
+    try { entry.pendingViewer.close(1000, "pty teardown"); } catch (err: any) { console.warn(`teardownPty: pendingViewer close failed [${session}]:`, err?.message); }
     entry.pendingViewer = null;
   }
   if (entry.proc) {
-    try { entry.proc.terminal!.close(); } catch {}
-    try { entry.proc.kill(); } catch {}
+    try { entry.proc.terminal!.close(); } catch (err: any) { console.warn(`teardownPty: terminal close failed [${session}]:`, err?.message); }
+    try { entry.proc.kill(); } catch (err: any) { console.warn(`teardownPty: proc kill failed [${session}]:`, err?.message); }
   }
 }
 
@@ -223,12 +225,12 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
 
     // If there's already a pending viewer, close it
     if (existing.pendingViewer) {
-      try { existing.pendingViewer.close(4002, "displaced"); } catch {}
+      try { existing.pendingViewer.close(4002, "displaced"); } catch (err: any) { console.warn(`displaced pendingViewer close failed [${session}]:`, err?.message); }
     }
     existing.pendingViewer = ws;
 
     const pingTimer = setInterval(() => {
-      if (ws.readyState === 1) { try { ws.ping(); } catch {} }
+      if (ws.readyState === 1) { try { ws.ping(); } catch (err: any) { console.warn(`pending ws ping failed [${session}]:`, err?.message); } }
       else clearInterval(pingTimer);
     }, 25000);
 
@@ -242,15 +244,15 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
           const oldViewer = existing.viewer;
           existing.viewer = null;
           if (oldViewer) {
-            try { oldViewer.close(4002, "displaced"); } catch {}
+            try { oldViewer.close(4002, "displaced"); } catch (err: any) { console.warn(`takeover: oldViewer close failed [${session}]:`, err?.message); }
           }
           // Tear down old PTY proc (no tmux session to clean up anymore)
           const oldProc = existing.proc;
           existing.alive = false;
           activePtySessions.delete(session);
           if (oldProc) {
-            try { oldProc.terminal!.close(); } catch {}
-            try { oldProc.kill(); } catch {}
+            try { oldProc.terminal!.close(); } catch (err: any) { console.warn(`takeover: terminal close failed [${session}]:`, err?.message); }
+            try { oldProc.kill(); } catch (err: any) { console.warn(`takeover: proc kill failed [${session}]:`, err?.message); }
           }
 
           // Remove pending handlers before promoting — prevents duplicate handlers
@@ -263,9 +265,11 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
           // Promote this viewer — spawn fresh PTY on first resize
           setupNewPtyEntry(ws, session);
           // Tell client takeover succeeded so it re-sends resize
-          try { ws.send(JSON.stringify({ type: "control_granted" })); } catch {}
+          try { ws.send(JSON.stringify({ type: "control_granted" })); } catch (err: any) { console.error(`control_granted send failed [${session}]:`, err?.message); }
         }
-      } catch {}
+      } catch (err: any) {
+        if (!(err instanceof SyntaxError)) console.error(`pendingMessage handler failed [${session}]:`, err?.message);
+      }
     }
 
     function cleanup() {
@@ -324,14 +328,16 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
         entry.alive = false;
         activePtySessions.delete(session);
         if (entry.viewer) {
-          try { entry.viewer.close(4001, "session unavailable"); } catch {}
+          try { entry.viewer.close(4001, "session unavailable"); } catch (err: any) { console.warn(`session unavailable: viewer close failed [${session}]:`, err?.message); }
           entry.viewer = null;
         }
         return;
       }
 
       // Override window-size so resize-window works
-      await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 }).catch(() => {});
+      await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 }).catch((err: any) => {
+        console.warn(`tmux set-option window-size failed [${session}]:`, err?.message);
+      });
 
       if (!entry.alive || activePtySessions.get(session) !== entry || entry.viewer !== ws) return;
 
@@ -361,7 +367,9 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               console.error(`PTY prefill send failed [${session}]:`, err?.message || err);
             }
           }
-        } catch {}
+        } catch (err: any) {
+          console.error(`PTY prefill capture failed [${session}]:`, err?.message);
+        }
       }
 
       if (!entry.alive || activePtySessions.get(session) !== entry || entry.viewer !== ws) return;
@@ -387,7 +395,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               if (!data.length) return;
             }
             if (entry.viewer && entry.viewer.readyState === 1) {
-              try { entry.viewer.send(data); } catch {}
+              try { entry.viewer.send(data); } catch (err: any) { console.warn(`PTY data send failed [${session}]:`, err?.message); }
             }
           },
           exit(_terminal: unknown, _code: number, _signal?: number) {
@@ -398,11 +406,11 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
             const code = rapid ? 4001 : 1000;
             const reason = rapid ? "session unavailable" : "pty exited";
             if (entry.viewer) {
-              try { entry.viewer.close(code, reason); } catch {}
+              try { entry.viewer.close(code, reason); } catch (err: any) { console.warn(`pty exit: viewer close failed [${session}]:`, err?.message); }
               entry.viewer = null;
             }
             if (entry.pendingViewer) {
-              try { entry.pendingViewer.close(code, reason); } catch {}
+              try { entry.pendingViewer.close(code, reason); } catch (err: any) { console.warn(`pty exit: pendingViewer close failed [${session}]:`, err?.message); }
               entry.pendingViewer = null;
             }
           },
@@ -416,10 +424,10 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
           // Re-force latest in case Claude Code re-applied manual during spawn
           await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 });
           await exec(TMUX, ["resize-window", "-t", session, "-x", String(latestSize.cols), "-y", String(latestSize.rows)], { timeout: 2000 });
-        } catch {}
+        } catch (err: any) { console.warn(`post-spawn tmux resize failed [${session}]:`, err?.message); }
         try {
           entry.proc.terminal!.resize(latestSize.cols, latestSize.rows);
-        } catch {}
+        } catch (err: any) { console.warn(`post-spawn terminal resize failed [${session}]:`, err?.message); }
       }, 100);
     } finally {
       spawning = false;
@@ -449,7 +457,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
             });
           }
           if (entry.viewer && entry.viewer.readyState === 1) {
-            try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch {}
+            try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch (err: any) { console.warn(`attach_ack send failed [${session}]:`, err?.message); }
           }
         } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           const cols = clampCols(msg.cols);
@@ -467,7 +475,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               entry.proc.terminal!.resize(cols, rows);
               exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 })
                 .then(() => exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 }))
-                .catch(() => {});
+                .catch((err: any) => { console.warn(`tmux resize failed [${session}]:`, err?.message); });
             }, 80);
           }
         }
@@ -482,7 +490,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
   });
 
   const pingTimer = setInterval(() => {
-    if (ws.readyState === 1) { try { ws.ping(); } catch {} }
+    if (ws.readyState === 1) { try { ws.ping(); } catch (err: any) { console.warn(`pty ws ping failed [${session}]:`, err?.message); } }
     else clearInterval(pingTimer);
   }, 25000);
 

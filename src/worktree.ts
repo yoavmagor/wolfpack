@@ -55,7 +55,9 @@ export function createWorktree(
   try {
     mkdirSync(join(realProjectDir, ".wolfpack"), { recursive: true });
     appendFileSync(orderFile, `${worktreePath}\n`);
-  } catch {}
+  } catch (err: any) {
+    console.error(`createWorktree: failed to record worktree order:`, err?.message);
+  }
   return worktreePath;
 }
 
@@ -142,7 +144,9 @@ export function cleanupAllExceptFinal(
     if (existsSync(orderFile)) {
       orderedPaths = readFileSync(orderFile, "utf-8").trim().split("\n").filter(Boolean);
     }
-  } catch {}
+  } catch (err: any) {
+    console.warn(`cleanupAllExceptFinal: failed to read worktree order file:`, err?.message);
+  }
 
   if (orderedPaths && orderedPaths.length > 0) {
     // Order managed worktrees by creation order
@@ -167,7 +171,9 @@ export function cleanupAllExceptFinal(
     cwd: realProjectDir,
     stdio: "pipe",
   });
-  try { writeFileSync(orderFile, `${final.path}\n`); } catch {}
+  try { writeFileSync(orderFile, `${final.path}\n`); } catch (err: any) {
+    console.warn(`cleanupAllExceptFinal: failed to update order file:`, err?.message);
+  }
 
   return { removed, kept: final.branch };
 }

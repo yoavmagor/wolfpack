@@ -298,7 +298,9 @@ export const routes: Record<
     }
     const projectDir = join(DEV_DIR, folderName);
     if (newProject) {
-      try { mkdirSync(projectDir, { recursive: true }); } catch {}
+      try { mkdirSync(projectDir, { recursive: true }); } catch (err: any) {
+        console.error(`/api/create: failed to create project directory ${projectDir}:`, err?.message);
+      }
     }
     if (!validateProjectDir(res, projectDir)) return;
     const finalName = customName || await uniqueSessionName(folderName);
@@ -566,13 +568,17 @@ export const routes: Record<
       if (existsSync(lockPath)) {
         const lockPid = Number(readFileSync(lockPath, "utf-8").trim());
         if (!lockPid || lockPid <= 1) {
-          try { unlinkSync(lockPath); } catch {}
+          try { unlinkSync(lockPath); } catch (err: any) {
+            if (err?.code !== "ENOENT") console.warn(`ralph start: failed to remove invalid lock:`, err?.message);
+          }
         } else {
           try {
             process.kill(lockPid, 0);
             return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
           } catch {
-            try { unlinkSync(lockPath); } catch {}
+            try { unlinkSync(lockPath); } catch (err: any) {
+              if (err?.code !== "ENOENT") console.warn(`ralph start: failed to remove stale lock:`, err?.message);
+            }
           }
         }
       }
@@ -662,7 +668,9 @@ export const routes: Record<
     });
     child.unref();
 
-    try { writeFileSync(lockPath, String(child.pid ?? 0)); } catch {}
+    try { writeFileSync(lockPath, String(child.pid ?? 0)); } catch (err: any) {
+      console.error(`ralph start: failed to write lock file with PID:`, err?.message);
+    }
 
     json(res, {
       ok: true,
@@ -708,7 +716,9 @@ export const routes: Record<
     }
     try {
       process.kill(status.pid, "SIGTERM");
-      try { process.kill(-status.pid, "SIGTERM"); } catch {}
+      try { process.kill(-status.pid, "SIGTERM"); } catch (err: any) {
+        console.warn(`ralph cancel: failed to SIGTERM process group:`, err?.message);
+      }
       json(res, { ok: true, killed: status.pid });
     } catch {
       json(res, { error: "failed to kill process" }, 500);
