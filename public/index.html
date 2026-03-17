@@ -4152,6 +4152,10 @@
       function addToGrid(session, machine) {
         if (!isDesktop()) return;
         if (state.gridSessions.length >= MAX_GRID_CELLS) return;
+        // Must be on terminal view to build a grid — switch if needed
+        if (state.currentView !== "terminal") {
+          showView("terminal", true);
+        }
         state.sidebarResizeDone = false;
         // Already in grid?
         if (state.gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
@@ -4538,7 +4542,9 @@
         // Tear down terminal connections when navigating away from terminal view
         // Prevents background WS from auto-reconnecting and stealing control from other instances
         if (prevView === "terminal" && effectiveName !== "terminal") {
-          if (state.useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
+          if (isGridActive()) { exitGridMode(); }
+          else if (state.useDesktopTerminal) { destroyDesktopTerminal(); }
+          else { stopPolling(); }
         }
 
         setState({ currentView: effectiveName });
