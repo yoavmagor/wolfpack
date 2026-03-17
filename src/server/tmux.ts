@@ -253,6 +253,10 @@ export async function tmuxNewSession(
     const shellCmd = `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT ${SHELL} -lic ${shellEscape(fullCmd + "; exec " + SHELL)}`;
     await exec(TMUX, ["new-session", "-d", "-s", name, "-c", cwd, shellCmd]);
   }
+  // enforce sane defaults for wolfpack sessions (scoped to this session only)
+  await exec(TMUX, ["set-option", "-t", name, "mouse", "on"]).catch((e: unknown) => {
+    console.warn(`tmuxNewSession: failed to set mouse option [${name}]:`, errMsg(e));
+  });
   // cache only after successful creation to avoid poisoning map on failed attempts
   sessionDirMap.set(name, cwd);
   // persist project root in tmux session env — survives server restarts
