@@ -178,3 +178,56 @@ test("backFromRalph restores a suspended grid", async ({ page }) => {
   });
   expect(preservedAfter).toBe(0);
 });
+
+test("re-adding the remaining preserved session from Ralph reinitializes terminal view", async ({ page }) => {
+  await loadApp(page);
+
+  await page.evaluate(() => {
+    // Start on Ralph with a suspended 2-session grid focused on another-project.
+    // @ts-ignore
+    state.preservedGridSessions = [
+      { session: "test-project", machine: "" },
+      { session: "another-project", machine: "" },
+    ];
+    // @ts-ignore
+    state.preservedGridFocusIndex = 1;
+    // @ts-ignore
+    state.currentSession = "another-project";
+    // @ts-ignore
+    state.currentMachine = "";
+    // @ts-ignore
+    state.useDesktopTerminal = true;
+    // @ts-ignore
+    showView("ralph-detail");
+  });
+
+  await page.evaluate(() => {
+    // First click removes test-project from the preserved grid, leaving
+    // another-project as the current single session.
+    // @ts-ignore
+    toggleGrid("test-project", "", null);
+  });
+
+  await page.evaluate(() => {
+    // Second click re-adds the remaining current session from Ralph.
+    // This used to route through switchSession()'s same-session fast path
+    // and return without initializing the desktop terminal, leaving a blank view.
+    // @ts-ignore
+    toggleGrid("another-project", "", null);
+  });
+
+  await expect.poll(async () => page.evaluate(() => {
+    // @ts-ignore
+    return state.currentView;
+  })).toBe("terminal");
+
+  await expect.poll(async () => page.evaluate(() => {
+    // @ts-ignore
+    return !!state.desktopController;
+  })).toBe(true);
+
+  await expect.poll(async () => page.evaluate(() => {
+    const el = document.getElementById("desktop-terminal-container");
+    return el ? getComputedStyle(el).display : "none";
+  })).toBe("block");
+});

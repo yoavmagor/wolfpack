@@ -2700,7 +2700,7 @@
 
     <!-- Ralph detail view -->
     <div id="ralph-detail-view" class="view">
-      <button class="picker-cancel-btn" onclick="backFromRalph()">&#8592; Back</button>
+      <button id="ralph-detail-back-btn" class="picker-cancel-btn" onclick="backFromRalph()">&#8592; Back</button>
       <div id="ralph-detail-header" class="ralph-detail-header"></div>
       <div id="ralph-log-container" class="ralph-log-container">
         <div id="ralph-iterations"></div>
@@ -2714,7 +2714,7 @@
 
     <!-- Ralph start form view -->
     <div id="ralph-start-view" class="view">
-      <button class="picker-cancel-btn" onclick="backFromRalph()">&#8592; Cancel</button>
+      <button id="ralph-start-back-btn" class="picker-cancel-btn" onclick="backFromRalph()">&#8592; Cancel</button>
       <div class="ralph-start-form">
         <div id="ralph-machine-picker" style="display:none"></div>
 
@@ -4780,6 +4780,10 @@
           }
           const settingsBackBtn = document.getElementById("settings-back-btn");
           if (settingsBackBtn) settingsBackBtn.style.display = effectiveName === "settings" ? "block" : "none";
+          const ralphDetailBackBtn = document.getElementById("ralph-detail-back-btn");
+          if (ralphDetailBackBtn) ralphDetailBackBtn.style.display = effectiveName === "ralph-detail" ? "inline-block" : "none";
+          const ralphStartBackBtn = document.getElementById("ralph-start-back-btn");
+          if (ralphStartBackBtn) ralphStartBackBtn.style.display = effectiveName === "ralph-start" ? "inline-block" : "none";
           if (effectiveName === "settings") {
             renderQuickCmdSettings();
           } else if (effectiveName === "ralph-detail") {
@@ -6436,9 +6440,17 @@
           name = val;
         }
         if (name === state.currentSession && machineUrl === state.currentMachine) {
-          // Same session — but reconnect if WS is dead/blocked
-          if (state.useDesktopTerminal && state.desktopController && !state.desktopController.isConnected) {
-            connectDesktopWs();
+          // Same session — reconnect or reinitialize if the terminal is not active.
+          if (state.useDesktopTerminal) {
+            if (state.desktopController) {
+              if (!state.desktopController.isConnected) connectDesktopWs();
+            } else if (state.currentView === "terminal") {
+              initDesktopTerminal();
+            }
+          } else if (!state.mobileStreamingActive && state.currentView === "terminal") {
+            document.getElementById("terminal").textContent = "";
+            await resizePane();
+            startPolling();
           }
           return;
         }
