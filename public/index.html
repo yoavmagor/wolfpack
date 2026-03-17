@@ -6412,8 +6412,16 @@
                 connectDesktopWs();
               }
             } else {
-              // Mobile: resume WS stream
-              startPolling(false);
+              // Mobile: kill stale WS and reconnect fresh.
+              // After backgrounding, the OS suspends the tab and the TCP connection
+              // dies silently — but the WS object may still report readyState=OPEN,
+              // blocking reconnection for 30-60s until the browser detects the dead socket.
+              if (state.mobileWs) {
+                const ws = state.mobileWs;
+                state.mobileWs = null;
+                try { ws.close(1000, "resume foreground"); } catch {}
+              }
+              startPolling(true);
             }
           }
         } else {
