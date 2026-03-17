@@ -91,6 +91,19 @@ export function removeFromGridState(
   return { sessions: newSessions, focusIndex: newFocus, exitGrid: false };
 }
 
+type ClonedGridState = {
+  sessions: GridSession[];
+  focusIndex: number;
+  focusedSession?: GridSession;
+};
+
+function cloneGridState(sessions: GridSession[], focusIndex: number): ClonedGridState {
+  const cloned = sessions.map(gs => ({ session: gs.session, machine: gs.machine }));
+  if (!cloned.length) return { sessions: [], focusIndex: 0 };
+  const clamped = Math.max(0, Math.min(focusIndex, cloned.length - 1));
+  return { sessions: cloned, focusIndex: clamped, focusedSession: cloned[clamped] };
+}
+
 /**
  * Preserve the current grid working set while suspending live controllers.
  * Returns a cloned session list, clamped focus index, and the focused session.
@@ -98,21 +111,8 @@ export function removeFromGridState(
 export function suspendGridState(
   gridSessions: GridSession[],
   focusIndex: number,
-): {
-  sessions: GridSession[];
-  focusIndex: number;
-  focusedSession?: GridSession;
-} {
-  const sessions = gridSessions.map(gs => ({ session: gs.session, machine: gs.machine }));
-  if (!sessions.length) {
-    return { sessions: [], focusIndex: 0 };
-  }
-  const clampedFocus = Math.max(0, Math.min(focusIndex, sessions.length - 1));
-  return {
-    sessions,
-    focusIndex: clampedFocus,
-    focusedSession: sessions[clampedFocus],
-  };
+): ClonedGridState {
+  return cloneGridState(gridSessions, focusIndex);
 }
 
 /**
@@ -122,21 +122,8 @@ export function suspendGridState(
 export function resumeGridState(
   suspendedSessions: GridSession[],
   focusIndex: number,
-): {
-  sessions: GridSession[];
-  focusIndex: number;
-  focusedSession?: GridSession;
-} {
-  const sessions = suspendedSessions.map(gs => ({ session: gs.session, machine: gs.machine }));
-  if (!sessions.length) {
-    return { sessions: [], focusIndex: 0 };
-  }
-  const clampedFocus = Math.max(0, Math.min(focusIndex, sessions.length - 1));
-  return {
-    sessions,
-    focusIndex: clampedFocus,
-    focusedSession: sessions[clampedFocus],
-  };
+): ClonedGridState {
+  return cloneGridState(suspendedSessions, focusIndex);
 }
 
 /**

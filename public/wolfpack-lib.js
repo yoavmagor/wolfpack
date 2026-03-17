@@ -77,29 +77,18 @@ function removeFromGridState(gridSessions, idx, focusIndex) {
   }
   return { sessions: newSessions, focusIndex: newFocus, exitGrid: false };
 }
-function suspendGridState(gridSessions, focusIndex) {
-  const sessions = gridSessions.map((gs) => ({ session: gs.session, machine: gs.machine }));
-  if (!sessions.length) {
+function cloneGridState(sessions, focusIndex) {
+  const cloned = sessions.map((gs) => ({ session: gs.session, machine: gs.machine }));
+  if (!cloned.length)
     return { sessions: [], focusIndex: 0 };
-  }
-  const clampedFocus = Math.max(0, Math.min(focusIndex, sessions.length - 1));
-  return {
-    sessions,
-    focusIndex: clampedFocus,
-    focusedSession: sessions[clampedFocus]
-  };
+  const clamped = Math.max(0, Math.min(focusIndex, cloned.length - 1));
+  return { sessions: cloned, focusIndex: clamped, focusedSession: cloned[clamped] };
+}
+function suspendGridState(gridSessions, focusIndex) {
+  return cloneGridState(gridSessions, focusIndex);
 }
 function resumeGridState(suspendedSessions, focusIndex) {
-  const sessions = suspendedSessions.map((gs) => ({ session: gs.session, machine: gs.machine }));
-  if (!sessions.length) {
-    return { sessions: [], focusIndex: 0 };
-  }
-  const clampedFocus = Math.max(0, Math.min(focusIndex, sessions.length - 1));
-  return {
-    sessions,
-    focusIndex: clampedFocus,
-    focusedSession: sessions[clampedFocus]
-  };
+  return cloneGridState(suspendedSessions, focusIndex);
 }
 // src/take-control-logic.ts
 var CLOSE_CODE_DISPLACED = 4002;

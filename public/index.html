@@ -4215,6 +4215,9 @@
 
       function restorePreservedGrid() {
         if (!hasPreservedGrid()) return false;
+        // Stale sessions (tmux exited while grid was suspended) are handled gracefully:
+        // each cell's controller will receive CLOSE_CODE_SESSION_UNAVAILABLE (4001)
+        // and transition to "session-ended" state without crashing the grid.
         const restored = WP.resumeGridState(state.preservedGridSessions, state.preservedGridFocusIndex);
         state.gridSessions = restored.sessions.map(gs => ({
           session: gs.session,
@@ -4357,6 +4360,9 @@
         renderSidebar();
       }
 
+      // skipRestore: when true, preserves session identity state but does NOT call
+      // initDesktopTerminal(). Pass true when navigating AWAY from terminal view so
+      // the caller controls when the terminal is next initialized.
       function exitGridMode(skipRestore) {
         cancelGridRelayoutTransition();
         // Remove grid resize handler
