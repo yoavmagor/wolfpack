@@ -177,7 +177,7 @@ export function generateSystemdUnit(): string {
 }
 
 // launchd domain target for the current user
-const LAUNCHD_DOMAIN = `gui/${process.getuid()}`;
+const LAUNCHD_DOMAIN = `gui/${process.getuid!()}`;
 const LAUNCHD_TARGET = `${LAUNCHD_DOMAIN}/${PLIST_LABEL}`;
 
 function launchdBootout() {

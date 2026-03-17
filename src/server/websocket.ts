@@ -82,9 +82,9 @@ export function __stripInitialPtyOverlap(
 }
 
 /** Test hook: expose PTY internal state for assertions */
-export function __getTestState(): { activePtySessions: Map<string, { viewer: any; alive: boolean }>; ptySpawnAttempts: Map<string, number> } {
+export function __getTestState(): { activePtySessions: typeof activePtySessions; ptySpawnAttempts: Map<string, number> } {
   if (!process.env.WOLFPACK_TEST) throw new Error("__getTestState() is only available in test mode (WOLFPACK_TEST=1)");
-  return { activePtySessions: activePtySessions as any, ptySpawnAttempts };
+  return { activePtySessions, ptySpawnAttempts };
 }
 
 // ── Terminal WS handler (mobile — capture-pane polling) ──
@@ -218,9 +218,10 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
     }
   }
 
-  const existing = activePtySessions.get(session);
+  const maybeExisting = activePtySessions.get(session);
 
-  if (existing && existing.alive) {
+  if (maybeExisting && maybeExisting.alive) {
+    const existing = maybeExisting; // const binding for closure narrowing
     // Session occupied — send conflict, hold connection open as pending
     ws.send(JSON.stringify({ type: "viewer_conflict" }));
 
@@ -382,7 +383,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
         terminal: {
           cols: initialSize.cols,
           rows: initialSize.rows,
-          data(_terminal: unknown, data: Buffer) {
+          data(_terminal: unknown, data: Uint8Array) {
             if (!entry.alive) return;
             if (shouldDedupeInitialAttach) {
               pendingAttach = pendingAttach.length
@@ -399,7 +400,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               try { entry.viewer.send(data); } catch (e: unknown) { console.debug(`PTY data send failed [${session}]:`, errMsg(e)); }
             }
           },
-          exit(_terminal: unknown, _code: number, _signal?: number) {
+          exit(_terminal: unknown, _code: number, _signal: string | null) {
             if (!entry.alive) return;
             entry.alive = false;
             activePtySessions.delete(session);

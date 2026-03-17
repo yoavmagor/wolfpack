@@ -129,13 +129,13 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
           const r = await fetch(p.url + "/api/info", { signal: ctrl.signal });
           clearTimeout(timer);
           const info = await r.json();
-          return { ...p, name: info.name || p.hostname, version: info.version, wolfpack: true };
+          return { ...p, name: info.name || p.hostname, version: info.version, wolfpack: true as const };
         } catch {
-          return { ...p, wolfpack: false };
+          return { ...p, name: p.hostname, version: undefined, wolfpack: false as const };
         }
       }),
     );
-    const wolfpackPeers = results.filter((r) => r.wolfpack);
+    const wolfpackPeers = results.filter((r): r is Extract<typeof r, { wolfpack: true }> => r.wolfpack);
     cachedPeers = wolfpackPeers.map(p => ({ url: p.url, name: p.name }));
     return { peers: wolfpackPeers };
   } catch (e: any) {

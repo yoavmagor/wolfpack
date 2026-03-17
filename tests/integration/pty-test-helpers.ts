@@ -6,13 +6,14 @@
  * desktop-grid, and take-control test suites.
  */
 import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
 
 // ── Server setup ──
 
 export interface PtyTestContext {
   port: number;
   baseWsUrl: string;
-  server: ReturnType<typeof import("../../src/server/index.ts")>["server"];
+  server: Server;
   activePtySessions: Map<string, any>;
   ptySpawnAttempts: Map<string, number>;
   cleanup: () => void;

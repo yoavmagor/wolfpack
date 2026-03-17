@@ -5,24 +5,32 @@
     "": {
       "name": "wolfpack",
       "dependencies": {
-        "ghostty-web": "^0.4.0",
+        "ghostty-web": "0.4.0",
         "qrcode-terminal": "^0.12.0",
         "ws": "^8.19.0",
       },
       "devDependencies": {
         "@playwright/test": "^1.58.2",
+        "@types/ws": "^8.18.1",
+        "bun-types": "^1.3.10",
         "playwright": "^1.58.2",
       },
       "optionalDependencies": {
-        "wolfpack-bridge-darwin-arm64": "1.5.6",
-        "wolfpack-bridge-darwin-x64": "1.5.6",
-        "wolfpack-bridge-linux-arm64": "1.5.6",
-        "wolfpack-bridge-linux-x64": "1.5.6",
+        "wolfpack-bridge-darwin-arm64": "1.5.7",
+        "wolfpack-bridge-darwin-x64": "1.5.7",
+        "wolfpack-bridge-linux-arm64": "1.5.7",
+        "wolfpack-bridge-linux-x64": "1.5.7",
       },
     },
   },
   "packages": {
     "@playwright/test": ["@playwright/test@1.58.2", "", { "dependencies": { "playwright": "1.58.2" }, "bin": { "playwright": "cli.js" } }, "sha512-akea+6bHYBBfA9uQqSYmlJXn61cTa+jbO87xVLCWbTqbWadRVmhxlXATaOjOgcBaWU4ePo0wB41KMFv3o35IXA=="],
+
+    "@types/node": ["@types/node@25.5.0", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-jp2P3tQMSxWugkCUKLRPVUpGaL5MVFwF8RDuSRztfwgN1wmqJeMSbKlnEtQqU8UrhTmzEmZdu2I6v2dpp7XIxw=="],
+
+    "@types/ws": ["@types/ws@8.18.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg=="],
+
+    "bun-types": ["bun-types@1.3.10", "", { "dependencies": { "@types/node": "*" } }, "sha512-tcpfCCl6XWo6nCVnpcVrxQ+9AYN1iqMIzgrSKYMB/fjLtV2eyAVEg7AxQJuCq/26R6HpKWykQXuSOq/21RYcbg=="],
 
     "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
 
@@ -34,13 +42,15 @@
 
     "qrcode-terminal": ["qrcode-terminal@0.12.0", "", { "bin": "bin/qrcode-terminal.js" }, "sha512-EXtzRZmC+YGmGlDFbXKxQiMZNwCLEO6BANKXG4iCtSIM0yqc/pappSx3RIKr4r0uh5JsBckOXeKrB3Iz7mdQpQ=="],
 
-    "wolfpack-bridge-darwin-arm64": ["wolfpack-bridge-darwin-arm64@1.5.6", "", { "os": "darwin", "cpu": "arm64" }, "sha512-Db6Qo7InUQpFtTCzg6nGD3PaLedun1Y4AoftVXdZ9Xr22lEZtj9KkWPRSCWXjeOvzS3Faag5rOUs7k4ProdiWQ=="],
+    "undici-types": ["undici-types@7.18.2", "", {}, "sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w=="],
 
-    "wolfpack-bridge-darwin-x64": ["wolfpack-bridge-darwin-x64@1.5.6", "", { "os": "darwin", "cpu": "x64" }, "sha512-/QuhIPpaCpEewnTTEx4s3WmjmNBPr3Z1mvgAGzcb16WLRgjdoKBofl6MimSr76D8rQ2IzR6tWx3xQixJ69A+aw=="],
+    "wolfpack-bridge-darwin-arm64": ["wolfpack-bridge-darwin-arm64@1.5.7", "", { "os": "darwin", "cpu": "arm64" }, "sha512-Opyy01JeZqceQQs0X3jZ9BvKm/ltP48w7pIRMbZM4epapGJ+Av/0keY4FhXijfJXvIeXP9s2NPI+mpldfsg5xA=="],
 
-    "wolfpack-bridge-linux-arm64": ["wolfpack-bridge-linux-arm64@1.5.6", "", { "os": "linux", "cpu": "arm64" }, "sha512-zPMPKWX/K+nPdij5/obJ/PodsB86Go+JtrowXSlPskx24IHeQdDhh92MXOBAeX4enfSxj+seGLczQcwxJPILJw=="],
+    "wolfpack-bridge-darwin-x64": ["wolfpack-bridge-darwin-x64@1.5.7", "", { "os": "darwin", "cpu": "x64" }, "sha512-wGupEj/YHSdEkW/SOIzLQsHtvLnTLNxJoMJCRlvbm6gD1+/m9Ikm8VE30Sgy6fqvImvlteyL7xH15lLJTUvwQw=="],
 
-    "wolfpack-bridge-linux-x64": ["wolfpack-bridge-linux-x64@1.5.6", "", { "os": "linux", "cpu": "x64" }, "sha512-8/1OercQiEp2WBYkwRloTY0JVi52U26w6Wer+XoTXS+edub6lJ5/Ur0w/tkq6o78hSfPX4J9+vcrOQtfwSn2LQ=="],
+    "wolfpack-bridge-linux-arm64": ["wolfpack-bridge-linux-arm64@1.5.7", "", { "os": "linux", "cpu": "arm64" }, "sha512-XJwe8Cty1xkQYTIojTI4DoePBml/VmLXzJaQowz+/QkFSf7+65v19Ky90W0wHGYogPml+Z73mSFMoq5wGvKTIQ=="],
+
+    "wolfpack-bridge-linux-x64": ["wolfpack-bridge-linux-x64@1.5.7", "", { "os": "linux", "cpu": "x64" }, "sha512-xu7xtt77krqvZtOTScqv8FMnrXyMKAbyhNgyaNOZTmtGtr8M1+vAQC/S8E8l8HSgeVSy+9AvtgVwBnoI8cy78Q=="],
 
     "ws": ["ws@8.19.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-blAT2mjOEIi0ZzruJfIhb3nps74PRWTCz1IjglWEEpQl5XS/UNama6u2/rjFkDDouqr4L67ry+1aGIALViWjDg=="],
   }

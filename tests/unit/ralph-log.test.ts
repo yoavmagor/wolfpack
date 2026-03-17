@@ -243,7 +243,7 @@ describe("parseRalphLog", () => {
     test("extracts project name from directory path", () => {
       writeLog(logHeader());
       const s = parseRalphLog(tmpDir)!;
-      expect(s.project).toBe(tmpDir.split("/").pop());
+      expect(s.project).toBe(tmpDir.split("/").pop()!);
     });
   });
 
