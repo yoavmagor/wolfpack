@@ -35,11 +35,11 @@ function tailscaleBin(): string | null {
   try {
     execSync("tailscale version", { stdio: "ignore" });
     return "tailscale";
-  } catch {}
+  } catch { /* probe: tailscale not in PATH */ }
   try {
     execSync(`${TAILSCALE_MAC_CLI} version`, { stdio: "ignore" });
     return TAILSCALE_MAC_CLI;
-  } catch {}
+  } catch { /* probe: Tailscale.app CLI not found */ }
   return null;
 }
 
@@ -215,7 +215,9 @@ export async function setup() {
     if (!tailscaleHostname) {
       if (IS_MACOS) {
         print(dim("  Launching Tailscale.app for sign-in..."));
-        try { execSync("open /Applications/Tailscale.app", { stdio: "ignore" }); } catch {}
+        try { execSync("open /Applications/Tailscale.app", { stdio: "ignore" }); } catch (e: unknown) {
+          console.warn(`setup: failed to launch Tailscale.app:`, e instanceof Error ? e.message : String(e));
+        }
       } else if (IS_LINUX) {
         print(dim("  Run 'sudo tailscale up' in another terminal to sign in."));
       }
@@ -225,7 +227,7 @@ export async function setup() {
       let ttyFd: number | null = null;
       try {
         ttyFd = openSync("/dev/tty", fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
-      } catch {}
+      } catch { /* expected: no tty available in non-interactive mode */ }
 
       const MAX_POLLS = 60;
       for (let i = 0; i < MAX_POLLS; i++) {
@@ -241,7 +243,7 @@ export async function setup() {
               print(dim("  Skipped Tailscale sign-in."));
               break;
             }
-          } catch {}
+          } catch { /* expected: EAGAIN on nonblocking read */ }
         }
 
         if (i > 0 && i % 5 === 0) {
@@ -251,7 +253,9 @@ export async function setup() {
       }
 
       if (ttyFd !== null) {
-        try { closeSync(ttyFd); } catch {}
+        try { closeSync(ttyFd); } catch (e: unknown) {
+          console.warn(`setup: failed to close tty fd:`, e instanceof Error ? e.message : String(e));
+        }
       }
 
       if (!tailscaleHostname) {

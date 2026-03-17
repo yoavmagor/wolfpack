@@ -22,6 +22,7 @@ import { expandBudget, resolveCleanupDiffBase } from "./validation.js";
 import { buildAuditFixPrompt } from "./ralph-skill-audit.js";
 import { buildCleanupPrompt } from "./ralph-skill-cleanup.js";
 import { createWorktree, cleanupAllExceptFinal, slugifyTaskName } from "./worktree.js";
+import { errMsg, killProcessTree, killProcessTreeSync } from "./shared/process-cleanup.js";
 
 const { values: args } = parseArgs({
   args: process.argv.slice(2),
@@ -130,7 +131,9 @@ const PROGRESS_PATH = join(PROJECT_DIR, PROGRESS_FILE);
 const LOCK_FILE = join(PROJECT_DIR, ".ralph.lock");
 
 function removeLock(): void {
-  try { unlinkSync(LOCK_FILE); } catch {}
+  try { unlinkSync(LOCK_FILE); } catch (e: unknown) {
+    if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`removeLock: failed to delete ${LOCK_FILE}:`, errMsg(e));
+  }
 }
 
 function readPlan(): string {
@@ -181,7 +184,9 @@ function markSectionDone(taskText: string): void {
     const lineRegex = new RegExp("^" + escaped + "$", "m");
     const updated = plan.replace(lineRegex, `${prefix}~~${rest}~~`);
     writeFileSync(PLAN_PATH, updated);
-  } catch {}
+  } catch (e: unknown) {
+    console.error(`markSectionDone: failed to update plan file:`, errMsg(e));
+  }
 }
 
 function markCheckboxDone(taskText: string): void {
@@ -194,7 +199,9 @@ function markCheckboxDone(taskText: string): void {
     // auto-strikethrough parent section header if all its child checkboxes are now done
     const updated = strikethroughCompletedParent(lines, cbIndex);
     writeFileSync(PLAN_PATH, updated);
-  } catch {}
+  } catch (e: unknown) {
+    console.error(`markCheckboxDone: failed to update plan file:`, errMsg(e));
+  }
 }
 
 /** Strikethrough parent section header if all its child checkboxes are done. Takes lines array and the index of the just-checked checkbox. */
@@ -335,12 +342,17 @@ appendFileSync(LOG_FILE, `started: ${new Date().toString()}\n\n`);
 
 // capture starting commit for summary diff
 let START_COMMIT = "";
-try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_DIR, encoding: "utf-8" }).trim(); } catch {}
+try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: PROJECT_DIR, encoding: "utf-8" }).trim(); } catch (e: unknown) {
+  console.warn(`could not capture starting commit:`, errMsg(e));
+}
 
 function getCurrentBranch(cwd: string): string {
   try {
     return execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, encoding: "utf-8" }).trim();
-  } catch { return "HEAD"; }
+  } catch (e: unknown) {
+    console.warn(`getCurrentBranch: git rev-parse failed, defaulting to "HEAD":`, errMsg(e));
+    return "HEAD";
+  }
 }
 
 /** Generate a worktree branch name from task header. */
@@ -393,7 +405,16 @@ function dedupCheckboxes(): void {
     if (out.length !== lines.length) {
       writeFileSync(PLAN_PATH, out.join("\n"));
     }
-  } catch {}
+  } catch (e: unknown) {
+    console.error(`dedupCheckboxes: failed to deduplicate plan:`, errMsg(e));
+  }
+}
+
+/** Remove ITER_FILE, silencing ENOENT. */
+function cleanupIterFile(): void {
+  try { unlinkSync(ITER_FILE); } catch (e: unknown) {
+    if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`failed to clean up iter file:`, errMsg(e));
+  }
 }
 
 const ITERATION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes per iteration
@@ -412,8 +433,7 @@ function runIteration(prompt: string): Promise<{ exitCode: number; output: strin
 
     const timeout = setTimeout(() => {
       appendFileSync(LOG_FILE, `\n=== ⚠️  Iteration timed out after ${ITERATION_TIMEOUT_MS / 60000}min — killing agent ===\n`);
-      child.kill("SIGTERM");
-      setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 5000);
+      if (child.pid) killProcessTree(child.pid);
     }, ITERATION_TIMEOUT_MS);
 
     child.stdout?.on("data", (d: Buffer) => {
@@ -446,9 +466,8 @@ process.on("exit", removeLock);
 // clean up child process, worktrees, and lock on SIGTERM
 process.on("SIGTERM", () => {
   appendFileSync(LOG_FILE, `\n=== 🛑 Received SIGTERM — cleaning up ===\n`);
-  if (activeChild) {
-    activeChild.kill("SIGTERM");
-    setTimeout(() => { try { activeChild?.kill("SIGKILL"); } catch {} }, 3000);
+  if (activeChild?.pid) {
+    killProcessTreeSync(activeChild.pid);
   }
   if (WORKTREE_MODE !== "false") {
     try {
@@ -483,12 +502,16 @@ function logSummary(tasksCompleted: number, subtasksAdded: number): void {
     const ref = START_COMMIT || "HEAD";
     const diff = execFileSync("git", ["diff", "--name-only", ref, "HEAD"], { cwd: workingDir, encoding: "utf-8" });
     filesChanged = diff.trim().split("\n").filter(Boolean);
-  } catch {}
+  } catch (e: unknown) {
+    console.warn(`logSummary: git diff failed:`, errMsg(e));
+  }
   try {
     const wt = execFileSync("git", ["diff", "--name-only", "HEAD"], { cwd: workingDir, encoding: "utf-8" });
     const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: workingDir, encoding: "utf-8" });
     uncommitted = [...wt.trim().split("\n"), ...untracked.trim().split("\n")].filter(Boolean);
-  } catch {}
+  } catch (e: unknown) {
+    console.warn(`logSummary: uncommitted files check failed:`, errMsg(e));
+  }
 
   appendFileSync(LOG_FILE, `\n=== 📊 Summary ===\n`);
   appendFileSync(LOG_FILE, `duration: ${mins}m ${secs}s\n`);
@@ -513,9 +536,13 @@ function logSummary(tasksCompleted: number, subtasksAdded: number): void {
 /** Copy plan and progress files into worktree so the agent can reference them. */
 function syncFilesToWorktree(): void {
   if (workingDir === PROJECT_DIR) return;
-  try { copyFileSync(PLAN_PATH, join(workingDir, PLAN_FILE)); } catch {}
+  try { copyFileSync(PLAN_PATH, join(workingDir, PLAN_FILE)); } catch (e: unknown) {
+    console.error(`syncFilesToWorktree: failed to copy plan file:`, errMsg(e));
+  }
   if (existsSync(PROGRESS_PATH)) {
-    try { copyFileSync(PROGRESS_PATH, join(workingDir, PROGRESS_FILE)); } catch {}
+    try { copyFileSync(PROGRESS_PATH, join(workingDir, PROGRESS_FILE)); } catch (e: unknown) {
+      console.error(`syncFilesToWorktree: failed to copy progress file:`, errMsg(e));
+    }
   }
 }
 
@@ -524,7 +551,9 @@ function syncProgressBack(): void {
   if (workingDir === PROJECT_DIR) return;
   const wtProgress = join(workingDir, PROGRESS_FILE);
   if (existsSync(wtProgress)) {
-    try { copyFileSync(wtProgress, PROGRESS_PATH); } catch {}
+    try { copyFileSync(wtProgress, PROGRESS_PATH); } catch (e: unknown) {
+      console.error(`syncProgressBack: failed to copy progress from worktree:`, errMsg(e));
+    }
   }
 }
 
@@ -533,7 +562,9 @@ function syncPlanBack(): void {
   if (workingDir === PROJECT_DIR) return;
   const wtPlan = join(workingDir, PLAN_FILE);
   if (existsSync(wtPlan)) {
-    try { copyFileSync(wtPlan, PLAN_PATH); } catch {}
+    try { copyFileSync(wtPlan, PLAN_PATH); } catch (e: unknown) {
+      console.error(`syncPlanBack: failed to copy plan from worktree:`, errMsg(e));
+    }
   }
 }
 
@@ -576,7 +607,9 @@ async function main() {
     try {
       workingDir = createWorktree(PROJECT_DIR, branchName, baseBranch);
       appendFileSync(LOG_FILE, `worktree created: ${workingDir} (branch ${branchName}, base ${baseBranch})\n\n`);
-      try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workingDir, encoding: "utf-8" }).trim(); } catch {}
+      try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workingDir, encoding: "utf-8" }).trim(); } catch (e: unknown) {
+        console.warn(`could not capture worktree starting commit:`, errMsg(e));
+      }
       syncFilesToWorktree();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -640,7 +673,9 @@ async function main() {
         appendFileSync(LOG_FILE, `worktree created: ${workingDir} (branch ${branchName}, base ${previousBranch})\n`);
         previousBranch = branchName;
         if (i === 1) {
-          try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workingDir, encoding: "utf-8" }).trim(); } catch {}
+          try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workingDir, encoding: "utf-8" }).trim(); } catch (e: unknown) {
+            console.warn(`could not capture task worktree starting commit:`, errMsg(e));
+          }
         }
         syncFilesToWorktree();
       } catch (err: unknown) {
@@ -681,13 +716,13 @@ async function main() {
       } else {
         appendFileSync(LOG_FILE, `\n=== ✅ Plan recovered (${recoveredCounts.total} tasks, ${recoveredCounts.done} done) ===\n`);
       }
-      try { unlinkSync(ITER_FILE); } catch {}
+      cleanupIterFile();
       continue;
     }
 
     if (exitCode !== 0) {
       appendFileSync(LOG_FILE, `\n=== ⚠️  Iteration ${i} FAILED (exit code ${exitCode}) — ${new Date().toString()} ===\n\n`);
-      try { unlinkSync(ITER_FILE); } catch {}
+      cleanupIterFile();
       continue;
     }
 
@@ -709,7 +744,7 @@ async function main() {
       for (const st of subtasks) appendFileSync(LOG_FILE, `  + ${st}\n`);
       lastTask = task;
       lastWasSubtaskEmission = true;
-      try { unlinkSync(ITER_FILE); } catch {}
+      cleanupIterFile();
       continue;
     }
 
@@ -730,7 +765,7 @@ async function main() {
       markSectionDone(task);
     }
 
-    try { unlinkSync(ITER_FILE); } catch {}
+    cleanupIterFile();
   }
 
   appendFileSync(LOG_FILE, `=== Completed ${maxIterations} iterations ===\n`);
@@ -772,7 +807,7 @@ async function runAuditFix(): Promise<void> {
   } else {
     appendFileSync(LOG_FILE, `\n=== ✅ Wax Inspect complete — ${new Date().toString()} ===\n`);
   }
-  try { unlinkSync(ITER_FILE); } catch {}
+  cleanupIterFile();
 }
 
 async function runCleanup(): Promise<void> {
@@ -785,7 +820,7 @@ async function runCleanup(): Promise<void> {
   } else {
     appendFileSync(LOG_FILE, `\n=== ✅ Wax Off complete — ${new Date().toString()} ===\n`);
   }
-  try { unlinkSync(ITER_FILE); } catch {}
+  cleanupIterFile();
 }
 
 async function runFinalPhases(): Promise<void> {

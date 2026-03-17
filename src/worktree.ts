@@ -7,6 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { realpathSync, existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { errMsg } from "./shared/process-cleanup.js";
 
 const WORKTREE_DIR = ".wolfpack/worktrees";
 const WORKTREE_ORDER_FILE = ".wolfpack/worktree-order.txt";
@@ -55,7 +56,9 @@ export function createWorktree(
   try {
     mkdirSync(join(realProjectDir, ".wolfpack"), { recursive: true });
     appendFileSync(orderFile, `${worktreePath}\n`);
-  } catch {}
+  } catch (e: unknown) {
+    console.error(`createWorktree: failed to record worktree order:`, errMsg(e));
+  }
   return worktreePath;
 }
 
@@ -142,7 +145,9 @@ export function cleanupAllExceptFinal(
     if (existsSync(orderFile)) {
       orderedPaths = readFileSync(orderFile, "utf-8").trim().split("\n").filter(Boolean);
     }
-  } catch {}
+  } catch (e: unknown) {
+    console.warn(`cleanupAllExceptFinal: failed to read worktree order file:`, errMsg(e));
+  }
 
   if (orderedPaths && orderedPaths.length > 0) {
     // Order managed worktrees by creation order
@@ -167,7 +172,9 @@ export function cleanupAllExceptFinal(
     cwd: realProjectDir,
     stdio: "pipe",
   });
-  try { writeFileSync(orderFile, `${final.path}\n`); } catch {}
+  try { writeFileSync(orderFile, `${final.path}\n`); } catch (e: unknown) {
+    console.warn(`cleanupAllExceptFinal: failed to update order file:`, errMsg(e));
+  }
 
   return { removed, kept: final.branch };
 }

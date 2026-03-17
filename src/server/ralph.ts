@@ -141,7 +141,9 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
       } catch {
         status.active = false;
         const lockPath = join(projectDir, ".ralph.lock");
-        try { if (existsSync(lockPath)) unlinkSync(lockPath); } catch {}
+        try { if (existsSync(lockPath)) unlinkSync(lockPath); } catch (e: unknown) {
+          console.warn(`parseRalphLog: failed to remove stale lock:`, e instanceof Error ? e.message : String(e));
+        }
       }
     }
 

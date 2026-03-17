@@ -155,7 +155,7 @@ export function killPortHolder(port: number): boolean {
       print(dim(`  Killed stale process (PID ${pid}) on port ${p}`));
       return true;
     }
-  } catch {}
+  } catch { /* expected: lsof exits non-zero when port is free */ }
   return false;
 }
 
