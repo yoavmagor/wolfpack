@@ -2755,6 +2755,14 @@
             <input type="checkbox" id="ralph-branch-toggle" onchange="toggleBranchFields()" class="ralph-checkbox" />
             <label for="ralph-branch-toggle" class="ralph-branch-label">New branch</label>
           </div>
+          <div class="flex-row" style="align-items: center;">
+            <label for="ralph-worktree-select" class="ralph-branch-label" style="flex-shrink: 0;">Worktree isolation</label>
+            <select id="ralph-worktree-select" style="margin-left: auto; width: auto; min-height: 0; padding: 4px 8px; font-size: 13px;">
+              <option value="false">Off</option>
+              <option value="plan">Per plan</option>
+              <option value="task">Per task</option>
+            </select>
+          </div>
         </div>
         <div id="ralph-branch-fields" class="ralph-branch-fields">
           <label for="ralph-branch-name">Branch name</label>
@@ -5216,7 +5224,9 @@
           }
         } catch {}
 
-        const body = { project, iterations, planFile, agent, format, cleanup, auditFix };
+        const worktreeVal = document.getElementById("ralph-worktree-select").value;
+        const worktree = worktreeVal === "false" ? false : worktreeVal;
+        const body = { project, iterations, planFile, agent, format, cleanup, auditFix, worktree };
         const branchToggle = document.getElementById("ralph-branch-toggle").checked;
         if (branchToggle) {
           const newBranch = document.getElementById("ralph-branch-name").value.trim();
