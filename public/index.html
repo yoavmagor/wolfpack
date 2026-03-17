@@ -4237,7 +4237,7 @@
         renderSidebar();
       }
 
-      function exitGridMode() {
+      function exitGridMode(skipRestore) {
         cancelGridRelayoutTransition();
         // Remove grid resize handler
         if (state.gridResizeHandler) {
@@ -4266,9 +4266,12 @@
         dtc.innerHTML = "";
         // Clear state.desktopController reference in case it's stale
         state.desktopController = null;
-        // Restore single-terminal mode
+        // Preserve which session to restore when returning to terminal view
         if (restoreSession) {
           setState({ currentSession: restoreSession, currentMachine: restoreMachine });
+        }
+        // Restore single-terminal mode (skip when navigating away from terminal view)
+        if (!skipRestore && restoreSession) {
           state.useDesktopTerminal = true;
           initDesktopTerminal();
           renderSidebar();
@@ -4542,7 +4545,7 @@
         // Tear down terminal connections when navigating away from terminal view
         // Prevents background WS from auto-reconnecting and stealing control from other instances
         if (prevView === "terminal" && effectiveName !== "terminal") {
-          if (isGridActive()) { exitGridMode(); }
+          if (isGridActive()) { exitGridMode(true); }
           else if (state.useDesktopTerminal) { destroyDesktopTerminal(); }
           else { stopPolling(); }
         }
