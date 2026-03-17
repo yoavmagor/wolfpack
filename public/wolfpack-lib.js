@@ -36,6 +36,60 @@ function encodeTerminalBinary(data) {
 function shouldRehydrate(wasReconnect, hydrationStarted, skipInitialPrefill) {
   return wasReconnect || hydrationStarted && !skipInitialPrefill;
 }
+// src/grid-logic.ts
+var MAX_GRID_CELLS = 6;
+function addToGridState(gridSessions, session, machine, currentSession, currentMachine) {
+  if (gridSessions.length >= MAX_GRID_CELLS)
+    return null;
+  if (gridSessions.some((gs) => gs.session === session && gs.machine === machine))
+    return null;
+  const newSessions = [...gridSessions, { session, machine }];
+  if (newSessions.length === 1 && currentSession) {
+    const alreadyAdded = session === currentSession && machine === currentMachine;
+    if (!alreadyAdded) {
+      newSessions.unshift({ session: currentSession, machine: currentMachine });
+    }
+  }
+  return {
+    sessions: newSessions,
+    focusIndex: newSessions.length - 1
+  };
+}
+function removeFromGridState(gridSessions, idx, focusIndex) {
+  if (idx < 0 || idx >= gridSessions.length) {
+    return { sessions: gridSessions, focusIndex, exitGrid: false };
+  }
+  const newSessions = [...gridSessions];
+  newSessions.splice(idx, 1);
+  let newFocus = focusIndex;
+  if (idx < focusIndex) {
+    newFocus--;
+  } else if (newFocus >= newSessions.length) {
+    newFocus = Math.max(0, newSessions.length - 1);
+  }
+  if (newSessions.length <= 1) {
+    return {
+      sessions: [],
+      focusIndex: 0,
+      exitGrid: true,
+      restoreSession: newSessions.length === 1 ? newSessions[0] : undefined
+    };
+  }
+  return { sessions: newSessions, focusIndex: newFocus, exitGrid: false };
+}
+function cloneGridState(sessions, focusIndex) {
+  const cloned = sessions.map((gs) => ({ session: gs.session, machine: gs.machine }));
+  if (!cloned.length)
+    return { sessions: [], focusIndex: 0 };
+  const clamped = Math.max(0, Math.min(focusIndex, cloned.length - 1));
+  return { sessions: cloned, focusIndex: clamped, focusedSession: cloned[clamped] };
+}
+function suspendGridState(gridSessions, focusIndex) {
+  return cloneGridState(gridSessions, focusIndex);
+}
+function resumeGridState(suspendedSessions, focusIndex) {
+  return cloneGridState(suspendedSessions, focusIndex);
+}
 // src/take-control-logic.ts
 var CLOSE_CODE_DISPLACED = 4002;
 var CLOSE_CODE_SESSION_UNAVAILABLE = 4001;
@@ -73,6 +127,6 @@ function handleDisplaced(state) {
 function prepareAutoTakeControl(state) {
   return { ...state, autoTakeControl: true };
 }
-var WP = {shouldRehydrate, shouldInterceptCopy, serializeBufferTail, scrollTargetAfterResize, prepareAutoTakeControl, handleViewerConflict, handleTakeControlClick, handleDisplaced, handleControlGranted, encodeTerminalBinary, classifyDisconnect, captureScrollState, CLOSE_CODE_SESSION_UNAVAILABLE, CLOSE_CODE_NORMAL, CLOSE_CODE_DISPLACED};
+var WP = {suspendGridState, shouldRehydrate, shouldInterceptCopy, serializeBufferTail, scrollTargetAfterResize, resumeGridState, removeFromGridState, prepareAutoTakeControl, handleViewerConflict, handleTakeControlClick, handleDisplaced, handleControlGranted, encodeTerminalBinary, classifyDisconnect, captureScrollState, addToGridState, CLOSE_CODE_SESSION_UNAVAILABLE, CLOSE_CODE_NORMAL, CLOSE_CODE_DISPLACED};
 window.WP = WP;
 })();

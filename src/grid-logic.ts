@@ -91,6 +91,41 @@ export function removeFromGridState(
   return { sessions: newSessions, focusIndex: newFocus, exitGrid: false };
 }
 
+type ClonedGridState = {
+  sessions: GridSession[];
+  focusIndex: number;
+  focusedSession?: GridSession;
+};
+
+function cloneGridState(sessions: GridSession[], focusIndex: number): ClonedGridState {
+  const cloned = sessions.map(gs => ({ session: gs.session, machine: gs.machine }));
+  if (!cloned.length) return { sessions: [], focusIndex: 0 };
+  const clamped = Math.max(0, Math.min(focusIndex, cloned.length - 1));
+  return { sessions: cloned, focusIndex: clamped, focusedSession: cloned[clamped] };
+}
+
+/**
+ * Preserve the current grid working set while suspending live controllers.
+ * Returns a cloned session list, clamped focus index, and the focused session.
+ */
+export function suspendGridState(
+  gridSessions: GridSession[],
+  focusIndex: number,
+): ClonedGridState {
+  return cloneGridState(gridSessions, focusIndex);
+}
+
+/**
+ * Restore a suspended grid working set into an active grid state.
+ * Returns cloned sessions plus a clamped focus index.
+ */
+export function resumeGridState(
+  suspendedSessions: GridSession[],
+  focusIndex: number,
+): ClonedGridState {
+  return cloneGridState(suspendedSessions, focusIndex);
+}
+
 /**
  * Compute the grid CSS template for a given cell count.
  * Returns { columns, rows } as CSS grid-template strings.

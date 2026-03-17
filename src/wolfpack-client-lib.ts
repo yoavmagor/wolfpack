@@ -19,6 +19,14 @@ export {
 } from "./reconnect-hydration";
 
 export {
+  addToGridState,
+  removeFromGridState,
+  suspendGridState,
+  resumeGridState,
+  type GridSession,
+} from "./grid-logic";
+
+export {
   CLOSE_CODE_DISPLACED,
   CLOSE_CODE_SESSION_UNAVAILABLE,
   CLOSE_CODE_NORMAL,
