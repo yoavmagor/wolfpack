@@ -69,8 +69,14 @@ export function removeWorktree(worktreePath: string, projectDir?: string): void 
   // Try graceful removal first; fall back to --force if there are uncommitted changes
   try {
     execFileSync("git", ["worktree", "remove", worktreePath], opts);
-  } catch {
-    execFileSync("git", ["worktree", "remove", worktreePath, "--force"], opts);
+  } catch (gracefulErr: any) {
+    try {
+      execFileSync("git", ["worktree", "remove", worktreePath, "--force"], opts);
+    } catch (forceErr: any) {
+      throw new Error(
+        `failed to remove worktree ${worktreePath}: ${forceErr?.message ?? gracefulErr?.message ?? "unknown error"}`,
+      );
+    }
   }
 }
 

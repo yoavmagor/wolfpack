@@ -37,11 +37,13 @@ function assertTestMode(hook: string): void {
 
 // ── tmuxList ──
 
-/** Returns true if dir is DEV_DIR itself or a child of DEV_DIR (proper path boundary). */
+/** Returns true if dir is DEV_DIR itself or a child of DEV_DIR (proper path boundary).
+ *  Reads DEV_DIR at call time so env overrides in tests take effect. */
 export function isUnderDevDir(dir: string): boolean {
   const normalizePath = (path: string): string =>
     path.length > 1 ? path.replace(/\/+$/, "") : path;
-  const baseDir = normalizePath(DEV_DIR);
+  const devDir = process.env.WOLFPACK_DEV_DIR || DEV_DIR;
+  const baseDir = normalizePath(devDir);
   const candidate = normalizePath(dir);
   return candidate === baseDir || candidate.startsWith(baseDir + "/");
 }

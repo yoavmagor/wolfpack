@@ -71,6 +71,8 @@ describe("worktree lifecycle", () => {
     // Create a temp git repo with an initial commit
     repoDir = realpathSync(mkdtempSync(join(tmpdir(), "wt-test-")));
     execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+    execFileSync("git", ["-C", repoDir, "config", "user.name", "test"], { stdio: "pipe" });
+    execFileSync("git", ["-C", repoDir, "config", "user.email", "test@test.com"], { stdio: "pipe" });
     execFileSync("git", ["-C", repoDir, "commit", "--allow-empty", "-m", "init"], {
       stdio: "pipe",
     });

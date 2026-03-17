@@ -1214,6 +1214,8 @@ describe("POST /api/ralph/dismiss — worktree cleanup", () => {
   beforeAll(() => {
     gitRepoDir = realpathSync(mkdtempSync(join(tmpdir(), "wt-dismiss-")));
     execFileSync("git", ["init", gitRepoDir], { stdio: "pipe" });
+    execFileSync("git", ["-C", gitRepoDir, "config", "user.name", "test"], { stdio: "pipe" });
+    execFileSync("git", ["-C", gitRepoDir, "config", "user.email", "test@test.com"], { stdio: "pipe" });
     execFileSync("git", ["-C", gitRepoDir, "commit", "--allow-empty", "-m", "init"], { stdio: "pipe" });
   });
 

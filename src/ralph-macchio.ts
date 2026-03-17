@@ -21,7 +21,7 @@ import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanForm
 import { expandBudget, resolveCleanupDiffBase } from "./validation.js";
 import { buildAuditFixPrompt } from "./ralph-skill-audit.js";
 import { buildCleanupPrompt } from "./ralph-skill-cleanup.js";
-import { createWorktree, slugifyTaskName } from "./worktree.js";
+import { createWorktree, cleanupAllExceptFinal, slugifyTaskName } from "./worktree.js";
 
 const { values: args } = parseArgs({
   args: process.argv.slice(2),
@@ -344,9 +344,9 @@ function getCurrentBranch(cwd: string): string {
 }
 
 /** Generate a worktree branch name from task header. */
-function worktreeBranchName(taskHeader: string): string {
+function worktreeBranchName(taskHeader: string, iterationIndex: number): string {
   const numMatch = taskHeader.match(/^##\s*(\d+[a-z]?)\./);
-  const num = numMatch ? numMatch[1] : "0";
+  const num = numMatch ? numMatch[1] : String(iterationIndex);
   const slug = slugifyTaskName(taskHeader);
   return `ralph/${num}-${slug}`;
 }
@@ -443,12 +443,22 @@ function runIteration(prompt: string): Promise<{ exitCode: number; output: strin
 // last-resort lock cleanup on any exit (covers unhandled exceptions, SIGINT, etc.)
 process.on("exit", removeLock);
 
-// clean up child process and lock on SIGTERM
+// clean up child process, worktrees, and lock on SIGTERM
 process.on("SIGTERM", () => {
   appendFileSync(LOG_FILE, `\n=== 🛑 Received SIGTERM — cleaning up ===\n`);
   if (activeChild) {
     activeChild.kill("SIGTERM");
     setTimeout(() => { try { activeChild?.kill("SIGKILL"); } catch {} }, 3000);
+  }
+  if (WORKTREE_MODE !== "false") {
+    try {
+      const result = cleanupAllExceptFinal(PROJECT_DIR);
+      if (result.removed.length > 0) {
+        appendFileSync(LOG_FILE, `worktrees cleaned up: removed ${result.removed.join(", ")}, kept ${result.kept}\n`);
+      }
+    } catch (err: unknown) {
+      appendFileSync(LOG_FILE, `worktree cleanup failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
   }
   appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
   removeLock();
@@ -515,6 +525,15 @@ function syncProgressBack(): void {
   const wtProgress = join(workingDir, PROGRESS_FILE);
   if (existsSync(wtProgress)) {
     try { copyFileSync(wtProgress, PROGRESS_PATH); } catch {}
+  }
+}
+
+/** Copy plan file back from worktree to PROJECT_DIR so agent plan edits aren't lost. */
+function syncPlanBack(): void {
+  if (workingDir === PROJECT_DIR) return;
+  const wtPlan = join(workingDir, PLAN_FILE);
+  if (existsSync(wtPlan)) {
+    try { copyFileSync(wtPlan, PLAN_PATH); } catch {}
   }
 }
 
@@ -610,7 +629,7 @@ async function main() {
     // --- Worktree: task mode — create a new worktree per iteration ---
     if (WORKTREE_MODE === "task") {
       const taskHeader = task.split("\n")[0];
-      let branchName = worktreeBranchName(taskHeader);
+      let branchName = worktreeBranchName(taskHeader, i);
       // Fix #2: avoid branch collision on task retry — append suffix if branch exists
       try {
         execFileSync("git", ["rev-parse", "--verify", branchName], { cwd: PROJECT_DIR, stdio: "pipe" });
@@ -700,8 +719,9 @@ async function main() {
     appendFileSync(LOG_FILE, `\n=== ✅ Iteration ${i} complete — ${new Date().toString()} ===\n`);
     tasksCompleted++;
 
-    // sync progress back from worktree to main project dir
+    // sync progress and plan back from worktree to main project dir
     syncProgressBack();
+    syncPlanBack();
 
     // mark task done in plan file
     if (checkbox) {
