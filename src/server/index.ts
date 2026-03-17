@@ -199,7 +199,7 @@ export function startServer(port = PORT, host = "127.0.0.1"): void {
     console.log(`Wolfpack PWA: http://localhost:${port}/`);
     discoverPeers().then(() => {
       if (cachedPeers.length) console.log(`Discovered ${cachedPeers.length} peer(s): ${cachedPeers.map(p => p.name).join(", ")}`);
-    }).catch((err: any) => { console.warn(`peer discovery failed at startup:`, err?.message); });
+    }).catch((e: unknown) => { console.warn(`peer discovery failed at startup:`, e instanceof Error ? e.message : String(e)); });
   });
 }
 

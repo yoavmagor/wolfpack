@@ -32,6 +32,7 @@ import {
 import { cleanupAllExceptFinal } from "../worktree.js";
 import { assets } from "../public-assets.js";
 import { isInputPrompt, isJunkLine, type TriageStatus } from "../triage.js";
+import { errMsg } from "../shared/process-cleanup.js";
 import pkg from "../../package.json";
 import {
   DEV_DIR,
@@ -298,8 +299,8 @@ export const routes: Record<
     }
     const projectDir = join(DEV_DIR, folderName);
     if (newProject) {
-      try { mkdirSync(projectDir, { recursive: true }); } catch (err: any) {
-        console.error(`/api/create: failed to create project directory ${projectDir}:`, err?.message);
+      try { mkdirSync(projectDir, { recursive: true }); } catch (e: unknown) {
+        console.error(`/api/create: failed to create project directory ${projectDir}:`, errMsg(e));
       }
     }
     if (!validateProjectDir(res, projectDir)) return;
@@ -568,23 +569,23 @@ export const routes: Record<
       if (existsSync(lockPath)) {
         const lockPid = Number(readFileSync(lockPath, "utf-8").trim());
         if (!lockPid || lockPid <= 1) {
-          try { unlinkSync(lockPath); } catch (err: any) {
-            if (err?.code !== "ENOENT") console.warn(`ralph start: failed to remove invalid lock:`, err?.message);
+          try { unlinkSync(lockPath); } catch (e: unknown) {
+            if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`ralph start: failed to remove invalid lock:`, errMsg(e));
           }
         } else {
           try {
             process.kill(lockPid, 0);
             return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
           } catch {
-            try { unlinkSync(lockPath); } catch (err: any) {
-              if (err?.code !== "ENOENT") console.warn(`ralph start: failed to remove stale lock:`, err?.message);
+            try { unlinkSync(lockPath); } catch (e: unknown) {
+              if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`ralph start: failed to remove stale lock:`, errMsg(e));
             }
           }
         }
       }
       writeFileSync(lockPath, "", { flag: "wx" });
-    } catch (e: any) {
-      if (e?.code === "EEXIST") {
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException)?.code === "EEXIST") {
         return json(res, { error: "ralph loop already starting (lock contention)" }, 409);
       }
       return json(res, { error: "failed to acquire lock" }, 500);
@@ -668,8 +669,8 @@ export const routes: Record<
     });
     child.unref();
 
-    try { writeFileSync(lockPath, String(child.pid ?? 0)); } catch (err: any) {
-      console.error(`ralph start: failed to write lock file with PID:`, err?.message);
+    try { writeFileSync(lockPath, String(child.pid ?? 0)); } catch (e: unknown) {
+      console.error(`ralph start: failed to write lock file with PID:`, errMsg(e));
     }
 
     json(res, {
@@ -716,8 +717,8 @@ export const routes: Record<
     }
     try {
       process.kill(status.pid, "SIGTERM");
-      try { process.kill(-status.pid, "SIGTERM"); } catch (err: any) {
-        console.warn(`ralph cancel: failed to SIGTERM process group:`, err?.message);
+      try { process.kill(-status.pid, "SIGTERM"); } catch (e: unknown) {
+        console.warn(`ralph cancel: failed to SIGTERM process group:`, errMsg(e));
       }
       json(res, { ok: true, killed: status.pid });
     } catch {

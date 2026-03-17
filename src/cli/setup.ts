@@ -215,8 +215,8 @@ export async function setup() {
     if (!tailscaleHostname) {
       if (IS_MACOS) {
         print(dim("  Launching Tailscale.app for sign-in..."));
-        try { execSync("open /Applications/Tailscale.app", { stdio: "ignore" }); } catch (err: any) {
-          console.warn(`setup: failed to launch Tailscale.app:`, err?.message);
+        try { execSync("open /Applications/Tailscale.app", { stdio: "ignore" }); } catch (e: unknown) {
+          console.warn(`setup: failed to launch Tailscale.app:`, e instanceof Error ? e.message : String(e));
         }
       } else if (IS_LINUX) {
         print(dim("  Run 'sudo tailscale up' in another terminal to sign in."));
@@ -253,8 +253,8 @@ export async function setup() {
       }
 
       if (ttyFd !== null) {
-        try { closeSync(ttyFd); } catch (err: any) {
-          console.warn(`setup: failed to close tty fd:`, err?.message);
+        try { closeSync(ttyFd); } catch (e: unknown) {
+          console.warn(`setup: failed to close tty fd:`, e instanceof Error ? e.message : String(e));
         }
       }
 

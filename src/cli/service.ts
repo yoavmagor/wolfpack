@@ -16,6 +16,7 @@ import {
 import { join, resolve } from "node:path";
 import { homedir, platform } from "node:os";
 import { xmlEsc, systemdEsc } from "../validation.js";
+import { errMsg } from "../shared/process-cleanup.js";
 import { print, bold, green, red, dim } from "./formatting.js";
 import {
   WOLFPACK_DIR,
@@ -61,8 +62,8 @@ function programArgs(): string[] {
       copyFileSync(exe, stableBin);
       chmodSync(stableBin, 0o755);
       return [stableBin];
-    } catch (err: any) {
-      console.warn(`programArgs: failed to copy binary to stable location:`, err?.message);
+    } catch (e: unknown) {
+      console.warn(`programArgs: failed to copy binary to stable location:`, errMsg(e));
     }
   }
   return [exe];
@@ -187,8 +188,8 @@ function launchdBootout() {
     // `bootout` can't always remove — try the legacy unload path
     try {
       execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null`);
-    } catch (err: any) {
-      console.warn(`launchdBootout: legacy unload also failed:`, err?.message);
+    } catch (e: unknown) {
+      console.warn(`launchdBootout: legacy unload also failed:`, errMsg(e));
     }
   }
 }
@@ -264,21 +265,17 @@ export function serviceInstall() {
 export function serviceUninstall() {
   if (IS_MACOS) {
     launchdBootout();
-    try { unlinkSync(PLIST_PATH); } catch (err: any) {
-      if (err?.code !== "ENOENT") console.warn(`serviceUninstall: failed to remove plist:`, err?.message);
+    try { unlinkSync(PLIST_PATH); } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`serviceUninstall: failed to remove plist:`, errMsg(e));
     }
   } else if (IS_LINUX) {
-    try { execSync(`systemctl --user stop ${SYSTEMD_SERVICE} 2>/dev/null`); } catch (err: any) {
-      console.warn(`serviceUninstall: failed to stop systemd service:`, err?.message);
+    try { execSync(`systemctl --user stop ${SYSTEMD_SERVICE} 2>/dev/null`); } catch { /* expected: exits non-zero when service not running */ }
+    try { execSync(`systemctl --user disable ${SYSTEMD_SERVICE} 2>/dev/null`); } catch { /* expected: exits non-zero when already disabled */ }
+    try { unlinkSync(SYSTEMD_PATH); } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`serviceUninstall: failed to remove unit file:`, errMsg(e));
     }
-    try { execSync(`systemctl --user disable ${SYSTEMD_SERVICE} 2>/dev/null`); } catch (err: any) {
-      console.warn(`serviceUninstall: failed to disable systemd service:`, err?.message);
-    }
-    try { unlinkSync(SYSTEMD_PATH); } catch (err: any) {
-      if (err?.code !== "ENOENT") console.warn(`serviceUninstall: failed to remove unit file:`, err?.message);
-    }
-    try { execSync("systemctl --user daemon-reload"); } catch (err: any) {
-      console.warn(`serviceUninstall: failed to reload systemd daemon:`, err?.message);
+    try { execSync("systemctl --user daemon-reload"); } catch (e: unknown) {
+      console.warn(`serviceUninstall: failed to reload systemd daemon:`, errMsg(e));
     }
   }
   print(green("  Wolfpack service removed."));
@@ -329,9 +326,7 @@ export function isServiceRunning(): boolean {
       const out = execSync(`systemctl --user is-active ${SYSTEMD_SERVICE} 2>&1`, { encoding: "utf-8" }).trim();
       return out === "active";
     }
-  } catch (err: any) {
-    console.warn(`isServiceRunning: status check failed:`, err?.message);
-  }
+  } catch { /* expected: command exits non-zero when service inactive */ }
   return false;
 }
 
@@ -379,8 +374,8 @@ export function serviceStatus() {
 
 export function uninstall() {
   serviceUninstall();
-  try { rmSync(WOLFPACK_DIR, { recursive: true, force: true }); } catch (err: any) {
-    console.warn(`uninstall: failed to remove ${WOLFPACK_DIR}:`, err?.message);
+  try { rmSync(WOLFPACK_DIR, { recursive: true, force: true }); } catch (e: unknown) {
+    console.warn(`uninstall: failed to remove ${WOLFPACK_DIR}:`, errMsg(e));
   }
   print("");
   print(green("  Wolfpack uninstalled."));
