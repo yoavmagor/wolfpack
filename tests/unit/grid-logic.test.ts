@@ -5,6 +5,8 @@ import {
   isGridActive,
   addToGridState,
   removeFromGridState,
+  suspendGridState,
+  resumeGridState,
   gridTemplate,
   gridArrowNav,
   canAcceptInput,
@@ -183,6 +185,64 @@ describe("removeFromGridState", () => {
     const result = removeFromGridState(two, 0, 0);
     expect(result.exitGrid).toBe(true);
     expect(result.restoreSession).toEqual({ session: "y", machine: "m2" });
+  });
+});
+
+describe("suspendGridState", () => {
+  test("preserves the full grid working set and focused session", () => {
+    const grid: GridSession[] = [
+      { session: "a", machine: "" },
+      { session: "b", machine: "host-b" },
+      { session: "c", machine: "" },
+    ];
+    const result = suspendGridState(grid, 1);
+    expect(result.sessions).toEqual(grid);
+    expect(result.focusIndex).toBe(1);
+    expect(result.focusedSession).toEqual({ session: "b", machine: "host-b" });
+    expect(result.sessions).not.toBe(grid);
+  });
+
+  test("clamps out-of-range focus to the last session", () => {
+    const result = suspendGridState([
+      { session: "a", machine: "" },
+      { session: "b", machine: "" },
+    ], 99);
+    expect(result.focusIndex).toBe(1);
+    expect(result.focusedSession).toEqual({ session: "b", machine: "" });
+  });
+});
+
+describe("resumeGridState", () => {
+  test("restores preserved sessions with the same focus", () => {
+    const preserved: GridSession[] = [
+      { session: "a", machine: "" },
+      { session: "b", machine: "" },
+      { session: "c", machine: "host-c" },
+    ];
+    const result = resumeGridState(preserved, 2);
+    expect(result.sessions).toEqual(preserved);
+    expect(result.focusIndex).toBe(2);
+    expect(result.focusedSession).toEqual({ session: "c", machine: "host-c" });
+    expect(result.sessions).not.toBe(preserved);
+  });
+
+  test("keeps added sessions when resuming after an off-terminal update", () => {
+    const suspended = suspendGridState([
+      { session: "a", machine: "" },
+      { session: "b", machine: "" },
+    ], 1);
+    const added = addToGridState(
+      suspended.sessions,
+      "c",
+      "",
+      suspended.focusedSession!.session,
+      suspended.focusedSession!.machine,
+    );
+    expect(added).not.toBeNull();
+    const resumed = resumeGridState(added!.sessions, added!.focusIndex);
+    expect(resumed.sessions.map(s => s.session)).toEqual(["a", "b", "c"]);
+    expect(resumed.focusIndex).toBe(2);
+    expect(resumed.focusedSession?.session).toBe("c");
   });
 });
 
