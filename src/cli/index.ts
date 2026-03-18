@@ -3,7 +3,7 @@
  * CLI dispatch entry point.
  */
 import { printQR } from "../qr.js";
-import { print, bold, dim, red, yellow, WOLF } from "./formatting.js";
+import { print, bold, dim, red, yellow, green, WOLF } from "./formatting.js";
 import {
   loadConfig,
   isPortInUse,
@@ -22,6 +22,9 @@ import {
   uninstall,
 } from "./service.js";
 import { setup } from "./setup.js";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { migratePlanFormat, detectOldPlanFormat } from "../wolfpack-context.js";
 
 export {
   loadConfig,
@@ -97,6 +100,33 @@ async function start() {
   print("");
 }
 
+function migratePlan(file?: string) {
+  if (!file) {
+    print(red("  Usage: wolfpack migrate-plan <file>"));
+    print(dim("  Example: wolfpack migrate-plan PLAN.md"));
+    process.exit(1);
+  }
+
+  const filePath = resolve(file);
+  let content: string;
+  try {
+    content = readFileSync(filePath, "utf-8");
+  } catch {
+    print(red(`  File not found: ${filePath}`));
+    process.exit(1);
+  }
+
+  if (!detectOldPlanFormat(content)) {
+    print(dim("  Plan does not appear to use old format. Nothing to migrate."));
+    return;
+  }
+
+  const { content: migrated, count } = migratePlanFormat(content);
+  writeFileSync(filePath, migrated);
+  print(green(`  Migrated ${count} task header${count === 1 ? "" : "s"} to ## N. Title format.`));
+  print(dim(`  File: ${filePath}`));
+}
+
 const cmd = process.argv[2];
 const subcmd = process.argv[3];
 
@@ -114,6 +144,8 @@ async function main() {
     }
   } else if (cmd === "uninstall") {
     uninstall();
+  } else if (cmd === "migrate-plan") {
+    migratePlan(subcmd);
   } else if (cmd === "worker") {
     process.argv = [process.argv[0], process.argv[1], ...process.argv.slice(3)];
     await import("../ralph-macchio.js");

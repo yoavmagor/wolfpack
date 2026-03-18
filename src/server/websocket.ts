@@ -16,24 +16,10 @@ import {
   tmuxResize,
   capturePane,
 } from "./tmux.js";
-import { isAllowedSession } from "./http.js";
-import { errMsg } from "../shared/process-cleanup.js";
+import { isAllowedSession, createRateLimiter } from "./http.js";
+import { createLogger, errMsg } from "../log.js";
 
-/** Token bucket rate limiter. */
-function createRateLimiter(rate: number) {
-  let tokens = rate;
-  let last = Date.now();
-  return {
-    allow(): boolean {
-      const now = Date.now();
-      tokens = Math.min(rate, tokens + ((now - last) / 1000) * rate);
-      last = now;
-      if (tokens < 1) return false;
-      tokens--;
-      return true;
-    },
-  };
-}
+const log = createLogger("ws");
 
 // ── PTY session tracking ──
 
@@ -45,8 +31,21 @@ export const activePtySessions = new Map<string, {
 }>();
 
 const ptySpawnAttempts = new Map<string, number>();
+
+// ── Constants ──
 const DESKTOP_PREFILL_MAX_BYTES = 256 * 1024;
+const PREFILL_CHUNK_SIZE = 32 * 1024;
+const PREFILL_CHUNK_DELAY_MS = 8;
 const PREFILL_OVERLAP_LIMIT = 32 * 1024;
+const POLL_INTERVAL_MS = 50;
+const PING_INTERVAL_MS = 25_000;
+const RATE_LIMIT_PER_SEC = 60;
+const MAX_WS_MESSAGE_BYTES = 65_536;
+const MAX_PTY_BINARY_BYTES = 16_384;
+const RESIZE_DEBOUNCE_MS = 80;
+const RAPID_EXIT_THRESHOLD_MS = 3_000;
+const POST_INPUT_DELAY_MS = 15;
+const POST_SPAWN_RESIZE_DELAY_MS = 100;
 
 function bufferStartsWithPrefillSuffix(prefillTail: Buffer, attachPrefix: Buffer, overlap: number): boolean {
   const prefillStart = prefillTail.length - overlap;
@@ -81,10 +80,36 @@ export function __stripInitialPtyOverlap(
   return { awaitingMore: false, data: attachPrefix };
 }
 
+/** Send prefill buffer in 32KB chunks with short delays to avoid stalling mobile connections. */
+async function sendPrefillChunked(
+  entry: { viewer: WebSocket | null; alive: boolean },
+  prefill: Buffer,
+  session: string,
+): Promise<void> {
+  let offset = 0;
+  while (offset < prefill.length) {
+    if (!entry.alive || !entry.viewer || entry.viewer.readyState !== 1) return;
+    const end = Math.min(offset + PREFILL_CHUNK_SIZE, prefill.length);
+    entry.viewer.send(prefill.subarray(offset, end));
+    offset = end;
+    if (offset < prefill.length) {
+      await new Promise(resolve => setTimeout(resolve, PREFILL_CHUNK_DELAY_MS));
+    }
+  }
+  if (entry.alive && entry.viewer && entry.viewer.readyState === 1) {
+    entry.viewer.send(JSON.stringify({ type: "prefill_done" }));
+  }
+}
+
 /** Test hook: expose PTY internal state for assertions */
-export function __getTestState(): { activePtySessions: typeof activePtySessions; ptySpawnAttempts: Map<string, number> } {
+export function __getTestState(): {
+  activePtySessions: typeof activePtySessions;
+  ptySpawnAttempts: Map<string, number>;
+  sendPrefillChunked: typeof sendPrefillChunked;
+  PREFILL_CHUNK_SIZE: number;
+} {
   if (!process.env.WOLFPACK_TEST) throw new Error("__getTestState() is only available in test mode (WOLFPACK_TEST=1)");
-  return { activePtySessions, ptySpawnAttempts };
+  return { activePtySessions, ptySpawnAttempts, sendPrefillChunked, PREFILL_CHUNK_SIZE };
 }
 
 // ── Terminal WS handler (mobile — capture-pane polling) ──
@@ -107,7 +132,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
         if (!(await isAllowedSession(session))) {
           alive = false;
           updating = false;
-          try { ws.close(4001, "session ended"); } catch (e: unknown) { console.debug(`ws.close failed [${session}]:`, errMsg(e)); }
+          try { ws.close(4001, "session ended"); } catch (e: unknown) { log.debug(`ws.close failed`, { session, error: errMsg(e) }); }
           return;
         }
       }
@@ -117,7 +142,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
         ws.send(JSON.stringify({ type: "output", data: pane }));
       }
     } catch (e: unknown) {
-      console.warn(`sendUpdate failed [${session}]:`, errMsg(e));
+      log.warn("sendUpdate failed", { session, error: errMsg(e) });
     }
     updating = false;
     schedulePoll();
@@ -126,35 +151,35 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
   function schedulePoll() {
     if (!alive) return;
     if (pollTimer) clearTimeout(pollTimer);
-    pollTimer = setTimeout(sendUpdate, 50);
+    pollTimer = setTimeout(sendUpdate, POLL_INTERVAL_MS);
   }
 
   schedulePoll();
 
   const pingTimer = setInterval(() => {
     if (alive && ws.readyState === 1) {
-      try { ws.ping(); } catch (e: unknown) { console.debug(`ws ping failed [${session}]:`, errMsg(e)); }
+      try { ws.ping(); } catch (e: unknown) { log.debug(`ws ping failed`, { session, error: errMsg(e) }); }
     } else {
       clearInterval(pingTimer);
     }
-  }, 25000);
+  }, PING_INTERVAL_MS);
 
-  const rl = createRateLimiter(60);
+  const rl = createRateLimiter(RATE_LIMIT_PER_SEC);
 
   ws.on("message", async (raw) => {
     if (!rl.allow()) return;
 
     try {
       const str = String(raw);
-      if (str.length > 65536) return;
+      if (str.length > MAX_WS_MESSAGE_BYTES) return;
       const msg = JSON.parse(str);
       if (msg.type === "input" && typeof msg.data === "string") {
         await tmuxSend(session, msg.data, true);
-        setTimeout(sendUpdate, 15);
+        setTimeout(sendUpdate, POST_INPUT_DELAY_MS);
       } else if (msg.type === "key" && typeof msg.key === "string") {
         if (WS_ALLOWED_KEYS.has(msg.key)) {
           await tmuxSendKey(session, msg.key);
-          setTimeout(sendUpdate, 15);
+          setTimeout(sendUpdate, POST_INPUT_DELAY_MS);
         }
       } else if (
         msg.type === "resize" &&
@@ -166,12 +191,12 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
         }
         if (!sized) {
           sized = true;
-          setTimeout(sendUpdate, 50);
+          setTimeout(sendUpdate, POLL_INTERVAL_MS);
         }
       }
     } catch (e: unknown) {
       if (e instanceof SyntaxError) return;
-      console.warn(`WS error [${session}]:`, errMsg(e));
+      log.warn("WS error", { session, error: errMsg(e) });
     }
   });
 
@@ -196,16 +221,16 @@ export function teardownPty(session: string): void {
   entry.alive = false;
   activePtySessions.delete(session);
   if (entry.viewer) {
-    try { entry.viewer.close(1000, "pty teardown"); } catch (e: unknown) { console.debug(`teardownPty: viewer close failed [${session}]:`, errMsg(e)); }
+    try { entry.viewer.close(1000, "pty teardown"); } catch (e: unknown) { log.debug(`teardownPty: viewer close failed`, { session, error: errMsg(e) }); }
     entry.viewer = null;
   }
   if (entry.pendingViewer) {
-    try { entry.pendingViewer.close(1000, "pty teardown"); } catch (e: unknown) { console.debug(`teardownPty: pendingViewer close failed [${session}]:`, errMsg(e)); }
+    try { entry.pendingViewer.close(1000, "pty teardown"); } catch (e: unknown) { log.debug(`teardownPty: pendingViewer close failed`, { session, error: errMsg(e) }); }
     entry.pendingViewer = null;
   }
   if (entry.proc) {
-    try { entry.proc.terminal!.close(); } catch (e: unknown) { console.debug(`teardownPty: terminal close failed [${session}]:`, errMsg(e)); }
-    try { entry.proc.kill(); } catch (e: unknown) { console.debug(`teardownPty: proc kill failed [${session}]:`, errMsg(e)); }
+    try { entry.proc.terminal!.close(); } catch (e: unknown) { log.debug(`teardownPty: terminal close failed`, { session, error: errMsg(e) }); }
+    try { entry.proc.kill(); } catch (e: unknown) { log.debug(`teardownPty: proc kill failed`, { session, error: errMsg(e) }); }
   }
 }
 
@@ -227,14 +252,14 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
 
     // If there's already a pending viewer, close it
     if (existing.pendingViewer) {
-      try { existing.pendingViewer.close(4002, "displaced"); } catch (e: unknown) { console.debug(`displaced pendingViewer close failed [${session}]:`, errMsg(e)); }
+      try { existing.pendingViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`displaced pendingViewer close failed`, { session, error: errMsg(e) }); }
     }
     existing.pendingViewer = ws;
 
     const pingTimer = setInterval(() => {
-      if (ws.readyState === 1) { try { ws.ping(); } catch (e: unknown) { console.debug(`pending ws ping failed [${session}]:`, errMsg(e)); } }
+      if (ws.readyState === 1) { try { ws.ping(); } catch (e: unknown) { log.debug(`pending ws ping failed`, { session, error: errMsg(e) }); } }
       else clearInterval(pingTimer);
-    }, 25000);
+    }, PING_INTERVAL_MS);
 
     function pendingMessage(raw: Buffer | string) {
       try {
@@ -246,15 +271,15 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
           const oldViewer = existing.viewer;
           existing.viewer = null;
           if (oldViewer) {
-            try { oldViewer.close(4002, "displaced"); } catch (e: unknown) { console.debug(`takeover: oldViewer close failed [${session}]:`, errMsg(e)); }
+            try { oldViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`takeover: oldViewer close failed`, { session, error: errMsg(e) }); }
           }
           // Tear down old PTY proc (no tmux session to clean up anymore)
           const oldProc = existing.proc;
           existing.alive = false;
           activePtySessions.delete(session);
           if (oldProc) {
-            try { oldProc.terminal!.close(); } catch (e: unknown) { console.debug(`takeover: terminal close failed [${session}]:`, errMsg(e)); }
-            try { oldProc.kill(); } catch (e: unknown) { console.debug(`takeover: proc kill failed [${session}]:`, errMsg(e)); }
+            try { oldProc.terminal!.close(); } catch (e: unknown) { log.debug(`takeover: terminal close failed`, { session, error: errMsg(e) }); }
+            try { oldProc.kill(); } catch (e: unknown) { log.debug(`takeover: proc kill failed`, { session, error: errMsg(e) }); }
           }
 
           // Remove pending handlers before promoting — prevents duplicate handlers
@@ -267,10 +292,10 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
           // Promote this viewer — spawn fresh PTY on first resize
           setupNewPtyEntry(ws, session);
           // Tell client takeover succeeded so it re-sends resize
-          try { ws.send(JSON.stringify({ type: "control_granted" })); } catch (e: unknown) { console.warn(`control_granted send failed [${session}]:`, errMsg(e)); }
+          try { ws.send(JSON.stringify({ type: "control_granted" })); } catch (e: unknown) { log.warn("control_granted send failed", { session, error: errMsg(e) }); }
         }
       } catch (e: unknown) {
-        if (!(e instanceof SyntaxError)) console.warn(`pendingMessage handler failed [${session}]:`, errMsg(e));
+        if (!(e instanceof SyntaxError)) log.warn("pendingMessage handler failed", { session, error: errMsg(e) });
       }
     }
 
@@ -326,11 +351,11 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
     try {
       try {
         await exec(TMUX, ["has-session", "-t", session], { timeout: 2000 });
-      } catch {
+      } catch { /* expected: tmux session no longer exists */
         entry.alive = false;
         activePtySessions.delete(session);
         if (entry.viewer) {
-          try { entry.viewer.close(4001, "session unavailable"); } catch (e: unknown) { console.debug(`session unavailable: viewer close failed [${session}]:`, errMsg(e)); }
+          try { entry.viewer.close(4001, "session unavailable"); } catch (e: unknown) { log.debug(`session unavailable: viewer close failed`, { session, error: errMsg(e) }); }
           entry.viewer = null;
         }
         return;
@@ -338,7 +363,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
 
       // Override window-size so resize-window works
       await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 }).catch((e: unknown) => {
-        console.debug(`tmux set-option window-size failed [${session}]:`, errMsg(e));
+        log.debug(`tmux set-option window-size failed`, { session, error: errMsg(e) });
       });
 
       if (!entry.alive || activePtySessions.get(session) !== entry || entry.viewer !== ws) return;
@@ -363,14 +388,14 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               prefill = rawPrefill;
             }
             try {
-              entry.viewer.send(prefill);
+              await sendPrefillChunked(entry, prefill, session);
               shouldDedupeInitialAttach = true;
             } catch (e: unknown) {
-              console.error(`PTY prefill send failed [${session}]:`, errMsg(e));
+              log.error("PTY prefill send failed", { session, error: errMsg(e) });
             }
           }
         } catch (e: unknown) {
-          console.warn(`PTY prefill capture failed [${session}]:`, errMsg(e));
+          log.warn("PTY prefill capture failed", { session, error: errMsg(e) });
         }
       }
 
@@ -397,22 +422,22 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               if (!data.length) return;
             }
             if (entry.viewer && entry.viewer.readyState === 1) {
-              try { entry.viewer.send(data); } catch (e: unknown) { console.debug(`PTY data send failed [${session}]:`, errMsg(e)); }
+              try { entry.viewer.send(data); } catch (e: unknown) { log.debug(`PTY data send failed`, { session, error: errMsg(e) }); }
             }
           },
           exit(_terminal: unknown, _code: number, _signal: string | null) {
             if (!entry.alive) return;
             entry.alive = false;
             activePtySessions.delete(session);
-            const rapid = Date.now() - spawnedAt < 3000;
+            const rapid = Date.now() - spawnedAt < RAPID_EXIT_THRESHOLD_MS;
             const code = rapid ? 4001 : 1000;
             const reason = rapid ? "session unavailable" : "pty exited";
             if (entry.viewer) {
-              try { entry.viewer.close(code, reason); } catch (e: unknown) { console.debug(`pty exit: viewer close failed [${session}]:`, errMsg(e)); }
+              try { entry.viewer.close(code, reason); } catch (e: unknown) { log.debug(`pty exit: viewer close failed`, { session, error: errMsg(e) }); }
               entry.viewer = null;
             }
             if (entry.pendingViewer) {
-              try { entry.pendingViewer.close(code, reason); } catch (e: unknown) { console.debug(`pty exit: pendingViewer close failed [${session}]:`, errMsg(e)); }
+              try { entry.pendingViewer.close(code, reason); } catch (e: unknown) { log.debug(`pty exit: pendingViewer close failed`, { session, error: errMsg(e) }); }
               entry.pendingViewer = null;
             }
           },
@@ -426,17 +451,17 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
           // Re-force latest in case Claude Code re-applied manual during spawn
           await exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 });
           await exec(TMUX, ["resize-window", "-t", session, "-x", String(latestSize.cols), "-y", String(latestSize.rows)], { timeout: 2000 });
-        } catch (e: unknown) { console.debug(`post-spawn tmux resize failed [${session}]:`, errMsg(e)); }
+        } catch (e: unknown) { log.debug(`post-spawn tmux resize failed`, { session, error: errMsg(e) }); }
         try {
           entry.proc.terminal!.resize(latestSize.cols, latestSize.rows);
-        } catch (e: unknown) { console.debug(`post-spawn terminal resize failed [${session}]:`, errMsg(e)); }
-      }, 100);
+        } catch (e: unknown) { log.debug(`post-spawn terminal resize failed`, { session, error: errMsg(e) }); }
+      }, POST_SPAWN_RESIZE_DELAY_MS);
     } finally {
       spawning = false;
     }
   }
 
-  const rl = createRateLimiter(60);
+  const rl = createRateLimiter(RATE_LIMIT_PER_SEC);
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
   ws.on("message", (raw: Buffer | string, isBinary: boolean) => {
@@ -459,7 +484,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
             });
           }
           if (entry.viewer && entry.viewer.readyState === 1) {
-            try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch (e: unknown) { console.debug(`attach_ack send failed [${session}]:`, errMsg(e)); }
+            try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch (e: unknown) { log.debug(`attach_ack send failed`, { session, error: errMsg(e) }); }
           }
         } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           const cols = clampCols(msg.cols);
@@ -477,24 +502,24 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               entry.proc.terminal!.resize(cols, rows);
               exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 })
                 .then(() => exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 }))
-                .catch((e: unknown) => { console.debug(`tmux resize failed [${session}]:`, errMsg(e)); });
-            }, 80);
+                .catch((e: unknown) => { log.debug(`tmux resize failed`, { session, error: errMsg(e) }); });
+            }, RESIZE_DEBOUNCE_MS);
           }
         }
       } else if (entry.proc) {
-        if (Buffer.isBuffer(raw) && raw.length > 16384) return;
+        if (Buffer.isBuffer(raw) && raw.length > MAX_PTY_BINARY_BYTES) return;
         entry.proc.terminal!.write(raw as Buffer);
       }
     } catch (e: unknown) {
       if (e instanceof SyntaxError) return;
-      console.warn(`PTY WS error [${session}]:`, errMsg(e));
+      log.warn("PTY WS error", { session, error: errMsg(e) });
     }
   });
 
   const pingTimer = setInterval(() => {
-    if (ws.readyState === 1) { try { ws.ping(); } catch (e: unknown) { console.debug(`pty ws ping failed [${session}]:`, errMsg(e)); } }
+    if (ws.readyState === 1) { try { ws.ping(); } catch (e: unknown) { log.debug(`pty ws ping failed`, { session, error: errMsg(e) }); } }
     else clearInterval(pingTimer);
-  }, 25000);
+  }, PING_INTERVAL_MS);
 
   function detach() {
     clearInterval(pingTimer);

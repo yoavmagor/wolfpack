@@ -16,8 +16,10 @@ import {
 import { join, resolve } from "node:path";
 import { homedir, platform } from "node:os";
 import { xmlEsc, systemdEsc } from "../validation.js";
-import { errMsg } from "../shared/process-cleanup.js";
+import { createLogger, errMsg } from "../log.js";
 import { print, bold, green, red, dim } from "./formatting.js";
+
+const log = createLogger("service");
 import {
   WOLFPACK_DIR,
   loadConfig,
@@ -63,7 +65,7 @@ function programArgs(): string[] {
       chmodSync(stableBin, 0o755);
       return [stableBin];
     } catch (e: unknown) {
-      console.warn(`programArgs: failed to copy binary to stable location:`, errMsg(e));
+      log.warn("programArgs: failed to copy binary to stable location", { error: errMsg(e) });
     }
   }
   return [exe];
@@ -94,7 +96,8 @@ export function updateStableBinary(): boolean {
     copyFileSync(exe, stableBin);
     chmodSync(stableBin, 0o755);
     return true;
-  } catch {
+  } catch (e: unknown) {
+    log.warn("failed to update stable binary", { error: errMsg(e) });
     return false;
   }
 }
@@ -189,7 +192,7 @@ function launchdBootout() {
     try {
       execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null`);
     } catch (e: unknown) {
-      console.warn(`launchdBootout: legacy unload also failed:`, errMsg(e));
+      log.warn("launchdBootout: legacy unload also failed", { error: errMsg(e) });
     }
   }
 }
@@ -221,20 +224,74 @@ export function serviceInstall() {
 
   if (IS_MACOS) {
     const plist = generatePlist();
-    mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
-    writeFileSync(PLIST_PATH, plist);
+    try {
+      mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
+    } catch (e: unknown) {
+      log.error("failed to create LaunchAgents directory", { error: errMsg(e) });
+      print(red(`  Failed to create ~/Library/LaunchAgents: ${errMsg(e)}`));
+      process.exit(1);
+    }
+    try {
+      writeFileSync(PLIST_PATH, plist);
+    } catch (e: unknown) {
+      log.error("failed to write plist", { path: PLIST_PATH, error: errMsg(e) });
+      print(red(`  Failed to write plist: ${errMsg(e)}`));
+      print(dim("  Check permissions on ~/Library/LaunchAgents or run with sudo."));
+      process.exit(1);
+    }
     launchdBootout();
-    launchdBootstrap();
+    try {
+      launchdBootstrap();
+    } catch (e: unknown) {
+      log.error("launchctl bootstrap failed", { error: errMsg(e) });
+      print(red(`  Failed to register service with launchd: ${errMsg(e)}`));
+      print(dim("  The plist was written but launchctl bootstrap/kickstart failed."));
+      print(dim(`  Try manually: launchctl bootstrap gui/$(id -u) "${PLIST_PATH}"`));
+      process.exit(1);
+    }
     print("");
     print(green("  Wolfpack service installed and started."));
     print(dim(`  Plist: ${PLIST_PATH}`));
   } else if (IS_LINUX) {
     const unit = generateSystemdUnit();
-    mkdirSync(join(homedir(), ".config", "systemd", "user"), { recursive: true });
-    writeFileSync(SYSTEMD_PATH, unit);
-    execSync("systemctl --user daemon-reload");
-    execSync(`systemctl --user enable ${SYSTEMD_SERVICE}`);
-    execSync(`systemctl --user start ${SYSTEMD_SERVICE}`);
+    try {
+      mkdirSync(join(homedir(), ".config", "systemd", "user"), { recursive: true });
+    } catch (e: unknown) {
+      log.error("failed to create systemd user directory", { error: errMsg(e) });
+      print(red(`  Failed to create ~/.config/systemd/user: ${errMsg(e)}`));
+      process.exit(1);
+    }
+    try {
+      writeFileSync(SYSTEMD_PATH, unit);
+    } catch (e: unknown) {
+      log.error("failed to write systemd unit", { path: SYSTEMD_PATH, error: errMsg(e) });
+      print(red(`  Failed to write unit file: ${errMsg(e)}`));
+      print(dim("  Check permissions on ~/.config/systemd/user/."));
+      process.exit(1);
+    }
+    try {
+      execSync("systemctl --user daemon-reload");
+    } catch (e: unknown) {
+      log.error("systemctl daemon-reload failed", { error: errMsg(e) });
+      print(red(`  Failed to reload systemd: ${errMsg(e)}`));
+      print(dim("  Is systemd --user running? Check: systemctl --user status"));
+      process.exit(1);
+    }
+    try {
+      execSync(`systemctl --user enable ${SYSTEMD_SERVICE}`);
+    } catch (e: unknown) {
+      log.error("systemctl enable failed", { error: errMsg(e) });
+      print(red(`  Failed to enable service: ${errMsg(e)}`));
+      process.exit(1);
+    }
+    try {
+      execSync(`systemctl --user start ${SYSTEMD_SERVICE}`);
+    } catch (e: unknown) {
+      log.error("systemctl start failed", { error: errMsg(e) });
+      print(red(`  Failed to start service: ${errMsg(e)}`));
+      print(dim(`  Check logs: journalctl --user -u ${SYSTEMD_SERVICE}`));
+      process.exit(1);
+    }
     try {
       const user = process.env.USER || "";
       if (!/^[a-z_][a-z0-9_-]*$/.test(user)) {
@@ -242,7 +299,8 @@ export function serviceInstall() {
       } else {
         execFileSync("sudo", ["loginctl", "enable-linger", user]);
       }
-    } catch {
+    } catch (e: unknown) {
+      log.warn("failed to enable linger", { error: errMsg(e) });
       print(dim("  Note: Could not enable linger. Service may not start at boot."));
       print(dim("  Run: sudo loginctl enable-linger $USER"));
     }
@@ -266,16 +324,16 @@ export function serviceUninstall() {
   if (IS_MACOS) {
     launchdBootout();
     try { unlinkSync(PLIST_PATH); } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`serviceUninstall: failed to remove plist:`, errMsg(e));
+      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("serviceUninstall: failed to remove plist", { error: errMsg(e) });
     }
   } else if (IS_LINUX) {
     try { execSync(`systemctl --user stop ${SYSTEMD_SERVICE} 2>/dev/null`); } catch { /* expected: exits non-zero when service not running */ }
     try { execSync(`systemctl --user disable ${SYSTEMD_SERVICE} 2>/dev/null`); } catch { /* expected: exits non-zero when already disabled */ }
     try { unlinkSync(SYSTEMD_PATH); } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`serviceUninstall: failed to remove unit file:`, errMsg(e));
+      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("serviceUninstall: failed to remove unit file", { error: errMsg(e) });
     }
     try { execSync("systemctl --user daemon-reload"); } catch (e: unknown) {
-      console.warn(`serviceUninstall: failed to reload systemd daemon:`, errMsg(e));
+      log.warn("serviceUninstall: failed to reload systemd daemon", { error: errMsg(e) });
     }
   }
   print(green("  Wolfpack service removed."));
@@ -289,7 +347,8 @@ export function serviceStop() {
       execSync(`systemctl --user stop ${SYSTEMD_SERVICE}`);
     }
     print(green("  Wolfpack service stopped."));
-  } catch {
+  } catch (e: unknown) {
+    log.error("failed to stop service", { error: errMsg(e) });
     print(red("  Failed to stop service."));
   }
   const config = loadConfig();
@@ -312,7 +371,8 @@ export function serviceStart() {
       execSync(`systemctl --user start ${SYSTEMD_SERVICE}`);
     }
     print(green("  Wolfpack service started."));
-  } catch {
+  } catch (e: unknown) {
+    log.error("failed to start service", { error: errMsg(e) });
     print(red("  Failed to start service."));
   }
 }
@@ -341,7 +401,7 @@ export function serviceStatus() {
       } else {
         print(dim("  Wolfpack service is loaded but not running."));
       }
-    } catch {
+    } catch { /* expected: launchctl print exits non-zero when service not loaded */
       if (existsSync(PLIST_PATH)) {
         print(dim("  Wolfpack service is installed but not loaded."));
       } else {
@@ -360,7 +420,7 @@ export function serviceStatus() {
       } else {
         print(dim(`  Wolfpack service status: ${out}`));
       }
-    } catch {
+    } catch { /* expected: systemctl exits non-zero when service not active */
       if (existsSync(SYSTEMD_PATH)) {
         print(dim("  Wolfpack service is installed but not running."));
       } else {
@@ -375,7 +435,7 @@ export function serviceStatus() {
 export function uninstall() {
   serviceUninstall();
   try { rmSync(WOLFPACK_DIR, { recursive: true, force: true }); } catch (e: unknown) {
-    console.warn(`uninstall: failed to remove ${WOLFPACK_DIR}:`, errMsg(e));
+    log.warn("uninstall: failed to remove wolfpack dir", { path: WOLFPACK_DIR, error: errMsg(e) });
   }
   print("");
   print(green("  Wolfpack uninstalled."));

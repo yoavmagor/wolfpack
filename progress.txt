@@ -1,0 +1,283 @@
+# Progress Log
+
+## Extract inline CSS to public/styles.css
+- Extracted 2437 lines of CSS from `<style>` block in `public/index.html` into `public/styles.css`
+- Replaced inline `<style>...</style>` with `<link rel="stylesheet" href="/styles.css" />`
+- Dedented CSS to remove HTML indentation (6 spaces)
+
+## Create app bundling infrastructure
+- Extracted ~4700 lines of inline `<script>` from `public/index.html` into `public/app.ts`
+- Created `scripts/bundle-app.ts` — uses `Bun.build()` (ESM format, browser target) to compile `public/app.ts` → `public/app.bundle.js`
+- Updated `scripts/gen-assets.ts` to call `bundle-app.ts` and exclude `.ts` source files from asset embedding
+- Replaced inline `<script>...</script>` in `index.html` with `<script src="/app.bundle.js"></script>`
+- Bundle outputs global-scope code (no IIFE) so `onclick` handlers in HTML continue to work
+
+## Extract shared state module (public/app-state.ts)
+- Created `public/app-state.ts` with state object, setState, settings system, and utility functions
+- Extracted: `state`, `setState`, `wpDefaults`, `wpSettings`, `toggleSetting`, `applySetting`, `TERM_PRESETS`, `applyTermToXterm`, `initSettings`, `haptic`, `requestNotifications`
+- Extracted utilities: `esc`, `escAttr`, `loadStoredJson`, `formatSnapshotTtl`, `getTerminalFontFamily`, `getCharDimensions`, `_charDimCache`
+- `app.ts` imports from `./app-state` and hydrates state with values from local functions (`loadRecents`, `loadQuickCmds`, `loadSidebarPinned`)
+- Bun bundler inlines the import — all functions remain at global scope in `app.bundle.js`
+- 932 tests pass, bundle builds successfully
+
+## Extract Ralph loop functions (public/app-ralph.ts)
+- Created `public/app-ralph.ts` (~370 lines) with all Ralph loop functions
+- Exported 15 public functions: `getRalphStatus`, `renderRalphCardHtml`, `sidebarRalphCardHtml`, `openRalphDetail`, `refreshRalphDetail`, `parseIterations`, `toggleRawLog`, `cancelRalph`, `loadRalphStartForm`, `onIsolationChange`, `startRalph`, `restartRalph`, `showRalphStart`, `dismissRalph`, `checkRalphTransitions`
+- 8 internal helpers kept private: `renderIterationCards`, `getStartMachine`, `loadStartFormData`, `loadPlanFiles`, `syncIterationsFromPlan`, `updateWorktreePlaceholder`, `loadWorktreeBranches`, `loadBranches`
+- Also extracted notification helpers: `getRalphNotificationStatus`, `prevRalphStates`, `checkRalphTransitions` — app.ts `checkStateTransitions` now delegates to `checkRalphTransitions`
+- Used dependency injection pattern (`initRalphDeps`) to avoid circular imports — ralph module receives `api`, `errorMessage`, `showView`, `getMachines`, `loadSessions`, `renderSidebar`, `startSidebarRefresh`, `backToSessions`, and sidebar timer getter/setter
+- Fixed `escHtml` → `esc` bug in `loadWorktreeBranches` (escHtml was undefined)
+- `app.ts` imports all ralph functions and calls `initRalphDeps()` before `initSettings()`
+- 932 tests pass, bundle builds successfully (139.6 KB)
+
+## Create app bundling infrastructure
+- Created `scripts/bundle-app.ts` — uses `Bun.build()` (ESM format, browser target) to compile `public/app.ts` → `public/app.bundle.js`
+- Strips ESM export statements so functions remain at global scope (onclick handlers in HTML)
+- Gracefully skips if `public/app.ts` doesn't exist yet (exit 0)
+- Updated `scripts/gen-assets.ts`: calls `bundle-app.ts` in the pipeline, excludes `.ts` source files from asset embedding
+- 932 tests pass
+
+## Extract grid logic functions (public/app-grid.ts)
+- Created `public/app-grid.ts` with all grid functions (~620 lines)
+- Exported 23 public functions: `createConflictOverlay`, `isGridActive`, `updateGridLayout`, `renderGridCells`, `getGridCellElement`, `hasPreservedGrid`, `clearPreservedGrid`, `setCurrentSessionFromGridFocus`, `returnToTerminalView`, `setGridFocus`, `suspendGridMode`, `restorePreservedGrid`, `backFromRalph`, `backFromSettings`, `addToGrid`, `removeFromGrid`, `exitGridMode`, `fitAllGridCells`, `hideGridCellsForTransition`, `revealGridCellsWithoutResize`, `scheduleGridStabilizedFit`, `isSessionInGrid`, `toggleGrid`
+- 11 internal helpers kept private: `setGridCellLoading`, `beginGridRelayoutTransition`, `isGridRelayoutTransitionCurrent`, `endGridRelayoutTransition`, `cancelGridRelayoutTransition`, `runGridRelayoutTransition`, `gridLayoutClass`, `createGridCell`, `mountGridController`, `showGridCellConflictOverlay`, `removeGridCellConflictOverlay`
+- Used dependency injection pattern (`initGridDeps`) — grid module receives `showView`, `openSession`, `destroyDesktopTerminal`, `initDesktopTerminal`, `backToSessions`, `startPolling`, `resizePane`, `renderSidebar`, `createPtyTerminalController`, `isDesktop`, `GRID_TERMINAL_SCROLLBACK`
+- `app.ts` imports all grid functions and calls `initGridDeps()` before `initRalphDeps()`
+- app.ts reduced from 4121 to 3509 lines
+- 932 tests pass, bundle builds successfully (139.5 KB)
+
+## Fix JWT fail-open and harden auth
+- `src/auth.ts`: updated warning message to explain security implication (silent fail-open)
+- `src/server/index.ts`: added startup validation — calls `getJwtAuthConfig()` and `process.exit(1)` if `warning` is set (short secret)
+- Added `tests/unit/jwt-auth-config.test.ts` with 6 tests: no secret → disabled (no warning), unset → disabled, short secret → warning, valid secret → enabled, boundary 32/31 char tests
+- Documented `WOLFPACK_JWT_SECRET` (min 32 chars) in README Config section
+- Added subprocess tests: short secret → process.exit(1), no secret → starts normally
+- 940 tests pass
+
+## Extract inline script to public/app.ts
+- Extracted 4,733 lines of inline `<script>` from `public/index.html` into `public/app.ts`
+- Replaced inline `<script>...</script>` block with `<script src="/app.bundle.js"></script>`
+- Stripped 6-space HTML indentation from extracted code
+- Added `public/app.bundle.js` to `.gitignore` (generated file)
+- `bun run scripts/bundle-app.ts` succeeds — produces 139.0 KB bundle
+- index.html reduced from 5,084 to 350 lines
+
+## Extract shared state module (public/app-state.ts)
+- Created `public/app-state.ts` with state object, settings system, and utility functions (263 lines)
+- Extracted: `state`, `setState`, `wpDefaults`, `wpSettings`, `toggleSetting`, `applySetting`, `TERM_PRESETS`, `applyTermToXterm`, `initSettings`, `haptic`, `requestNotifications`
+- Extracted utilities: `esc`, `escAttr`, `loadStoredJson`, `formatSnapshotTtl`, `getTerminalFontFamily`, `getCharDimensions`, `_charDimCache`, `isDesktop`
+- Extracted state init helpers: `loadQuickCmds`, `loadRecents`, `loadSidebarPinned`, `QC_STORAGE_KEY`, `RECENTS_STORAGE_KEY`, `MAX_RECENTS`
+- Exported constants: `SNAPSHOT_KEY_PREFIX`, `SNAPSHOT_MAX_BYTES`, `SNAPSHOT_SAVE_INTERVAL`, `DESKTOP_TERMINAL_SCROLLBACK`, `GRID_TERMINAL_SCROLLBACK`
+- `app.ts` imports from `./app-state` — Bun bundler inlines the import, all functions remain at global scope in `app.bundle.js`
+- app.ts reduced from 4733 to 4509 lines
+- 932 tests pass, bundle builds successfully (139.0 KB)
+
+## Task 1 completion assessment — Split index.html monolith into modules
+- Original index.html: ~7,293 lines (inline JS + CSS + markup)
+- Current index.html: 335 lines of pure HTML markup (no inline JS, no inline CSS)
+- All JS extracted to: app.ts (3,509 lines), app-state.ts, app-ralph.ts (21 fns), app-grid.ts (23 fns)
+- All CSS extracted to: styles.css (2,437 lines)
+- Build pipeline: bundle-app.ts + bundle-client-lib.ts + gen-assets.ts all updated
+- src/ modules (grid-logic, terminal-buffer, take-control-logic, reconnect-hydration) wired via window.WP — no duplicated inline code
+- 938 tests pass, app.bundle.js builds (139.5 KB)
+- index.html is 335 lines vs 200-line target — remaining lines are pure semantic HTML for 6 views (sessions, projects, agent, settings, terminal, ralph). No further extraction possible without moving markup into JS templates, which would add complexity for no real benefit.
+
+## Extract grid UI functions (public/app-grid.ts)
+- Created `public/app-grid.ts` (~643 lines) with all grid UI functions
+- Exported 23 public functions: `isGridActive`, `updateGridLayout`, `renderGridCells`, `getGridCellElement`, `hasPreservedGrid`, `clearPreservedGrid`, `setCurrentSessionFromGridFocus`, `returnToTerminalView`, `setGridFocus`, `suspendGridMode`, `restorePreservedGrid`, `backFromRalph`, `backFromSettings`, `addToGrid`, `removeFromGrid`, `exitGridMode`, `fitAllGridCells`, `hideGridCellsForTransition`, `revealGridCellsWithoutResize`, `scheduleGridStabilizedFit`, `isSessionInGrid`, `toggleGrid`
+- 11 internal helpers kept private: `setGridCellLoading`, `beginGridRelayoutTransition`, `isGridRelayoutTransitionCurrent`, `endGridRelayoutTransition`, `cancelGridRelayoutTransition`, `runGridRelayoutTransition`, `gridLayoutClass`, `createGridCell`, `mountGridController`, `showGridCellConflictOverlay`, `removeGridCellConflictOverlay`
+- Used dependency injection pattern (`initGridDeps`) — grid module receives `showView`, `openSession`, `destroyDesktopTerminal`, `initDesktopTerminal`, `backToSessions`, `startPolling`, `resizePane`, `renderSidebar`, `createPtyTerminalController`, `createConflictOverlay`
+- `app.ts` imports all grid functions and calls `initGridDeps()` before `initRalphDeps()`
+- app.ts reduced from 4018 to 3467 lines
+- 932 tests pass, bundle builds successfully (139.9 KB)
+
+## Verification pass — tests, bundle, and markup check
+- All 932 unit tests pass (0 failures, 1841 expect() calls)
+- `bun scripts/bundle-app.ts` succeeds → `public/app.bundle.js` (139.9 KB)
+- `public/index.html` is 350 lines — well under 400-line target
+- All `<script>` tags are external references only (no inline JS): `/wolfpack-lib.js`, `/ghostty-web.bundle.js`, `/app.bundle.js`
+- No inline `<style>` blocks — CSS loaded via `<link>` to `/styles.css`
+- Working tree is clean (no uncommitted changes)
+
+## Replace empty catch blocks with actionable error handling (Task 3)
+- Created `src/log.ts` — minimal structured JSON logger with levels (debug/info/warn/error), component tags, and WOLFPACK_LOG_LEVEL env var support
+- Re-exports `errMsg()` from `shared/process-cleanup.ts` for convenience
+- Swept all `catch {}` sites across 10 files:
+  - `service.ts`: 6 catches fixed — added `log.warn`/`log.error` for binary update, linger, stop, start failures; added comments for expected status-check flow
+  - `routes.ts`: 10 catches fixed — added `log.warn`/`log.error` for plan listing, ralph log read, process kill, dismiss cleanup; added explanatory comments for expected control flow (stale locks, peer probes, branch checks)
+  - `ralph.ts`: 5 catches fixed — added `log.warn` for plan read and log parse failures; added comments for expected stat races and DEV_DIR absence
+  - `http.ts`: 3 catches fixed — added comments for expected JSON parse, binary probe, and peer probe failures
+  - `config.ts`: 4 catches fixed — added comments for expected tty, JSON parse, config read, and port check failures
+  - `setup.ts`: 5 catches fixed — added comments for expected prerequisite/brew/apt/tailscale probes; added `console.warn` for tailscale serve failure
+  - `server/index.ts`: 1 catch fixed — added comment for PATH extraction fallback
+  - `websocket.ts`: 1 catch fixed — added comment for expected tmux session-not-found
+  - `process-cleanup.ts`: 1 catch fixed — added comment for expected ESRCH on dead process
+  - `ralph-macchio.ts`: 2 catches fixed — added comments for expected binary/plan probe failures
+- Decision framework applied: **log + continue** for background/optional ops, **log + return error** for user-facing, **comments** for expected control flow
+- 932 tests pass, 0 failures
+
+## Add HTTP rate limiting (Task 4)
+- Extracted `createRateLimiter` from `websocket.ts` into `http.ts` as shared export; websocket.ts now imports it
+- Added `createPerIpRateLimiter` to `http.ts` — per-IP token-bucket map with automatic stale-entry eviction
+- Applied rate limiting in `server/index.ts` request handler (before route dispatch):
+  - Poll-heavy endpoints (`/api/sessions`, `/api/ralph/log`, `/api/ralph`): 10 req/s per IP
+  - Global limit on all routes: 120 req/s per IP
+  - Returns `429 { error: "rate limit exceeded" }` when exceeded
+- Unit tests (`tests/unit/rate-limiter.test.ts`): 5 tests — token bucket drain/refill, per-IP isolation, burst 200 → 10 allowed + 190 denied, stale eviction
+- Integration tests (`tests/integration/rate-limit.test.ts`): 3 tests — poll endpoint 429 after burst, global limit on non-poll endpoints, 429 response body format
+- 631 unit tests pass, integration tests pass
+
+## Chunk PTY prefill delivery (Task 5)
+- `websocket.ts`: replaced single-frame prefill send with `sendPrefillChunked()` — splits buffer into 32KB frames with 8ms delay between chunks
+- Added `PREFILL_CHUNK_SIZE` (32KB) and `PREFILL_CHUNK_DELAY_MS` (8ms) constants
+- Server sends `{ type: "prefill_done" }` JSON message after last binary chunk
+- `sendPrefillChunked` bails early if entry dies or viewer disconnects mid-delivery
+- `public/app.ts` (`createPtySocketClient`): client buffers binary frames into `_prefillChunks` while `_awaitingPrefillDone` is true, flushes all chunks to `onBinaryData` when `prefill_done` arrives
+- Clears prefill state on `viewer_conflict`, `onclose`, and `skipPrefill` attach
+- Unit tests (`tests/unit/prefill-chunking.test.ts`): 5 tests — small prefill single chunk, large prefill multi-chunk split + reassembly, mid-delivery disconnect abort, empty prefill, exact boundary (32KB)
+- 631 unit tests pass, bundle builds (140.6 KB)
+
+## Validate peer responses and fix CSP (Task 6)
+
+### 6a. Peer response validation
+- Added `validatePeerLoops()` to `src/server/routes.ts` — validates shape of remote peer ralph responses before passing to frontend
+- Schema validation: checks `loops` is array, each entry is object with `project` (required), validates types against `RALPH_LOOP_SCHEMA` (18 fields: string/number/boolean)
+- Strips unexpected keys from each entry (defense against compromised peers injecting fields)
+- Skips malformed entries with `log.warn` (doesn't reject entire response for one bad entry)
+- Unit tests (`tests/unit/peer-validation.test.ts`): 10 tests — null/missing/non-array loops, empty array, non-object entries, missing project, unexpected key stripping, wrong type fields, mixed valid/invalid entries, full RalphStatus validation
+
+### 6b. CSP hardening — nonce-based, no unsafe-inline
+- Moved all ~40 inline event handlers (`onclick`, `onchange`, `oninput`, `onkeydown`) from `public/index.html` to `public/app.ts` via `bindHtmlEventListeners()` function
+- Replaced inline `style="display:none"` attributes with CSS classes (`ralph-log-hidden`, `ralph-machine-picker-hidden`, `ralph-isolation-row`)
+- Updated `toggleRawLog()` in `app-ralph.ts` to use `getComputedStyle()` instead of `style.display` check (compatible with class-based initial hidden state)
+- `index.html` now has zero inline JS and zero inline styles
+- `src/server/http.ts`: replaced static CSP string with per-request nonce-based CSP
+  - `generateCspNonce()`: 16 random bytes → base64 nonce
+  - `buildCsp(nonce)`: `script-src 'self' 'nonce-{nonce}'` — no `'unsafe-inline'`
+  - `serveFile()`: injects `nonce` attribute into all `<script>` tags for HTML responses
+  - `style-src` retains `'unsafe-inline'` (low-risk, JS manipulation of `style.display` still works)
+- Unit tests (`tests/unit/csp-nonce.test.ts`): 2 tests — nonce format, uniqueness
+- Integration tests (`tests/integration/csp.test.ts`): 6 tests — nonce in script-src, no unsafe-inline, nonce matches HTML script tags, unique per request, style-src allows unsafe-inline, non-HTML assets no CSP
+- 643 unit tests pass, 187+ integration tests pass, bundle builds (152.9 KB)
+
+## Validation fuzzing edge-case tests (Task 7c)
+- Created `tests/unit/validation-fuzzing.test.ts` — 67 tests covering hostile/edge-case inputs
+- **shellEscape**: null bytes, control chars (BEL/ESC/BS/DEL/CR), mixed control+quotes, unicode emoji/CJK/RTL-override/ZWJ/ZWS, 100KB string
+- **isValidSessionName**: boundary (100/101/empty/single char), null bytes, control chars, ANSI escapes, unicode, newline/CR/tab injection, space-padding, tmux restrictions (dot/colon)
+- **isValidPlanFile**: path traversal variants (`../../etc/passwd`, `..%2f` URL-encoded, `....//`, backslash Windows paths), null bytes before/after extension, control chars, unicode, `.md` alone, empty
+- **BRANCH_REGEX**: documents that `../` passes regex (safety from git+isUnderDevDir, not regex), tests rejection of shell metacharacters (semicolon/backtick/$()//pipe/ampersand/backslash), null bytes, newlines, unicode
+- **isValidProjectName**: null bytes, control chars, unicode emoji/CJK, newline/CR injection, space-padding, path traversal, URL-encoded traversal
+- 710 unit tests pass (67 new)
+
+## Concurrent PTY viewer conflict tests (Task 7a)
+- Created `tests/integration/concurrent-pty-viewer.test.ts` — 12 tests covering concurrent viewer lifecycle
+- **Simultaneous connect**: second viewer gets `viewer_conflict`, first stays active, both connections remain open
+- **Full displacement + reconnect cycle**: A→B takeover→A reconnects and reclaims, displaced close handler doesn't leak entries
+- **PTY crash mid-take-control**: mock proc exit during takeover, proc crash after takeover tears down cleanly, crash while pending viewer exists closes both, take_control on dead entry handled gracefully
+- **Leak verification**: rapid A→B→A cycle leaves exactly 1 entry, all-disconnect→0 entries, 5 rapid takeover cycles→1 survivor then 0, pending+active disconnect→0 entries
+- 12 integration tests pass, 45 expect() calls
+
+## Ralph lock file race tests (Task 7b)
+- **Production fix** (`src/server/routes.ts`): lock PID ownership verification — if lock PID is alive but `ps` shows it's not a ralph process, treat as stale (PID reuse after SIGKILL). Uses `execFileSync("ps", ["-p", PID, "-o", "command="])` to check for "ralph-macchio" or "worker" in command line
+- **9 integration tests** added to `tests/integration/ralph-api.test.ts` in new `ralph lock file races` describe block:
+  - `wx` flag prevents double-create (empty lock → stale cleanup → success)
+  - Lock held by live ralph process + concurrent starts → both get 409
+  - SIGKILL'd ralph (dead PID in lock) → stale lock cleaned, start succeeds
+  - Invalid PIDs (-5, 0, 1) → cleaned up on next start
+  - **PID of unrelated process** → not killed, lock cleaned up, start succeeds
+  - PID of actual ralph process → 409 (lock held)
+  - Alive PID but `ps` fails → treated as stale (conservative)
+  - Whitespace-padded PID → parsed correctly
+- 69 ralph-api integration tests pass (9 new), 195 expect() calls
+
+## Extract magic numbers into named constants (Task 9)
+- Extracted magic numbers into named constants across 4 server files:
+  - `websocket.ts`: added `POLL_INTERVAL_MS`, `PING_INTERVAL_MS`, `RATE_LIMIT_PER_SEC`, `MAX_WS_MESSAGE_BYTES`, `MAX_PTY_BINARY_BYTES`, `RESIZE_DEBOUNCE_MS`, `RAPID_EXIT_THRESHOLD_MS`, `POST_INPUT_DELAY_MS`, `POST_SPAWN_RESIZE_DELAY_MS` (existing: `DESKTOP_PREFILL_MAX_BYTES`, `PREFILL_CHUNK_SIZE`, `PREFILL_CHUNK_DELAY_MS`, `PREFILL_OVERLAP_LIMIT`)
+  - `tmux.ts`: added `SEND_ENTER_DELAY_MS` (existing: `BACKFILL_CACHE_TTL_MS`, `TRIAGE_CACHE_TTL_MS`)
+  - `routes.ts`: added `PEER_FETCH_TIMEOUT_MS`, `RALPH_LOG_MAX_TAIL_BYTES`, `RALPH_LOG_MAX_LINES`
+  - `http.ts`: added `PEER_PROBE_TIMEOUT_MS`, `TAILSCALE_MAX_BUFFER` (existing: `MAX_BODY`)
+- Eliminated duplicate `60` (rate limit) in websocket.ts — now single `RATE_LIMIT_PER_SEC` constant
+- 716 unit tests pass, bundle builds (152.9 KB)
+
+## Cache tmux show-environment backfill (Task 8)
+- Added `_backfillCacheMap` with 30s TTL to `src/server/tmux.ts` — prevents N `show-environment` spawns on every poll
+- On first poll, `show-environment` runs once per session; result cached in `_backfillCacheMap`
+- On re-poll: `sessionDirMap` has entries → no backfill. If `sessionDirMap` cleared (server restart) but cache valid → uses cached dir without spawning tmux
+- Cache pruned alongside `sessionDirMap` and `_triageCacheMap` when sessions disappear
+- Extracted `_listSessionsRaw` and `_showEnvironment` as hookable functions (overridable via `__setTestOverrides`) for testability
+- Added `__clearBackfillCache()` and `__getBackfillCacheSize()` test helpers
+- Unit tests (`tests/unit/backfill-cache.test.ts`): 6 tests — 20 sessions first poll (20 calls), re-poll (0 calls), cache prevents re-backfill, expired cache triggers fresh call, session deletion prunes cache, show-environment failure caches fallback dir
+- 716 unit tests pass (6 new), 1215 expect() calls
+
+## Add structured logging (Task 10)
+- `src/log.ts` already existed (created in Task 3) — no changes needed to the logger itself
+- Replaced ALL remaining `console.log`/`console.error`/`console.warn` calls across 12 files with structured `log.*()` calls:
+  - `ralph-macchio.ts`: 12 calls → `log.error`/`log.warn` with `{ error }` extra
+  - `server/index.ts`: 6 calls → `log.info`/`log.error`/`log.warn` with structured context
+  - `server/http.ts`: 1 call → `log.error`
+  - `server/routes.ts`: 7 calls → `log.warn`/`log.error`
+  - `server/websocket.ts`: 7 calls → `log.warn`/`log.error` with `{ session }` context
+  - `server/tmux.ts`: 7 calls → `log.warn` with `{ session }` context
+  - `server/ralph.ts`: 1 call → `log.warn`
+  - `worktree.ts`: 3 calls → `log.warn`/`log.error`
+  - `auth.ts`: 1 call → `log.warn`
+  - `cli/service.ts`: 6 calls → `log.warn`
+  - `cli/setup.ts`: 3 calls → `log.warn`
+  - `shared/process-cleanup.ts`: 4 calls → inline `_warn()` (avoids circular dep with log.ts)
+- Only 2 `console.log` calls remain: `cli/formatting.ts` `print()` (CLI UI output) and `qr.ts` (QR code rendering) — these are intentional user-facing terminal output, not log messages
+- Component tags used: `ralph`, `server`, `http`, `ws`, `tmux`, `auth`, `service`, `setup`, `pty`
+- 716 unit tests pass
+
+## Add structured logging — console.debug sweep (Task 10 followup)
+- Replaced 22 remaining `console.debug()` calls missed in prior sweep:
+  - `server/websocket.ts`: 21 calls → `log.debug()` with `{ session, error }` structured extra
+  - `server/tmux.ts`: 1 call → `log.debug()` with `{ session, error }` structured extra
+- These were all error-swallowing catch handlers for expected failures (ws close, ping, proc kill, tmux resize)
+- Zero `console.*` calls remain in server code; only 2 intentional `console.log` in CLI output (`formatting.ts`, `qr.ts`)
+- 921 unit tests pass (137 integration failures are pre-existing, unrelated to this change)
+
+## Remove test hooks from production exports (Task 11)
+- Created `src/test-hooks.ts` — single test-only entry point that re-exports all `__` prefixed hooks (`__setTestOverrides`, `__clearBackfillCache`, `__getBackfillCacheSize` from tmux.ts; `__getTestState` from websocket.ts; `__resetJwtAuthConfig` from auth.ts)
+- Removed `__setTestOverrides` and `__getTestState` re-exports from `src/server/index.ts` (production barrel)
+- Updated 10 test files to import test hooks from `src/test-hooks.ts` instead of barrel or direct source imports:
+  - `tests/e2e/test-server.ts`
+  - `tests/integration/auth-middleware.test.ts`
+  - `tests/integration/ws-dispatch.test.ts`
+  - `tests/integration/ws-terminal.test.ts`
+  - `tests/integration/ralph-aggregation.test.ts`
+  - `tests/integration/rate-limit.test.ts`
+  - `tests/integration/pty-test-helpers.ts`
+  - `tests/integration/prompt-reconnect.test.ts`
+  - `tests/unit/prefill-chunking.test.ts`
+  - `tests/unit/backfill-cache.test.ts`
+- Production `src/server/index.ts` no longer exports any `__` prefixed test hooks
+- 135 tests pass across all affected test files, 0 type errors from changes
+
+## Service install error messages (Task 12a)
+- Wrapped each step in `serviceInstall()` with try/catch and descriptive error messages
+- **macOS**: `mkdirSync(LaunchAgents)`, `writeFileSync(plist)`, `launchdBootstrap()` — each gets specific error + hint
+  - Plist write failure suggests checking permissions or sudo
+  - Bootstrap failure prints manual `launchctl bootstrap` command
+- **Linux**: `mkdirSync(systemd/user)`, `writeFileSync(unit)`, `daemon-reload`, `enable`, `start` — each gets specific error + hint
+  - daemon-reload failure suggests checking `systemctl --user status`
+  - start failure points to `journalctl --user -u wolfpack`
+- Linger try/catch was already present (unchanged)
+- All errors log via `log.error()` with structured context before printing user-facing message
+- 716 unit tests pass, 8 snapshot tests pass
+
+## Plan format migration (Task 12b)
+- Added `detectOldPlanFormat()` to `src/wolfpack-context.ts` — detects `Task N: Title` lines when no new-style `## N. Title` headers exist
+- Added `migratePlanFormat()` to `src/wolfpack-context.ts` — converts `Task N: Title` → `## N. Title` (handles sub-letters like `1a`, markdown header prefixes, case-insensitive)
+- Added `wolfpack migrate-plan <file>` CLI command to `src/cli/index.ts` — reads file, detects old format, writes migrated content, reports count
+- Added old-format warning in `src/ralph-macchio.ts` startup — logs warning before plan validation if old format detected, suggests running `wolfpack migrate-plan`
+- Unit tests in `tests/unit/plan-parsing.test.ts`: 16 new tests — `detectOldPlanFormat` (9 tests: bare Task N:, Task N., sub-letters, case insensitive, negative cases), `migratePlanFormat` (7 tests: basic conversion, sub-letters, preserves non-task content, count accuracy, title trimming)
+- 733 unit tests pass (16 new)
+
+## README personality section (Task 12c)
+- Added 2-sentence "why I built this" section after ASCII art, before the feature description
+- Tone: personal, opinionated — "I got tired of SSHing into 4 machines to check if Claude was stuck"
+
+## Startup tmux install guidance (Task 12d)
+- When tmux check fails in setup wizard, now prints platform-specific install hint
+- macOS: `brew install tmux` / Linux: `sudo apt install tmux`
+- Hint appears immediately after the `✗ tmux` line, before the auto-install flow

@@ -1,0 +1,263 @@
+// ── Shared state, settings, and utilities ──
+// Extracted from app.ts — imported back via bundler (inlined at build time)
+
+// ── HTML / attribute escaping ──
+
+export function esc(s) {
+  if (s == null) return "";
+  const d = document.createElement("div");
+  d.textContent = String(s);
+  return d.innerHTML.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+}
+
+// JS-safe escaper for use inside onclick="func('...')" attribute contexts.
+// Backslash-escapes characters that could break out of a JS string literal
+// AFTER HTML attribute decoding.
+export function escAttr(s) {
+  if (s == null) return "";
+  return String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, '\\"')
+    .replace(/</g, "\\x3c").replace(/>/g, "\\x3e").replace(/&/g, "\\x26");
+}
+
+// ── Generic utilities ──
+
+export function loadStoredJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function isDesktop() {
+  return window.innerWidth > 768;
+}
+
+export function formatSnapshotTtl(seconds) {
+  seconds = +seconds;
+  if (seconds < 60) return seconds + 's';
+  return Math.floor(seconds / 60) + 'm';
+}
+
+export function getTerminalFontFamily() {
+  return wpSettings.termFont === "alt"
+    ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
+    : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
+}
+
+export var _charDimCache = { key: "", w: 0, h: 0 };
+export function getCharDimensions() {
+  const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+  const key = tp.fontSize + "|" + tp.lineHeight + "|" + wpSettings.termFont;
+  if (_charDimCache.key === key && _charDimCache.w > 0) return _charDimCache;
+  const probe = document.createElement("span");
+  probe.style.cssText =
+    'position:absolute;visibility:hidden;white-space:pre;font-size:' + tp.fontSize + 'px;line-height:' + tp.lineHeight + ';font-family:inherit';
+  probe.textContent = "X";
+  document.body.appendChild(probe);
+  _charDimCache = { key, w: probe.offsetWidth, h: probe.offsetHeight };
+  document.body.removeChild(probe);
+  return _charDimCache;
+}
+
+// ── Settings (persisted to localStorage) ──
+
+export const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:300, debugPanel:false, ralphEnabled:false};
+export const wpSettings = Object.assign({}, wpDefaults, loadStoredJson("wp-effects", {}));
+
+export const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
+
+export function toggleSetting(key, val) {
+  wpSettings[key] = val;
+  localStorage.setItem("wp-effects", JSON.stringify(wpSettings));
+  // Invalidate cached char dimensions on font changes
+  if (key === "termFontSize" || key === "termFont") _charDimCache = { key: "", w: 0, h: 0 };
+  applySetting(key, val);
+}
+
+export function applySetting(key, val) {
+  if (key === "animations") document.body.classList.toggle("no-animations", !val);
+  if (key === "notifications" && val) requestNotifications();
+  if (key === "enterSends") {
+    const el = document.getElementById("msg-input");
+    if (el) el.placeholder = val ? "$ (Enter to send)" : "$ (⚡ to send)";
+  }
+  if (key === "termFontSize") {
+    document.body.classList.remove("term-size-small", "term-size-medium", "term-size-large");
+    document.body.classList.add("term-size-" + val);
+    document.querySelectorAll(".term-size-btn").forEach(b => b.classList.toggle("active", b.dataset.size === val));
+    applyTermToXterm();
+  }
+  if (key === "termWrap") {
+    document.body.classList.toggle("term-wrap", val);
+  }
+  if (key === "ralphEnabled") {
+    document.body.classList.toggle("ralph-hidden", !val);
+  }
+  if (key === "termFont") {
+    document.body.classList.toggle("term-font-alt", val === "alt");
+    document.querySelectorAll(".term-font-btn").forEach(b => b.classList.toggle("active", b.dataset.font === val));
+    applyTermToXterm();
+  }
+}
+
+export function applyTermToXterm() {
+  const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+  const fontFamily = getTerminalFontFamily();
+  if (state.desktopController?.term) {
+    state.desktopController.term.options.fontSize = p.fontSize;
+    state.desktopController.term.options.lineHeight = p.lineHeight;
+    state.desktopController.term.options.fontFamily = fontFamily;
+    state.desktopController.resize();
+  }
+  for (const gs of state.gridSessions) {
+    if (!gs.controller?.term) continue;
+    gs.controller.term.options.fontSize = Math.max(p.fontSize - 2, 10);
+    gs.controller.term.options.lineHeight = p.lineHeight;
+    gs.controller.term.options.fontFamily = fontFamily;
+    gs.controller.resize();
+  }
+}
+
+export function initSettings() {
+  Object.entries(wpSettings).forEach(([k, v]) => {
+    applySetting(k, v);
+    const el = document.getElementById("setting-" + k);
+    if (!el) return;
+    if (el.type === "checkbox") el.checked = v;
+    else el.value = v;
+  });
+  const ttlLabel = document.getElementById("snapshot-ttl-val");
+  if (ttlLabel) ttlLabel.textContent = formatSnapshotTtl(wpSettings.snapshotTtl);
+}
+
+export function haptic(pattern) {
+  if (wpSettings.haptics && navigator.vibrate) navigator.vibrate(pattern);
+}
+
+// ── Notifications ──
+
+export function requestNotifications() {
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission().then((p) => {
+      state.notificationsEnabled = p === "granted";
+    });
+  } else if ("Notification" in window && Notification.permission === "granted") {
+    state.notificationsEnabled = true;
+  }
+}
+
+// ── State initializer helpers ──
+
+export const QC_STORAGE_KEY = "wp-quick-cmds";
+
+export function loadQuickCmds() {
+  try {
+    const raw = localStorage.getItem(QC_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+export const RECENTS_STORAGE_KEY = "wp-recents";
+export const MAX_RECENTS = 20;
+
+function loadRecents() {
+  try {
+    const raw = localStorage.getItem(RECENTS_STORAGE_KEY);
+    if (raw) { const r = JSON.parse(raw); if (Array.isArray(r)) return r; }
+  } catch {}
+  return [];
+}
+
+function loadSidebarPinned() {
+  const v = localStorage.getItem("wolfpack-sidebar-pinned");
+  if (v !== null) return v !== "0";
+  const old = localStorage.getItem("wolfpack-sidebar-collapsed");
+  if (old === "1") return false;
+  return true;
+}
+
+const _initSidebarPinned = loadSidebarPinned();
+
+// ── App state ──
+
+export const state = {
+  currentView: "sessions",
+  currentSession: null,
+  currentMachine: "", // "" = self, URL string = remote
+  viewBeforePicker: "sessions", // stashed view to return to on Escape from project/agent picker
+  viewBeforeSettings: "sessions",
+  // session/data state
+  allSessions: [],
+  lastSessionGroups: [],
+  firstLoad: true,
+  lastSessionsHtml: "",
+  loadSessionsEpoch: 0,
+  selfName: "",
+  selfVersion: "",
+  sessionRecents: loadRecents(),
+  quickCmds: loadQuickCmds(),
+  // ralph state
+  currentRalphProject: null,
+  currentRalphMachine: "",
+  ralphStartMachine: "",
+  ralphLogPollTimer: null,
+  currentRalphPlanFile: "",
+  restartingRalph: false,
+  currentRalphAgent: "",
+  // desktop/grid terminal state
+  desktopController: null,
+  useDesktopTerminal: false,
+  desktopResizeHandler: null,
+  desktopResizeTimer: null,
+  gridSessions: [],
+  gridFocusIndex: 0,
+  preservedGridSessions: [],
+  preservedGridFocusIndex: 0,
+  gridResizeHandler: null,
+  gridRelayoutTransitionId: 0,
+  // sidebar state
+  sidebarPinned: _initSidebarPinned,
+  sidebarCollapsed: !_initSidebarPinned,
+  sidebarAutoExpanded: false,
+  sidebarTransitionIsHover: false,
+  sidebarResizeDone: false,
+  sessionsExpanded: true,
+  // mobile/connection state
+  mobileWs: null,
+  mobileStreamingActive: false,
+  termFollowMode: true,
+  sessionRefreshTimer: null,
+  // UI interaction state
+  snapshotTimer: null,
+  swipeNavigated: false,
+  projectMachine: "",
+  selectedProject: "",
+  isNewProject: false,
+  enterRetryTimer: null,
+  drawerOpen: false,
+  notificationsEnabled: ("Notification" in window && Notification.permission === "granted"),
+  kbAccessoryOpen: false,
+  searchActive: false,
+  searchTerm: "",
+  searchMatches: [],
+  searchIndex: -1,
+  lastRawPane: null,
+};
+
+export function setState(patch) { Object.assign(state, patch); }
+
+// ── Constants ──
+
+export const SNAPSHOT_KEY_PREFIX = "wp-snap|";
+export const SNAPSHOT_MAX_BYTES = 8192;
+export const SNAPSHOT_SAVE_INTERVAL = 2000;
+export const DESKTOP_TERMINAL_SCROLLBACK = 2000;
+export const GRID_TERMINAL_SCROLLBACK = 1000;

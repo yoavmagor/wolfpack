@@ -36,7 +36,7 @@ export function ask(question: string): string {
   let fd: number;
   try {
     fd = openSync("/dev/tty", "r");
-  } catch {
+  } catch { /* expected: no tty available in non-interactive mode */
     hasTTY = false;
     return "";
   }
@@ -61,7 +61,7 @@ export function parseConfig(raw: unknown): Config | null {
 export function loadConfigFromText(text: string): Config | null {
   try {
     return parseConfig(JSON.parse(text));
-  } catch {
+  } catch { /* expected: malformed or empty config text */
     return null;
   }
 }
@@ -69,7 +69,7 @@ export function loadConfigFromText(text: string): Config | null {
 export function loadConfig(): Config | null {
   try {
     return loadConfigFromText(readFileSync(CONFIG_PATH, "utf-8"));
-  } catch {
+  } catch { /* expected: config file doesn't exist yet */
     return null;
   }
 }
@@ -109,7 +109,7 @@ export function isPortInUse(port: number): boolean {
       }).trim();
       return out.split("\n").length > 1;
     }
-  } catch {
+  } catch { /* expected: lsof/ss exit non-zero when port is free or command missing */
     return false;
   }
 }

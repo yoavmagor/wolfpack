@@ -7,7 +7,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { shellEscape } from "../validation.js";
 import { INTERACTIVE_CONTEXT } from "../wolfpack-context.js";
-import { errMsg } from "../shared/process-cleanup.js";
+import { createLogger, errMsg } from "../log.js";
+
+const log = createLogger("tmux");
 
 const exec = promisify(execFile);
 
@@ -55,13 +57,20 @@ export const sessionDirMap = new Map<string, string>();
 
 const WOLFPACK_DIR_ENV = "WOLFPACK_PROJECT_DIR";
 
+// hookable primitives for _realTmuxList — overridable in tests
+let _listSessionsRaw: () => Promise<string> = async () => {
+  const { stdout } = await exec(TMUX, ["list-sessions", "-F", "#{session_name}|||#{pane_current_path}"]);
+  return stdout;
+};
+
+let _showEnvironment: (session: string) => Promise<string> = async (session) => {
+  const { stdout } = await exec(TMUX, ["show-environment", "-t", session, WOLFPACK_DIR_ENV]);
+  return stdout;
+};
+
 async function _realTmuxList(): Promise<string[]> {
   try {
-    const { stdout } = await exec(TMUX, [
-      "list-sessions",
-      "-F",
-      "#{session_name}|||#{pane_current_path}",
-    ]);
+    const stdout = await _listSessionsRaw();
     const SEP = "|||";
     const sessions: string[] = [];
     const backfillQueue: { name: string; dir: string }[] = [];
@@ -75,21 +84,29 @@ async function _realTmuxList(): Promise<string[]> {
       if (!isUnderDevDir(dir)) continue;
       sessions.push(name);
       if (!sessionDirMap.has(name)) {
-        backfillQueue.push({ name, dir });
+        const cached = _backfillCacheMap.get(name);
+        if (!cached || Date.now() - cached.ts >= BACKFILL_CACHE_TTL_MS) {
+          backfillQueue.push({ name, dir });
+        } else {
+          // use cached dir without spawning show-environment
+          sessionDirMap.set(name, cached.dir);
+        }
       }
     }
     // backfill missing sessionDirMap entries in parallel
     if (backfillQueue.length > 0) {
       await Promise.all(backfillQueue.map(async ({ name, dir }) => {
+        let resolved = dir;
         try {
-          const { stdout: envOut } = await exec(TMUX, ["show-environment", "-t", name, WOLFPACK_DIR_ENV]);
+          const envOut = await _showEnvironment(name);
           const eqIdx = envOut.indexOf("=");
           const val = eqIdx !== -1 ? envOut.substring(eqIdx + 1).trim() : "";
-          if (val && isUnderDevDir(val)) { sessionDirMap.set(name, val); return; }
+          if (val && isUnderDevDir(val)) resolved = val;
         } catch (e: unknown) {
-          console.warn(`tmuxList: failed to read tmux env for session ${name}:`, errMsg(e));
+          log.warn("tmuxList: failed to read tmux env for session", { session: name, error: errMsg(e) });
         }
-        sessionDirMap.set(name, dir);
+        sessionDirMap.set(name, resolved);
+        _backfillCacheMap.set(name, { dir: resolved, ts: Date.now() });
       }));
     }
     // prune stale entries for sessions that no longer exist
@@ -100,9 +117,12 @@ async function _realTmuxList(): Promise<string[]> {
     for (const key of _triageCacheMap.keys()) {
       if (!liveSet.has(key)) _triageCacheMap.delete(key);
     }
+    for (const key of _backfillCacheMap.keys()) {
+      if (!liveSet.has(key)) _backfillCacheMap.delete(key);
+    }
     return sessions;
   } catch (e: unknown) {
-    console.warn(`tmuxList: failed to list sessions:`, errMsg(e));
+    log.warn("tmuxList: failed to list sessions", { error: errMsg(e) });
     return [];
   }
 }
@@ -116,6 +136,8 @@ export function __setTestOverrides(overrides: Partial<{
   tmuxSendKey: (session: string, key: string) => Promise<void>;
   tmuxResize: (session: string, cols: number, rows: number) => Promise<void>;
   capturePane: (session: string) => Promise<string>;
+  listSessionsRaw: () => Promise<string>;
+  showEnvironment: (session: string) => Promise<string>;
 }>): void {
   assertTestMode("__setTestOverrides");
   if (overrides.tmuxList) _tmuxListFn = overrides.tmuxList;
@@ -123,6 +145,20 @@ export function __setTestOverrides(overrides: Partial<{
   if (overrides.tmuxSendKey) _tmuxSendKeyFn = overrides.tmuxSendKey;
   if (overrides.tmuxResize) _tmuxResizeFn = overrides.tmuxResize;
   if (overrides.capturePane) _capturePane = overrides.capturePane;
+  if (overrides.listSessionsRaw) _listSessionsRaw = overrides.listSessionsRaw;
+  if (overrides.showEnvironment) _showEnvironment = overrides.showEnvironment;
+}
+
+/** Test hook: clear backfill cache for isolation between tests */
+export function __clearBackfillCache(): void {
+  assertTestMode("__clearBackfillCache");
+  _backfillCacheMap.clear();
+}
+
+/** Test hook: expose backfill cache for assertions */
+export function __getBackfillCacheSize(): number {
+  assertTestMode("__getBackfillCacheSize");
+  return _backfillCacheMap.size;
 }
 
 export async function tmuxList(): Promise<string[]> {
@@ -132,11 +168,12 @@ export async function tmuxList(): Promise<string[]> {
 // ── tmuxSend / tmuxSendKey ──
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const SEND_ENTER_DELAY_MS = 50;
 
 async function _realTmuxSend(session: string, text: string, noEnter = false): Promise<void> {
   await exec(TMUX, ["send-keys", "-l", "-t", session, text]);
   if (!noEnter) {
-    await sleep(50);
+    await sleep(SEND_ENTER_DELAY_MS);
     await exec(TMUX, ["send-keys", "-t", session, "Enter"]);
   }
 }
@@ -177,7 +214,7 @@ let _capturePane: (session: string) => Promise<string> = async (session) => {
     ]);
     return stdout;
   } catch (e: unknown) {
-    console.debug(`capturePane failed [${session}]:`, errMsg(e));
+    log.debug(`capturePane failed`, { session, error: errMsg(e) });
     return "";
   }
 };
@@ -185,6 +222,10 @@ let _capturePane: (session: string) => Promise<string> = async (session) => {
 export async function capturePane(session: string): Promise<string> {
   return _capturePane(session);
 }
+
+// TTL cache for show-environment backfill — prevents N tmux execs on startup/re-poll
+const _backfillCacheMap = new Map<string, { dir: string; ts: number }>();
+export const BACKFILL_CACHE_TTL_MS = 30_000;
 
 // Separate cache for /api/sessions triage — avoids O(n) tmux execs on rapid polling
 const _triageCacheMap = new Map<string, { content: string; ts: number }>();
@@ -255,13 +296,13 @@ export async function tmuxNewSession(
   }
   // enforce sane defaults for wolfpack sessions (scoped to this session only)
   await exec(TMUX, ["set-option", "-t", name, "mouse", "on"]).catch((e: unknown) => {
-    console.warn(`tmuxNewSession: failed to set mouse option [${name}]:`, errMsg(e));
+    log.warn("tmuxNewSession: failed to set mouse option", { session: name, error: errMsg(e) });
   });
   // cache only after successful creation to avoid poisoning map on failed attempts
   sessionDirMap.set(name, cwd);
   // persist project root in tmux session env — survives server restarts
   await exec(TMUX, ["set-environment", "-t", name, WOLFPACK_DIR_ENV, cwd]).catch((e: unknown) => {
-    console.warn(`tmuxNewSession: failed to persist project dir in tmux env [${name}]:`, errMsg(e));
+    log.warn("tmuxNewSession: failed to persist project dir in tmux env", { session: name, error: errMsg(e) });
   });
 }
 
@@ -273,12 +314,12 @@ export async function cleanupOrphanPtySessions(): Promise<void> {
     for (const name of stdout.split("\n")) {
       if (name.startsWith("wp_")) {
         await exec(TMUX, ["kill-session", "-t", name], { timeout: 2000 }).catch((e: unknown) => {
-          console.warn(`cleanupOrphanPtySessions: failed to kill session ${name}:`, errMsg(e));
+          log.warn("cleanupOrphanPtySessions: failed to kill session", { session: name, error: errMsg(e) });
         });
       }
     }
   } catch (e: unknown) {
-    console.warn(`cleanupOrphanPtySessions: failed to list sessions:`, errMsg(e));
+    log.warn("cleanupOrphanPtySessions: failed to list sessions", { error: errMsg(e) });
   }
 }
 

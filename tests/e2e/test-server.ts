@@ -10,10 +10,8 @@ import type { AddressInfo } from "node:net";
 
 process.env.WOLFPACK_TEST = "1";
 
-const {
-  server,
-  __setTestOverrides,
-} = await import("../../src/server/index.ts");
+const { server } = await import("../../src/server/index.ts");
+const { __setTestOverrides } = await import("../../src/test-hooks.ts");
 
 // ── Mock tmux ──
 

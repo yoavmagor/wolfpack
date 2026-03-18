@@ -8,9 +8,12 @@ import {
   existsSync,
   unlinkSync,
 } from "node:fs";
+import { createLogger, errMsg } from "../log.js";
 import { join } from "node:path";
 import { countTasksInContent, validatePlanFormat } from "../wolfpack-context.js";
 import { DEV_DIR } from "./tmux.js";
+
+const log = createLogger("ralph");
 
 export interface RalphStatus {
   project: string;
@@ -39,12 +42,12 @@ export function listDevProjects(): string[] {
       .filter((f) => {
         try {
           return statSync(join(DEV_DIR, f)).isDirectory();
-        } catch {
+        } catch { /* race: entry removed between readdir and stat */
           return false;
         }
       })
       .sort();
-  } catch {
+  } catch { /* expected: DEV_DIR doesn't exist or isn't readable */
     return [];
   }
 }
@@ -55,7 +58,8 @@ export function countPlanTasks(planPath: string): { done: number; total: number;
     const { issues } = validatePlanFormat(plan);
     const { done, total } = countTasksInContent(plan);
     return { done, total, issues };
-  } catch {
+  } catch (e: unknown) {
+    log.warn("failed to read plan file", { path: planPath, error: errMsg(e) });
     return { done: 0, total: 0, issues: [] };
   }
 }
@@ -138,11 +142,11 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
         if (content.includes("🥋 Wax Off") && !content.includes("Wax Off complete") && !content.includes("Wax Off FAILED")) {
           status.cleanup = true;
         }
-      } catch {
+      } catch { /* expected: process exited — mark inactive */
         status.active = false;
         const lockPath = join(projectDir, ".ralph.lock");
         try { if (existsSync(lockPath)) unlinkSync(lockPath); } catch (e: unknown) {
-          console.warn(`parseRalphLog: failed to remove stale lock:`, e instanceof Error ? e.message : String(e));
+          log.warn("parseRalphLog: failed to remove stale lock", { error: e instanceof Error ? e.message : String(e) });
         }
       }
     }
@@ -168,7 +172,8 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
     }
 
     return status;
-  } catch {
+  } catch (e: unknown) {
+    log.warn("failed to parse ralph log", { dir: projectDir, error: errMsg(e) });
     return null;
   }
 }

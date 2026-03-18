@@ -24,6 +24,9 @@ import {
   type Config,
 } from "./config.js";
 import { serviceInstall } from "./service.js";
+import { createLogger } from "../log.js";
+
+const log = createLogger("setup");
 
 const IS_MACOS = platform() === "darwin";
 const IS_LINUX = platform() === "linux";
@@ -48,7 +51,7 @@ function check(name: string, cmd: string): boolean {
     execSync(cmd, { stdio: "ignore" });
     print(`  ${green("✓")} ${name}`);
     return true;
-  } catch {
+  } catch { /* expected: prerequisite not installed */
     print(`  ${red("✗")} ${name}`);
     return false;
   }
@@ -63,6 +66,13 @@ export async function setup() {
   print(bold("  Checking prerequisites...\n"));
 
   const hasTmux = check("tmux", "tmux -V");
+  if (!hasTmux) {
+    if (IS_MACOS) {
+      print(dim("    → brew install tmux"));
+    } else if (IS_LINUX) {
+      print(dim("    → sudo apt install tmux"));
+    }
+  }
   const tsBin = tailscaleBin();
   const hasTailscale = !!tsBin;
   if (hasTailscale) {
@@ -81,7 +91,7 @@ export async function setup() {
     if (IS_MACOS) {
       try {
         execSync("brew --version", { stdio: "ignore" });
-      } catch {
+      } catch { /* expected: homebrew not installed */
         print(red("  Homebrew is required to install missing dependencies."));
         print(dim("  Install from https://brew.sh"));
         process.exit(1);
@@ -89,7 +99,7 @@ export async function setup() {
     } else if (IS_LINUX) {
       try {
         execSync("apt --version", { stdio: "ignore" });
-      } catch {
+      } catch { /* expected: apt not available on this system */
         print(red("  apt is required to install missing dependencies."));
         process.exit(1);
       }
@@ -204,7 +214,7 @@ export async function setup() {
       });
       const parsed = JSON.parse(status);
       return parsed.Self?.DNSName?.replace(/\.$/, "") || undefined;
-    } catch {
+    } catch { /* expected: tailscale not running or not signed in */
       return undefined;
     }
   }
@@ -216,7 +226,7 @@ export async function setup() {
       if (IS_MACOS) {
         print(dim("  Launching Tailscale.app for sign-in..."));
         try { execSync("open /Applications/Tailscale.app", { stdio: "ignore" }); } catch (e: unknown) {
-          console.warn(`setup: failed to launch Tailscale.app:`, e instanceof Error ? e.message : String(e));
+          log.warn("setup: failed to launch Tailscale.app", { error: e instanceof Error ? e.message : String(e) });
         }
       } else if (IS_LINUX) {
         print(dim("  Run 'sudo tailscale up' in another terminal to sign in."));
@@ -254,7 +264,7 @@ export async function setup() {
 
       if (ttyFd !== null) {
         try { closeSync(ttyFd); } catch (e: unknown) {
-          console.warn(`setup: failed to close tty fd:`, e instanceof Error ? e.message : String(e));
+          log.warn("setup: failed to close tty fd", { error: e instanceof Error ? e.message : String(e) });
         }
       }
 
@@ -268,7 +278,8 @@ export async function setup() {
       try {
         execSync(`${sudoPrefix}${tsBin} serve --bg ${port}`, { stdio: "inherit" });
         print(green(`  Tailscale serving at https://${tailscaleHostname}/`));
-      } catch {
+      } catch (e: unknown) {
+        log.warn("tailscale serve failed", { error: e instanceof Error ? e.message : String(e) });
         print(red("  Failed to configure tailscale serve. You can do it manually later."));
         print(dim(`  Try: ${sudoPrefix}tailscale serve --bg ${port}`));
       }

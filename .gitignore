@@ -15,6 +15,7 @@ CLAUDE.md
 !public/wolfpack-icon.svg
 !docs/wolfpack-icon.svg
 src/public-assets.ts
+public/app.bundle.js
 dist/
 bin/wolfpack
 .ralph_iter.tmp
