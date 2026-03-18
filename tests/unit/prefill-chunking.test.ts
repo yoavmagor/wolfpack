@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 process.env.WOLFPACK_TEST = "1";
 
-const { __getTestState } = await import("../../src/server/websocket.ts");
+const { __getTestState } = await import("../../src/test-hooks.ts");
 const { sendPrefillChunked, PREFILL_CHUNK_SIZE } = __getTestState();
 
 /** Minimal mock WebSocket that records sent frames. */

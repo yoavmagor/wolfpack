@@ -235,3 +235,20 @@
 - These were all error-swallowing catch handlers for expected failures (ws close, ping, proc kill, tmux resize)
 - Zero `console.*` calls remain in server code; only 2 intentional `console.log` in CLI output (`formatting.ts`, `qr.ts`)
 - 921 unit tests pass (137 integration failures are pre-existing, unrelated to this change)
+
+## Remove test hooks from production exports (Task 11)
+- Created `src/test-hooks.ts` — single test-only entry point that re-exports all `__` prefixed hooks (`__setTestOverrides`, `__clearBackfillCache`, `__getBackfillCacheSize` from tmux.ts; `__getTestState` from websocket.ts; `__resetJwtAuthConfig` from auth.ts)
+- Removed `__setTestOverrides` and `__getTestState` re-exports from `src/server/index.ts` (production barrel)
+- Updated 10 test files to import test hooks from `src/test-hooks.ts` instead of barrel or direct source imports:
+  - `tests/e2e/test-server.ts`
+  - `tests/integration/auth-middleware.test.ts`
+  - `tests/integration/ws-dispatch.test.ts`
+  - `tests/integration/ws-terminal.test.ts`
+  - `tests/integration/ralph-aggregation.test.ts`
+  - `tests/integration/rate-limit.test.ts`
+  - `tests/integration/pty-test-helpers.ts`
+  - `tests/integration/prompt-reconnect.test.ts`
+  - `tests/unit/prefill-chunking.test.ts`
+  - `tests/unit/backfill-cache.test.ts`
+- Production `src/server/index.ts` no longer exports any `__` prefixed test hooks
+- 135 tests pass across all affected test files, 0 type errors from changes

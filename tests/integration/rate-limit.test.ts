@@ -6,11 +6,10 @@ process.env.WOLFPACK_TEST = "1";
 // Disable JWT so we can hit API endpoints without auth tokens
 delete process.env.WOLFPACK_JWT_SECRET;
 
-const { __resetJwtAuthConfig } = await import("../../src/auth.ts");
+const { __resetJwtAuthConfig, __setTestOverrides } = await import("../../src/test-hooks.ts");
 __resetJwtAuthConfig();
 
 const {
-  __setTestOverrides,
   server,
   __pollRateLimiter,
   __globalRateLimiter,

@@ -31,10 +31,6 @@ import { createLogger } from "../log.js";
 
 const log = createLogger("server");
 
-// Re-export everything tests need from a single entry point
-export { __setTestOverrides } from "./tmux.js";
-export { __getTestState } from "./websocket.js";
-
 const PORT =
   Number(process.env.WOLFPACK_PORT) || Number(process.argv[2]) || 18790;
 const VERSION: string = pkg.version;
