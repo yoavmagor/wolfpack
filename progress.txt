@@ -136,3 +136,26 @@
 - Clears prefill state on `viewer_conflict`, `onclose`, and `skipPrefill` attach
 - Unit tests (`tests/unit/prefill-chunking.test.ts`): 5 tests — small prefill single chunk, large prefill multi-chunk split + reassembly, mid-delivery disconnect abort, empty prefill, exact boundary (32KB)
 - 631 unit tests pass, bundle builds (140.6 KB)
+
+## Validate peer responses and fix CSP (Task 6)
+
+### 6a. Peer response validation
+- Added `validatePeerLoops()` to `src/server/routes.ts` — validates shape of remote peer ralph responses before passing to frontend
+- Schema validation: checks `loops` is array, each entry is object with `project` (required), validates types against `RALPH_LOOP_SCHEMA` (18 fields: string/number/boolean)
+- Strips unexpected keys from each entry (defense against compromised peers injecting fields)
+- Skips malformed entries with `log.warn` (doesn't reject entire response for one bad entry)
+- Unit tests (`tests/unit/peer-validation.test.ts`): 10 tests — null/missing/non-array loops, empty array, non-object entries, missing project, unexpected key stripping, wrong type fields, mixed valid/invalid entries, full RalphStatus validation
+
+### 6b. CSP hardening — nonce-based, no unsafe-inline
+- Moved all ~40 inline event handlers (`onclick`, `onchange`, `oninput`, `onkeydown`) from `public/index.html` to `public/app.ts` via `bindHtmlEventListeners()` function
+- Replaced inline `style="display:none"` attributes with CSS classes (`ralph-log-hidden`, `ralph-machine-picker-hidden`, `ralph-isolation-row`)
+- Updated `toggleRawLog()` in `app-ralph.ts` to use `getComputedStyle()` instead of `style.display` check (compatible with class-based initial hidden state)
+- `index.html` now has zero inline JS and zero inline styles
+- `src/server/http.ts`: replaced static CSP string with per-request nonce-based CSP
+  - `generateCspNonce()`: 16 random bytes → base64 nonce
+  - `buildCsp(nonce)`: `script-src 'self' 'nonce-{nonce}'` — no `'unsafe-inline'`
+  - `serveFile()`: injects `nonce` attribute into all `<script>` tags for HTML responses
+  - `style-src` retains `'unsafe-inline'` (low-risk, JS manipulation of `style.display` still works)
+- Unit tests (`tests/unit/csp-nonce.test.ts`): 2 tests — nonce format, uniqueness
+- Integration tests (`tests/integration/csp.test.ts`): 6 tests — nonce in script-src, no unsafe-inline, nonce matches HTML script tags, unique per request, style-src allows unsafe-inline, non-HTML assets no CSP
+- 643 unit tests pass, 187+ integration tests pass, bundle builds (152.9 KB)

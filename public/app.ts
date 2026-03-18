@@ -3453,6 +3453,118 @@ function startSidebarRefresh() {
   }
 }
 
+// ── Bind all HTML event listeners (replaces inline onclick/onchange/etc) ──
+
+function bindHtmlEventListeners(): void {
+  const $ = (id: string) => document.getElementById(id);
+  const on = (id: string, event: string, fn: EventListener) => {
+    const el = $(id);
+    if (el) el.addEventListener(event, fn);
+  };
+
+  // Header
+  on("session-chip", "click", () => toggleDrawer());
+  on("search-btn", "click", () => toggleSearch());
+  on("gear-btn", "click", () => showSettings());
+
+  // Drawer / overlays
+  on("drawer-backdrop", "click", () => closeDrawer());
+  on("git-status-overlay", "click", () => dismissGitStatus());
+
+  // Expanded toolbar
+  on("expanded-settings-btn", "click", () => showSettings());
+  on("expanded-collapse-btn", "click", () => $("sidebar-expand-btn")?.click());
+
+  // Project picker
+  const pickerCancel = document.querySelector("#projects-view .picker-cancel-btn");
+  if (pickerCancel) pickerCancel.addEventListener("click", () => { showView(state.viewBeforePicker); loadSessions(); });
+
+  const createProjectBtn = document.querySelector("#projects-view .new-project-row button");
+  if (createProjectBtn) createProjectBtn.addEventListener("click", () => selectNewProject());
+
+  // Agent picker
+  const agentBackBtn = document.querySelector("#agent-view .picker-cancel-btn");
+  if (agentBackBtn) agentBackBtn.addEventListener("click", () => showView("projects"));
+
+  on("custom-cmd-input", "keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") addCustomCmd(); });
+  const addCmdBtn = document.querySelector("#agent-view .custom-cmd-add-btn");
+  if (addCmdBtn) addCmdBtn.addEventListener("click", () => addCustomCmd());
+
+  // Settings
+  on("settings-back-btn", "click", () => backFromSettings());
+  const discoverBtn = document.querySelector(".discover-btn");
+  if (discoverBtn) discoverBtn.addEventListener("click", () => discoverMachines());
+
+  // Settings toggles
+  on("setting-animations", "change", function(this: any) { toggleSetting("animations", this.checked); });
+  on("setting-haptics", "change", function(this: any) { toggleSetting("haptics", this.checked); });
+  on("setting-notifications", "change", function(this: any) { toggleSetting("notifications", this.checked); });
+  on("setting-termWrap", "change", function(this: any) { toggleSetting("termWrap", this.checked); });
+  on("setting-enterSends", "change", function(this: any) { toggleSetting("enterSends", this.checked); });
+  on("setting-holdToSend", "change", function(this: any) { toggleSetting("holdToSend", this.checked); });
+  on("setting-ralphEnabled", "change", function(this: any) { toggleSetting("ralphEnabled", this.checked); });
+  on("setting-debugPanel", "change", function(this: any) { toggleSetting("debugPanel", this.checked); toggleDebugPanel(); });
+  on("setting-snapshotTtl", "input", function(this: any) {
+    toggleSetting("snapshotTtl", +this.value);
+    const val = $("snapshot-ttl-val");
+    if (val) val.textContent = formatSnapshotTtl(this.value);
+  });
+
+  // Term font size buttons
+  document.querySelectorAll(".term-size-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const size = (btn as HTMLElement).dataset.size;
+      if (size) toggleSetting("termFontSize", size);
+    });
+  });
+
+  // Term font family buttons
+  document.querySelectorAll(".term-font-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const font = (btn as HTMLElement).dataset.font;
+      if (font) toggleSetting("termFont", font);
+    });
+  });
+
+  // Quick commands
+  on("add-quick-cmd-btn", "click", () => addQuickCmd());
+
+  // Debug reset
+  const debugResetBtn = document.querySelector(".debug-reset-btn");
+  if (debugResetBtn) debugResetBtn.addEventListener("click", () => { wpMetrics.reset(); renderDebugPanel(); });
+
+  // Search bar
+  const searchBar = $("search-bar");
+  if (searchBar) {
+    const btns = searchBar.querySelectorAll("button");
+    if (btns[0]) btns[0].addEventListener("click", () => prevMatch());
+    if (btns[1]) btns[1].addEventListener("click", () => nextMatch());
+    if (btns[2]) btns[2].addEventListener("click", () => closeSearch());
+  }
+
+  // Terminal view
+  on("jump-to-live", "click", () => jumpToLive());
+
+  // Keyboard accessory
+  const gitBtn = document.querySelector(".kb-key.kb-git");
+  if (gitBtn) gitBtn.addEventListener("click", () => showGitStatus());
+
+  on("kb-toggle", "click", () => toggleKbAccessory());
+
+  // Ralph detail
+  on("ralph-detail-back-btn", "click", () => backFromRalph());
+  on("ralph-log-toggle", "click", () => toggleRawLog());
+
+  // Ralph start form
+  on("ralph-start-back-btn", "click", () => backFromRalph());
+  const ralphSegmented = document.querySelector(".ralph-segmented");
+  if (ralphSegmented) ralphSegmented.addEventListener("change", () => onIsolationChange());
+  const launchBtn = document.querySelector(".ralph-launch-btn");
+  if (launchBtn) launchBtn.addEventListener("click", () => startRalph());
+}
+
+bindHtmlEventListeners();
+
 initGridDeps({
   showView, openSession, destroyDesktopTerminal, initDesktopTerminal,
   backToSessions, startPolling, resizePane, renderSidebar,

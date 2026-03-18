@@ -29,7 +29,7 @@
     <header>
       <div class="header-left">
         <button class="back-btn" id="back-btn">BACK</button>
-        <div id="session-chip" onclick="toggleDrawer()"><span id="chip-label"></span><span class="chip-chevron">&#9660;</span><span class="chip-handle"></span></div>
+        <div id="session-chip"><span id="chip-label"></span><span class="chip-chevron">&#9660;</span><span class="chip-handle"></span></div>
       </div>
       <div class="header-center" id="header-center">
         <div class="flex-row">
@@ -39,8 +39,8 @@
       </div>
       <div class="header-right">
         <div id="header-machine-label" class="machine-label"></div>
-        <button class="search-btn" id="search-btn" onclick="toggleSearch()">&#128269;</button>
-        <button class="settings-gear" id="gear-btn" onclick="showSettings()">&#9881;</button>
+        <button class="search-btn" id="search-btn">&#128269;</button>
+        <button class="settings-gear" id="gear-btn">&#9881;</button>
       </div>
     </header>
     <div id="desktop-sidebar">
@@ -56,8 +56,8 @@
       <div id="sidebar-session-list" class="sidebar-sessions"></div>
     </div>
     <div id="sidebar-hover-edge"></div>
-    <div id="drawer-backdrop" onclick="closeDrawer()"></div>
-    <div id="git-status-overlay" onclick="dismissGitStatus()"></div>
+    <div id="drawer-backdrop"></div>
+    <div id="git-status-overlay"></div>
     <div id="session-drawer">
       <div id="drawer-list"></div>
     </div>
@@ -71,8 +71,8 @@
           <h1 class="expanded-title">WOLFPACK</h1>
         </div>
         <div class="expanded-controls">
-          <button id="expanded-settings-btn" title="Settings" onclick="showSettings()">&#9881;</button>
-          <button id="expanded-collapse-btn" title="Collapse view" onclick="document.getElementById('sidebar-expand-btn').click()">&#x26F6;</button>
+          <button id="expanded-settings-btn" title="Settings">&#9881;</button>
+          <button id="expanded-collapse-btn" title="Collapse view">&#x26F6;</button>
         </div>
       </div>
       <div id="session-list" class="list"></div>
@@ -80,7 +80,7 @@
 
     <!-- Project picker view -->
     <div id="projects-view" class="view">
-      <button class="picker-cancel-btn" onclick="showView(state.viewBeforePicker); loadSessions();">← Cancel</button>
+      <button class="picker-cancel-btn">← Cancel</button>
       <div class="new-project-row">
         <input
           id="new-project-name"
@@ -90,14 +90,14 @@
           autocorrect="off"
           autocapitalize="off"
         />
-        <button onclick="selectNewProject()">Create</button>
+        <button>Create</button>
       </div>
       <div id="project-list" class="list"></div>
     </div>
 
     <!-- Agent picker view -->
     <div id="agent-view" class="view">
-      <button class="picker-cancel-btn" onclick="showView('projects')">← Back</button>
+      <button class="picker-cancel-btn">← Back</button>
       <div class="session-name-block">
         <div class="session-name-label">session name</div>
         <input type="text" class="session-name-input" id="session-name-input"
@@ -108,32 +108,31 @@
       <div id="agent-list" class="list"></div>
       <div class="custom-cmd-row">
         <input id="custom-cmd-input" type="text" placeholder="custom command…"
-          class="custom-cmd-input"
-          onkeydown="if(event.key==='Enter')addCustomCmd()">
-        <button class="custom-cmd-add-btn" onclick="addCustomCmd()">+ Add</button>
+          class="custom-cmd-input">
+        <button class="custom-cmd-add-btn">+ Add</button>
       </div>
     </div>
 
     <!-- Settings view -->
     <div id="settings-view" class="view">
-      <button id="settings-back-btn" class="settings-back-btn" onclick="backFromSettings()">← Back</button>
+      <button id="settings-back-btn" class="settings-back-btn">← Back</button>
       <div class="list">
         <div class="settings-section">
           <div class="settings-label">Machines</div>
           <div id="machines-list"></div>
-          <button class="discover-btn" onclick="discoverMachines()">Discover Tailnet</button>
+          <button class="discover-btn">Discover Tailnet</button>
           <div id="discover-status" class="discover-status"></div>
         </div>
         <div class="settings-section">
           <div class="settings-label">Effects</div>
           <label class="settings-toggle">
-            <input type="checkbox" id="setting-animations" checked onchange="toggleSetting('animations', this.checked)"> Animations
+            <input type="checkbox" id="setting-animations" checked> Animations
           </label>
           <label class="settings-toggle">
-            <input type="checkbox" id="setting-haptics" checked onchange="toggleSetting('haptics', this.checked)"> Haptic feedback
+            <input type="checkbox" id="setting-haptics" checked> Haptic feedback
           </label>
           <label class="settings-toggle">
-            <input type="checkbox" id="setting-notifications" onchange="toggleSetting('notifications', this.checked)"> Notifications
+            <input type="checkbox" id="setting-notifications"> Notifications
           </label>
         </div>
         <div class="settings-section">
@@ -141,43 +140,42 @@
           <div class="settings-subsection">
             <div class="settings-sub-heading">Font size</div>
             <div class="preset-row">
-              <button class="term-size-btn preset-btn" data-size="small" onclick="toggleSetting('termFontSize','small')">Small<br><span class="preset-hint">12px</span></button>
-              <button class="term-size-btn preset-btn" data-size="medium" onclick="toggleSetting('termFontSize','medium')">Medium<br><span class="preset-hint">13px</span></button>
-              <button class="term-size-btn preset-btn" data-size="large" onclick="toggleSetting('termFontSize','large')">Large<br><span class="preset-hint">14px</span></button>
+              <button class="term-size-btn preset-btn" data-size="small">Small<br><span class="preset-hint">12px</span></button>
+              <button class="term-size-btn preset-btn" data-size="medium">Medium<br><span class="preset-hint">13px</span></button>
+              <button class="term-size-btn preset-btn" data-size="large">Large<br><span class="preset-hint">14px</span></button>
             </div>
           </div>
           <div class="settings-subsection">
             <div class="settings-sub-heading">Font family</div>
             <div class="preset-row">
-              <button class="term-font-btn preset-btn" data-font="default" onclick="toggleSetting('termFont','default')">System Mono</button>
-              <button class="term-font-btn preset-btn font-alt" data-font="alt" onclick="toggleSetting('termFont','alt')">Alt Mono</button>
+              <button class="term-font-btn preset-btn" data-font="default">System Mono</button>
+              <button class="term-font-btn preset-btn font-alt" data-font="alt">Alt Mono</button>
             </div>
           </div>
           <label class="settings-toggle">
-            <input type="checkbox" id="setting-termWrap" onchange="toggleSetting('termWrap', this.checked)"> Wrap long lines
+            <input type="checkbox" id="setting-termWrap"> Wrap long lines
           </label>
           <div class="settings-subsection">
             <div class="flex-between">
               <span>Recovery snapshot TTL</span><span id="snapshot-ttl-val" class="accent-val">5m</span>
             </div>
             <input type="range" id="setting-snapshotTtl" min="60" max="1800" step="60" value="300"
-              class="range-input"
-              oninput="toggleSetting('snapshotTtl', +this.value); document.getElementById('snapshot-ttl-val').textContent=formatSnapshotTtl(this.value)">
+              class="range-input">
           </div>
         </div>
         <div class="settings-section">
           <div class="settings-label">Input</div>
           <label class="settings-toggle">
-            <input type="checkbox" id="setting-enterSends" onchange="toggleSetting('enterSends', this.checked)"> Enter sends (off = newline)
+            <input type="checkbox" id="setting-enterSends"> Enter sends (off = newline)
           </label>
           <label class="settings-toggle">
-            <input type="checkbox" id="setting-holdToSend" onchange="toggleSetting('holdToSend', this.checked)"> Hold-to-send (large msgs)
+            <input type="checkbox" id="setting-holdToSend"> Hold-to-send (large msgs)
           </label>
         </div>
         <div class="settings-section">
           <div class="settings-label">Ralph Loop</div>
           <label class="settings-toggle">
-            <input type="checkbox" id="setting-ralphEnabled" onchange="toggleSetting('ralphEnabled', this.checked)"> Enable Ralph Loop
+            <input type="checkbox" id="setting-ralphEnabled"> Enable Ralph Loop
           </label>
           <div class="settings-description">
             Ralph is an autonomous agent loop that works through a plan file task-by-task. It spawns AI agents (Claude, Codex, Gemini) as detached processes, each completing one task before handing off to the next. Progress is tracked via strikethrough headers or checkboxes in your plan file. Enable this to show Ralph controls throughout the UI.
@@ -186,12 +184,12 @@
         <div class="settings-section">
           <div class="settings-label">Quick Commands</div>
           <div id="quick-cmds-list" class="quick-cmds-list"></div>
-          <button id="add-quick-cmd-btn" class="add-cmd-btn" onclick="addQuickCmd()">+ Add Command</button>
+          <button id="add-quick-cmd-btn" class="add-cmd-btn">+ Add Command</button>
         </div>
         <div class="settings-section">
           <div class="settings-label">Debug</div>
           <label class="settings-toggle">
-            <input type="checkbox" id="setting-debugPanel" onchange="toggleSetting('debugPanel', this.checked); toggleDebugPanel()"> Performance metrics
+            <input type="checkbox" id="setting-debugPanel"> Performance metrics
           </label>
           <div id="debug-panel" class="debug-panel">
             <div class="debug-grid">
@@ -205,7 +203,7 @@
               <span>Send failures</span><span id="dbg-send-fails" class="debug-val danger">0</span>
               <span>Session uptime</span><span id="dbg-uptime" class="debug-val">—</span>
             </div>
-            <button class="debug-reset-btn" onclick="wpMetrics.reset(); renderDebugPanel()">Reset</button>
+            <button class="debug-reset-btn">Reset</button>
           </div>
         </div>
         <div class="settings-section settings-about">
@@ -221,9 +219,9 @@
       <div id="search-bar">
         <input id="search-input" type="text" placeholder="Search..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
         <span id="search-count"></span>
-        <button onclick="prevMatch()">&#9650;</button>
-        <button onclick="nextMatch()">&#9660;</button>
-        <button onclick="closeSearch()">&#10005;</button>
+        <button id="search-prev-btn">&#9650;</button>
+        <button id="search-next-btn">&#9660;</button>
+        <button id="search-close-btn">&#10005;</button>
       </div>
       <div
         id="conn-status"
@@ -232,7 +230,7 @@
         Reconnecting...
       </div>
       <div id="terminal"></div>
-      <button id="jump-to-live" onclick="jumpToLive()">&#9660; Live</button>
+      <button id="jump-to-live">&#9660; Live</button>
       <div id="desktop-terminal-container"></div>
       <div id="desktop-grid-container"></div>
       <div id="cmd-palette"></div>
@@ -242,10 +240,10 @@
         <button class="kb-key" data-key="Up">&#9650;</button>
         <button class="kb-key" data-key="Down">&#9660;</button>
         <button class="kb-key kb-danger" data-key="C-c">^C</button>
-        <button class="kb-key kb-git" onclick="showGitStatus()">git</button>
+        <button class="kb-key kb-git">git</button>
       </div>
       <div id="input-bar">
-        <button id="kb-toggle" onclick="toggleKbAccessory()" title="Toggle keys" aria-label="Toggle keyboard shortcuts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2.5"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg></button>
+        <button id="kb-toggle" title="Toggle keys" aria-label="Toggle keyboard shortcuts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2.5"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg></button>
         <textarea
           id="msg-input"
           rows="1"
@@ -262,13 +260,13 @@
 
     <!-- Ralph detail view -->
     <div id="ralph-detail-view" class="view">
-      <button id="ralph-detail-back-btn" class="picker-cancel-btn" onclick="backFromRalph()">&#8592; Back</button>
+      <button id="ralph-detail-back-btn" class="picker-cancel-btn">&#8592; Back</button>
       <div id="ralph-detail-header" class="ralph-detail-header"></div>
       <div id="ralph-log-container" class="ralph-log-container">
         <div id="ralph-iterations"></div>
-        <pre id="ralph-log" class="ralph-log" style="display:none"></pre>
+        <pre id="ralph-log" class="ralph-log ralph-log-hidden"></pre>
         <div class="ralph-log-toggle-wrap">
-          <span id="ralph-log-toggle" class="ralph-log-toggle" onclick="toggleRawLog()">view raw log</span>
+          <span id="ralph-log-toggle" class="ralph-log-toggle">view raw log</span>
         </div>
       </div>
       <div id="ralph-actions" class="ralph-actions"></div>
@@ -276,9 +274,9 @@
 
     <!-- Ralph start form view -->
     <div id="ralph-start-view" class="view">
-      <button id="ralph-start-back-btn" class="picker-cancel-btn" onclick="backFromRalph()">&#8592; Cancel</button>
+      <button id="ralph-start-back-btn" class="picker-cancel-btn">&#8592; Cancel</button>
       <div class="ralph-start-form">
-        <div id="ralph-machine-picker" style="display:none"></div>
+        <div id="ralph-machine-picker" class="ralph-machine-picker-hidden"></div>
 
         <label for="ralph-project-select">Project</label>
         <select id="ralph-project-select"></select>
@@ -313,9 +311,9 @@
             <input type="checkbox" id="ralph-audit-fix-toggle" class="ralph-checkbox" />
             <label for="ralph-audit-fix-toggle" class="ralph-branch-label">Run audit+fix phase</label>
           </div>
-          <div class="flex-row" style="align-items: center;">
+          <div class="flex-row ralph-isolation-row">
             <span class="ralph-branch-label">Isolation</span>
-            <div class="ralph-segmented" onchange="onIsolationChange()">
+            <div class="ralph-segmented">
               <input type="radio" name="ralph-isolation" id="ralph-iso-off" value="false" checked />
               <label for="ralph-iso-off">Off</label>
               <input type="radio" name="ralph-isolation" id="ralph-iso-plan" value="plan" />
@@ -340,7 +338,7 @@
           <select id="ralph-source-branch"></select>
         </div>
 
-        <button class="ralph-launch-btn" onclick="startRalph()">Launch Ralph</button>
+        <button class="ralph-launch-btn">Launch Ralph</button>
       </div>
     </div>
     </div><!-- /view-container -->

@@ -2393,6 +2393,9 @@ body.ralph-hidden .sidebar-ralph-card { display: none !important; }
 .ralph-log-container { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .ralph-log-toggle { font-size: 11px; color: var(--text-dim); cursor: pointer; text-transform: uppercase; letter-spacing: 1px; }
 .ralph-log-toggle-wrap { padding: 4px 10px 8px; }
+.ralph-log-hidden { display: none; }
+.ralph-machine-picker-hidden { display: none; }
+.ralph-isolation-row { align-items: center; }
 .ralph-branch-fields { display: none; flex-direction: column; gap: 12px; }
 .accent-val { color: var(--accent); font-size: 11px; }
 .range-input { width: 100%; accent-color: var(--accent); margin-top: 4px; }

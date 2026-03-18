@@ -3,6 +3,7 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { assets } from "../public-assets.js";
 import { tmuxList } from "./tmux.js";
 import { exec } from "./tmux.js";
@@ -122,7 +123,20 @@ export async function parseBody<T = any>(req: IncomingMessage, res: ServerRespon
   }
 }
 
-const CSP = "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' wss: https:; img-src 'self' data:";
+/** Generate a cryptographically random base64 nonce for CSP. */
+export function generateCspNonce(): string {
+  return randomBytes(16).toString("base64");
+}
+
+function buildCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline'",
+    "connect-src 'self' wss: https:",
+    "img-src 'self' data:",
+  ].join("; ");
+}
 
 export function serveFile(res: ServerResponse, filename: string): void {
   const asset = assets.get(filename);
@@ -136,7 +150,14 @@ export function serveFile(res: ServerResponse, filename: string): void {
     "Cache-Control": "no-cache",
   };
   if (asset.mime === "text/html") {
-    headers["Content-Security-Policy"] = CSP;
+    const nonce = generateCspNonce();
+    headers["Content-Security-Policy"] = buildCsp(nonce);
+    // Inject nonce into all <script> tags
+    const html = (typeof asset.content === "string" ? asset.content : asset.content.toString())
+      .replace(/<script /g, `<script nonce="${nonce}" `);
+    res.writeHead(200, headers);
+    res.end(html);
+    return;
   }
   res.writeHead(200, headers);
   res.end(asset.content);

@@ -200,8 +200,9 @@ export function toggleRawLog() {
   const logEl = document.getElementById("ralph-log");
   const iterEl = document.getElementById("ralph-iterations");
   const toggle = document.getElementById("ralph-log-toggle");
-  const showing = logEl.style.display !== "none";
+  const showing = getComputedStyle(logEl).display !== "none";
   logEl.style.display = showing ? "none" : "block";
+  logEl.classList.remove("ralph-log-hidden");
   iterEl.style.display = showing ? "" : "none";
   toggle.textContent = showing ? "view raw log" : "view iterations";
 }

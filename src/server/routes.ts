@@ -58,6 +58,68 @@ import {
 
 const log = createLogger("http");
 
+// ── Peer ralph-response validation ──
+
+/** Allowed keys on a ralph loop entry from a remote peer. */
+const RALPH_LOOP_SCHEMA: Record<string, "string" | "number" | "boolean"> = {
+  project: "string",
+  active: "boolean",
+  completed: "boolean",
+  audit: "boolean",
+  cleanup: "boolean",
+  cleanupEnabled: "boolean",
+  auditFixEnabled: "boolean",
+  iteration: "number",
+  totalIterations: "number",
+  agent: "string",
+  planFile: "string",
+  progressFile: "string",
+  started: "string",
+  finished: "string",
+  lastOutput: "string",
+  pid: "number",
+  tasksDone: "number",
+  tasksTotal: "number",
+};
+
+/**
+ * Validate and sanitize a peer's ralph response.
+ * Returns validated loop entries or null if the response is malformed.
+ * Strips unexpected keys from each entry.
+ */
+export function validatePeerLoops(peerName: string, data: unknown): Record<string, unknown>[] | null {
+  if (typeof data !== "object" || data === null || !("loops" in data)) {
+    log.warn(`malformed peer response from ${peerName}: missing 'loops' key`);
+    return null;
+  }
+  const { loops } = data as { loops: unknown };
+  if (!Array.isArray(loops)) {
+    log.warn(`malformed peer response from ${peerName}: 'loops' is not an array`);
+    return null;
+  }
+  const validated: Record<string, unknown>[] = [];
+  for (const entry of loops) {
+    if (typeof entry !== "object" || entry === null) {
+      log.warn(`malformed peer loop entry from ${peerName}: not an object, skipping`);
+      continue;
+    }
+    const obj = entry as Record<string, unknown>;
+    // project is required — skip entries without it
+    if (typeof obj.project !== "string") {
+      log.warn(`malformed peer loop entry from ${peerName}: missing 'project', skipping`);
+      continue;
+    }
+    const clean: Record<string, unknown> = {};
+    for (const [key, expectedType] of Object.entries(RALPH_LOOP_SCHEMA)) {
+      if (key in obj && typeof obj[key] === expectedType) {
+        clean[key] = obj[key];
+      }
+    }
+    validated.push(clean);
+  }
+  return validated;
+}
+
 /** Validate project name param. Returns project string or sends 400 and returns null. */
 function validateProject(res: ServerResponse, project: string | null | undefined): project is string {
   if (!project || !isValidProjectName(project)) {
@@ -456,8 +518,10 @@ export const routes: Record<
             headers,
           });
           clearTimeout(timer);
-          const data = await r.json() as { loops: any[] };
-          return (data.loops || []).map((l: any) => ({ ...l, machineName: peer.name, machineUrl: peer.url }));
+          const data = await r.json();
+          const loops = validatePeerLoops(peer.name, data);
+          if (!loops) return [];
+          return loops.map(l => ({ ...l, machineName: peer.name, machineUrl: peer.url }));
         } catch { /* expected: peer unreachable or non-wolfpack — skip silently */
           return [];
         }
