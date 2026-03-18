@@ -645,7 +645,23 @@ export const routes: Record<
         } else {
           try {
             process.kill(lockPid, 0);
-            return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
+            // PID is alive — verify it's actually a ralph process (not a reused PID)
+            try {
+              const cmdline = execFileSync("ps", ["-p", String(lockPid), "-o", "command="], { encoding: "utf-8", timeout: 3000 });
+              if (!cmdline.includes("ralph-macchio") && !cmdline.includes("worker")) {
+                // PID reused by unrelated process — stale lock, remove it
+                log.warn("lock PID belongs to unrelated process, removing stale lock", { pid: lockPid, command: cmdline.trim() });
+                try { unlinkSync(lockPath); } catch (e: unknown) {
+                  if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`ralph start: failed to remove reused-PID lock:`, errMsg(e));
+                }
+              } else {
+                return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
+              }
+            } catch { /* ps failed — process may have exited between kill(0) and ps, treat as stale */
+              try { unlinkSync(lockPath); } catch (e: unknown) {
+                if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`ralph start: failed to remove stale lock:`, errMsg(e));
+              }
+            }
           } catch { /* expected: process dead — stale lock, remove it */
             try { unlinkSync(lockPath); } catch (e: unknown) {
               if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`ralph start: failed to remove stale lock:`, errMsg(e));

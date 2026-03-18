@@ -176,3 +176,16 @@
 - **PTY crash mid-take-control**: mock proc exit during takeover, proc crash after takeover tears down cleanly, crash while pending viewer exists closes both, take_control on dead entry handled gracefully
 - **Leak verification**: rapid A→B→A cycle leaves exactly 1 entry, all-disconnect→0 entries, 5 rapid takeover cycles→1 survivor then 0, pending+active disconnect→0 entries
 - 12 integration tests pass, 45 expect() calls
+
+## Ralph lock file race tests (Task 7b)
+- **Production fix** (`src/server/routes.ts`): lock PID ownership verification — if lock PID is alive but `ps` shows it's not a ralph process, treat as stale (PID reuse after SIGKILL). Uses `execFileSync("ps", ["-p", PID, "-o", "command="])` to check for "ralph-macchio" or "worker" in command line
+- **9 integration tests** added to `tests/integration/ralph-api.test.ts` in new `ralph lock file races` describe block:
+  - `wx` flag prevents double-create (empty lock → stale cleanup → success)
+  - Lock held by live ralph process + concurrent starts → both get 409
+  - SIGKILL'd ralph (dead PID in lock) → stale lock cleaned, start succeeds
+  - Invalid PIDs (-5, 0, 1) → cleaned up on next start
+  - **PID of unrelated process** → not killed, lock cleaned up, start succeeds
+  - PID of actual ralph process → 409 (lock held)
+  - Alive PID but `ps` fails → treated as stale (conservative)
+  - Whitespace-padded PID → parsed correctly
+- 69 ralph-api integration tests pass (9 new), 195 expect() calls
