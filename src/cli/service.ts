@@ -224,20 +224,74 @@ export function serviceInstall() {
 
   if (IS_MACOS) {
     const plist = generatePlist();
-    mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
-    writeFileSync(PLIST_PATH, plist);
+    try {
+      mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
+    } catch (e: unknown) {
+      log.error("failed to create LaunchAgents directory", { error: errMsg(e) });
+      print(red(`  Failed to create ~/Library/LaunchAgents: ${errMsg(e)}`));
+      process.exit(1);
+    }
+    try {
+      writeFileSync(PLIST_PATH, plist);
+    } catch (e: unknown) {
+      log.error("failed to write plist", { path: PLIST_PATH, error: errMsg(e) });
+      print(red(`  Failed to write plist: ${errMsg(e)}`));
+      print(dim("  Check permissions on ~/Library/LaunchAgents or run with sudo."));
+      process.exit(1);
+    }
     launchdBootout();
-    launchdBootstrap();
+    try {
+      launchdBootstrap();
+    } catch (e: unknown) {
+      log.error("launchctl bootstrap failed", { error: errMsg(e) });
+      print(red(`  Failed to register service with launchd: ${errMsg(e)}`));
+      print(dim("  The plist was written but launchctl bootstrap/kickstart failed."));
+      print(dim(`  Try manually: launchctl bootstrap gui/$(id -u) "${PLIST_PATH}"`));
+      process.exit(1);
+    }
     print("");
     print(green("  Wolfpack service installed and started."));
     print(dim(`  Plist: ${PLIST_PATH}`));
   } else if (IS_LINUX) {
     const unit = generateSystemdUnit();
-    mkdirSync(join(homedir(), ".config", "systemd", "user"), { recursive: true });
-    writeFileSync(SYSTEMD_PATH, unit);
-    execSync("systemctl --user daemon-reload");
-    execSync(`systemctl --user enable ${SYSTEMD_SERVICE}`);
-    execSync(`systemctl --user start ${SYSTEMD_SERVICE}`);
+    try {
+      mkdirSync(join(homedir(), ".config", "systemd", "user"), { recursive: true });
+    } catch (e: unknown) {
+      log.error("failed to create systemd user directory", { error: errMsg(e) });
+      print(red(`  Failed to create ~/.config/systemd/user: ${errMsg(e)}`));
+      process.exit(1);
+    }
+    try {
+      writeFileSync(SYSTEMD_PATH, unit);
+    } catch (e: unknown) {
+      log.error("failed to write systemd unit", { path: SYSTEMD_PATH, error: errMsg(e) });
+      print(red(`  Failed to write unit file: ${errMsg(e)}`));
+      print(dim("  Check permissions on ~/.config/systemd/user/."));
+      process.exit(1);
+    }
+    try {
+      execSync("systemctl --user daemon-reload");
+    } catch (e: unknown) {
+      log.error("systemctl daemon-reload failed", { error: errMsg(e) });
+      print(red(`  Failed to reload systemd: ${errMsg(e)}`));
+      print(dim("  Is systemd --user running? Check: systemctl --user status"));
+      process.exit(1);
+    }
+    try {
+      execSync(`systemctl --user enable ${SYSTEMD_SERVICE}`);
+    } catch (e: unknown) {
+      log.error("systemctl enable failed", { error: errMsg(e) });
+      print(red(`  Failed to enable service: ${errMsg(e)}`));
+      process.exit(1);
+    }
+    try {
+      execSync(`systemctl --user start ${SYSTEMD_SERVICE}`);
+    } catch (e: unknown) {
+      log.error("systemctl start failed", { error: errMsg(e) });
+      print(red(`  Failed to start service: ${errMsg(e)}`));
+      print(dim(`  Check logs: journalctl --user -u ${SYSTEMD_SERVICE}`));
+      process.exit(1);
+    }
     try {
       const user = process.env.USER || "";
       if (!/^[a-z_][a-z0-9_-]*$/.test(user)) {

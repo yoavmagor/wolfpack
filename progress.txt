@@ -252,3 +252,15 @@
   - `tests/unit/backfill-cache.test.ts`
 - Production `src/server/index.ts` no longer exports any `__` prefixed test hooks
 - 135 tests pass across all affected test files, 0 type errors from changes
+
+## Service install error messages (Task 12a)
+- Wrapped each step in `serviceInstall()` with try/catch and descriptive error messages
+- **macOS**: `mkdirSync(LaunchAgents)`, `writeFileSync(plist)`, `launchdBootstrap()` — each gets specific error + hint
+  - Plist write failure suggests checking permissions or sudo
+  - Bootstrap failure prints manual `launchctl bootstrap` command
+- **Linux**: `mkdirSync(systemd/user)`, `writeFileSync(unit)`, `daemon-reload`, `enable`, `start` — each gets specific error + hint
+  - daemon-reload failure suggests checking `systemctl --user status`
+  - start failure points to `journalctl --user -u wolfpack`
+- Linger try/catch was already present (unchanged)
+- All errors log via `log.error()` with structured context before printing user-facing message
+- 716 unit tests pass, 8 snapshot tests pass
