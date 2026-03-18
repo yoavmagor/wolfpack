@@ -34,6 +34,7 @@ export interface RalphStatus {
   pid: number;
   tasksDone: number;
   tasksTotal: number;
+  worktreeMode: string;
 }
 
 export function listDevProjects(): string[] {
@@ -88,6 +89,7 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
     pid: 0,
     tasksDone: 0,
     tasksTotal: 0,
+    worktreeMode: "false",
   };
 
   try {
@@ -106,6 +108,8 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
       if (cleanupMatch) status.cleanupEnabled = cleanupMatch[1] === "on";
       const auditFixMatch = line.match(/^phase_audit_fix:\s*(on|off)/);
       if (auditFixMatch) status.auditFixEnabled = auditFixMatch[1] === "on";
+      const wtMatch = line.match(/^worktree:\s*(.+)/);
+      if (wtMatch) status.worktreeMode = wtMatch[1].trim();
       const startMatch = line.match(/^started:\s*(.+)/);
       if (startMatch) status.started = startMatch[1].trim();
       const pidMatch = line.match(/^pid:\s*(\d+)/);
@@ -164,8 +168,10 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
     // count tasks from plan file — prefer worktree copy if available
     if (status.planFile) {
       const workdirMatch = content.match(/^workdir:\s*(.+)/m);
-      const planBase = workdirMatch && existsSync(join(workdirMatch[1].trim(), status.planFile))
-        ? workdirMatch[1].trim()
+      const workdirPath = workdirMatch ? workdirMatch[1].trim() : "";
+      // validate workdir is under projectDir to prevent path traversal
+      const planBase = workdirPath && workdirPath.startsWith(projectDir) && existsSync(join(workdirPath, status.planFile))
+        ? workdirPath
         : projectDir;
       const tasks = countPlanTasks(join(planBase, status.planFile));
       status.tasksDone = tasks.done;

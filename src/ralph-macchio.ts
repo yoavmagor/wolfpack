@@ -21,7 +21,7 @@ import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanForm
 import { expandBudget, resolveCleanupDiffBase } from "./validation.js";
 import { buildAuditFixPrompt } from "./ralph-skill-audit.js";
 import { buildCleanupPrompt } from "./ralph-skill-cleanup.js";
-import { createWorktree, cleanupAllExceptFinal, removeWorktree, slugifyTaskName } from "./worktree.js";
+import { createWorktree, cleanupAllExceptFinal, removeWorktree, listWorktrees, slugifyTaskName } from "./worktree.js";
 import { errMsg, killProcessTree, killProcessTreeSync } from "./shared/process-cleanup.js";
 
 const { values: args } = parseArgs({
@@ -621,11 +621,39 @@ function cleanupTaskWorktree(worktreePath: string): void {
   }
 }
 
-/** Create the main accumulator worktree (shared by plan and task modes). */
+/** Create or reuse the main accumulator worktree (shared by plan and task modes).
+ *  On restart, finds the existing worktree for the branch and resumes from there. */
 function createMainWorktree(): void {
   const baseBranch = WORKTREE_BASE || getCurrentBranch(PROJECT_DIR);
   const planSlug = PLAN_FILE.replace(/\.md$/i, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
   const branchName = WORKTREE_BRANCH || `ralph/plan-${planSlug}`;
+
+  // check if worktree for this branch already exists (restart case)
+  const existing = listWorktrees(PROJECT_DIR).find(w => w.branch === branchName);
+  if (existing) {
+    mainWorkDir = existing.path;
+    workingDir = mainWorkDir;
+    PLAN_PATH = join(mainWorkDir, PLAN_FILE);
+    PROGRESS_PATH = join(mainWorkDir, PROGRESS_FILE);
+    appendFileSync(LOG_FILE, `worktree reused: ${mainWorkDir} (branch ${branchName})\n`);
+    appendFileSync(LOG_FILE, `workdir: ${mainWorkDir}\n\n`);
+    try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: mainWorkDir, encoding: "utf-8" }).trim(); } catch (e: unknown) {
+      console.warn(`could not capture worktree starting commit:`, errMsg(e));
+    }
+    // on restart, worktree already has plan+progress from previous run — don't overwrite
+    // only copy if missing (e.g. worktree was cleaned but branch survived)
+    if (!existsSync(PLAN_PATH)) {
+      const projectPlan = join(PROJECT_DIR, PLAN_FILE);
+      if (existsSync(projectPlan)) copyFileSync(projectPlan, PLAN_PATH);
+    }
+    if (!existsSync(PROGRESS_PATH)) {
+      const projectProgress = join(PROJECT_DIR, PROGRESS_FILE);
+      if (existsSync(projectProgress)) copyFileSync(projectProgress, PROGRESS_PATH);
+    }
+    return;
+  }
+
+  // fresh start — create new worktree
   try {
     mainWorkDir = createWorktree(PROJECT_DIR, branchName, baseBranch);
     workingDir = mainWorkDir;
@@ -683,6 +711,27 @@ async function main() {
   // --- Worktree setup (AFTER format/dedup/validate so those run in PROJECT_DIR) ---
   if (WORKTREE_MODE === "plan" || WORKTREE_MODE === "task") {
     createMainWorktree();
+  }
+
+  // In task mode, clean up orphan sub-worktrees from crashed/interrupted runs
+  if (WORKTREE_MODE === "task") {
+    const worktrees = listWorktrees(PROJECT_DIR);
+    const mainBranch = getCurrentBranch(mainWorkDir);
+    const orphans = worktrees.filter(w =>
+      w.path !== mainWorkDir &&
+      w.path !== PROJECT_DIR &&
+      w.branch.startsWith("ralph/") &&
+      w.branch !== mainBranch,
+    );
+    for (const orphan of orphans) {
+      appendFileSync(LOG_FILE, `cleaning up orphan task worktree: ${orphan.branch} (${orphan.path})\n`);
+      try { removeWorktree(orphan.path, PROJECT_DIR); } catch (e: unknown) {
+        appendFileSync(LOG_FILE, `warning: failed to remove orphan worktree ${orphan.path}: ${errMsg(e)}\n`);
+      }
+      try { execFileSync("git", ["branch", "-D", orphan.branch], { cwd: PROJECT_DIR, stdio: "pipe" }); } catch (e: unknown) {
+        appendFileSync(LOG_FILE, `warning: failed to delete orphan branch ${orphan.branch}: ${errMsg(e)}\n`);
+      }
+    }
   }
 
   // In task mode, track the current section task so we reuse the same sub-worktree

@@ -14,7 +14,7 @@ import {
   getRalphStatus, renderRalphCardHtml, sidebarRalphCardHtml,
   openRalphDetail, refreshRalphDetail, parseIterations, toggleRawLog,
   cancelRalph, loadRalphStartForm, onIsolationChange,
-  startRalph, restartRalph, showRalphStart, dismissRalph,
+  startRalph, continueRalph, discardRalph, showRalphStart, dismissRalph,
   getRalphNotificationStatus, checkRalphTransitions,
 } from "./app-ralph";
 

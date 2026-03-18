@@ -211,6 +211,7 @@ export const state = {
   ralphLogPollTimer: null,
   currentRalphPlanFile: "",
   restartingRalph: false,
+  currentRalphWorktreeMode: "false",
   currentRalphAgent: "",
   // desktop/grid terminal state
   desktopController: null,

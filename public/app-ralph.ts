@@ -121,7 +121,10 @@ export async function refreshRalphDetail() {
     if (loop.active) {
       actions.innerHTML = '<button class="ralph-launch-btn ralph-cancel-btn" onclick="cancelRalph()">Cancel</button>';
     } else {
-      actions.innerHTML = '<button class="ralph-launch-btn" onclick="restartRalph(\'' + escAttr(loop.planFile || '') + '\',\'' + escAttr(loop.agent || '') + '\',' + cleanupEnabled + ',' + auditFixEnabled + ')">Restart</button>';
+      const wt = escAttr(loop.worktreeMode || 'false');
+      actions.innerHTML =
+        '<button class="ralph-launch-btn" onclick="continueRalph(\'' + escAttr(loop.planFile || '') + '\',\'' + escAttr(loop.agent || '') + '\',' + cleanupEnabled + ',' + auditFixEnabled + ',\'' + wt + '\')">Continue</button>' +
+        '<button class="ralph-launch-btn ralph-cancel-btn" onclick="discardRalph()">Discard</button>';
     }
 
     // stop polling if loop finished
@@ -305,9 +308,21 @@ async function loadStartFormData() {
   (document.getElementById("ralph-audit-fix-toggle") as HTMLInputElement).checked = state.currentRalphAuditFix != null ? state.currentRalphAuditFix : false;
   state.currentRalphCleanup = undefined;
   state.currentRalphAuditFix = undefined;
-  (document.getElementById("ralph-iso-off") as HTMLInputElement).checked = true;
-  document.getElementById("ralph-branch-fields").style.display = "none";
-  document.getElementById("ralph-worktree-fields").style.display = "none";
+  // enforce original worktree mode on continue
+  const isoRadios = document.querySelectorAll('input[name="ralph-isolation"]') as NodeListOf<HTMLInputElement>;
+  if (state.restartingRalph && state.currentRalphWorktreeMode !== "false") {
+    const mode = state.currentRalphWorktreeMode;
+    isoRadios.forEach(r => {
+      r.checked = r.value === mode;
+      r.disabled = true;
+    });
+    onIsolationChange();
+  } else {
+    (document.getElementById("ralph-iso-off") as HTMLInputElement).checked = true;
+    isoRadios.forEach(r => { r.disabled = false; });
+    document.getElementById("ralph-branch-fields").style.display = "none";
+    document.getElementById("ralph-worktree-fields").style.display = "none";
+  }
   await loadPlanFiles(sel.value);
   if (state.currentRalphPlanFile) {
     (document.getElementById("ralph-plan-select") as HTMLSelectElement).value = state.currentRalphPlanFile;
@@ -456,14 +471,29 @@ export async function startRalph() {
   }
 }
 
-export function restartRalph(planFile, agent, cleanup, auditFix) {
+export function continueRalph(planFile, agent, cleanup, auditFix, worktreeMode) {
   state.currentRalphPlanFile = planFile || "";
   state.currentRalphAgent = agent || "";
   state.currentRalphCleanup = cleanup;
   state.currentRalphAuditFix = auditFix;
+  state.currentRalphWorktreeMode = worktreeMode || "false";
   state.restartingRalph = true;
   state.ralphStartMachine = state.currentRalphMachine;
   deps.showView("ralph-start");
+}
+
+export async function discardRalph() {
+  if (!confirm("Discard this ralph loop? This removes the log and progress files.")) return;
+  try {
+    await deps.api("/ralph/dismiss", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project: state.currentRalphProject }),
+    }, state.currentRalphMachine);
+    deps.backToSessions();
+  } catch (e) {
+    alert("failed to discard: " + deps.errorMessage(e));
+  }
 }
 
 export function showRalphStart(machineUrl) {
