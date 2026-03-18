@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { TASK_HEADER, countTasksInContent } from "../../src/wolfpack-context.js";
+import { TASK_HEADER, countTasksInContent, detectOldPlanFormat, migratePlanFormat } from "../../src/wolfpack-context.js";
 
 // ── Plan-parsing functions from ralph-macchio.ts and serve.ts ──
 // These are module-private, replicated here as pure functions for testing.
@@ -616,5 +616,103 @@ describe("extractCurrentTask skips fully-completed sections", () => {
     const result = extractCurrentTask(plan);
     expect(result).not.toBeNull();
     expect(result!.task).toContain("## 2. Next task");
+  });
+});
+
+// ── detectOldPlanFormat tests ──
+
+describe("detectOldPlanFormat", () => {
+  test("detects 'Task N: Title' format", () => {
+    expect(detectOldPlanFormat("Task 1: Setup project\nTask 2: Add tests")).toBe(true);
+  });
+
+  test("detects 'Task N. Title' format", () => {
+    expect(detectOldPlanFormat("Task 1. Setup project")).toBe(true);
+  });
+
+  test("returns false for ## Task N: (already matches TASK_HEADER)", () => {
+    // ## Task 1: matches TASK_HEADER via (?:\w+ )?\d+[\.\):] so it's already parseable
+    expect(detectOldPlanFormat("## Task 1: Setup\n## Task 2: Tests")).toBe(false);
+  });
+
+  test("detects bare Task N: without markdown header", () => {
+    expect(detectOldPlanFormat("# Plan\n\nTask 1: Setup\nTask 2: Tests")).toBe(true);
+  });
+
+  test("detects sub-lettered tasks", () => {
+    expect(detectOldPlanFormat("Task 1a: Sub-task alpha")).toBe(true);
+  });
+
+  test("case insensitive", () => {
+    expect(detectOldPlanFormat("task 1: lowercase")).toBe(true);
+    expect(detectOldPlanFormat("TASK 1: UPPERCASE")).toBe(true);
+  });
+
+  test("returns false for new format", () => {
+    expect(detectOldPlanFormat("## 1. Setup project\n## 2. Add tests")).toBe(false);
+  });
+
+  test("returns false when both old and new format present", () => {
+    // if new format headers exist, don't flag as old
+    expect(detectOldPlanFormat("## 1. New style\nTask 2: Old style")).toBe(false);
+  });
+
+  test("returns false for empty content", () => {
+    expect(detectOldPlanFormat("")).toBe(false);
+  });
+
+  test("returns false for plain text mentioning 'task'", () => {
+    expect(detectOldPlanFormat("This task is important")).toBe(false);
+  });
+});
+
+// ── migratePlanFormat tests ──
+
+describe("migratePlanFormat", () => {
+  test("converts 'Task N: Title' to '## N. Title'", () => {
+    const input = "Task 1: Setup project\nTask 2: Add tests";
+    const { content, count } = migratePlanFormat(input);
+    expect(content).toBe("## 1. Setup project\n## 2. Add tests");
+    expect(count).toBe(2);
+  });
+
+  test("converts 'Task N. Title' to '## N. Title'", () => {
+    const { content } = migratePlanFormat("Task 1. Setup project");
+    expect(content).toBe("## 1. Setup project");
+  });
+
+  test("converts markdown-headered old format (force migration)", () => {
+    // Even though ## Task 1: matches TASK_HEADER, migratePlanFormat still converts
+    // (detectOldPlanFormat gates whether to call it; migratePlanFormat itself is unconditional)
+    const input = "## Task 1: Setup\n## Task 2: Tests";
+    const { content, count } = migratePlanFormat(input);
+    expect(content).toBe("## 1. Setup\n## 2. Tests");
+    expect(count).toBe(2);
+  });
+
+  test("converts sub-lettered tasks", () => {
+    const input = "Task 1a: Sub-task alpha\nTask 1b: Sub-task beta";
+    const { content, count } = migratePlanFormat(input);
+    expect(content).toBe("## 1a. Sub-task alpha\n## 1b. Sub-task beta");
+    expect(count).toBe(2);
+  });
+
+  test("preserves non-task content", () => {
+    const input = "# My Plan\n\nSome intro text.\n\nTask 1: Do thing\n\nMore details here.";
+    const { content, count } = migratePlanFormat(input);
+    expect(content).toBe("# My Plan\n\nSome intro text.\n\n## 1. Do thing\n\nMore details here.");
+    expect(count).toBe(1);
+  });
+
+  test("returns count 0 for content with no old tasks", () => {
+    const input = "## 1. Already new format";
+    const { content, count } = migratePlanFormat(input);
+    expect(content).toBe("## 1. Already new format");
+    expect(count).toBe(0);
+  });
+
+  test("trims trailing whitespace from title", () => {
+    const { content } = migratePlanFormat("Task 1: Title with trailing   ");
+    expect(content).toBe("## 1. Title with trailing");
   });
 });

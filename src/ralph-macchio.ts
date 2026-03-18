@@ -17,7 +17,7 @@ import { execFileSync, spawn as nodeSpawn } from "node:child_process";
 import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanFormat } from "./wolfpack-context.js";
+import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanFormat, detectOldPlanFormat } from "./wolfpack-context.js";
 import { expandBudget, resolveCleanupDiffBase } from "./validation.js";
 import { buildAuditFixPrompt } from "./ralph-skill-audit.js";
 import { buildCleanupPrompt } from "./ralph-skill-cleanup.js";
@@ -594,6 +594,13 @@ async function main() {
 
   // Clean up duplicate checkboxes from prior crashed/interrupted runs
   dedupCheckboxes();
+
+  // Warn if plan uses old `Task N:` format
+  if (detectOldPlanFormat(readPlan())) {
+    const msg = `Plan appears to use old "Task N:" format. Run \`wolfpack migrate-plan ${PLAN_FILE}\` to convert.`;
+    appendFileSync(LOG_FILE, `\n=== ⚠️ ${msg} ===\n`);
+    log.warn(msg);
+  }
 
   // Validate plan format before entering iteration loop
   const planValidation = validatePlanFormat(readPlan());
