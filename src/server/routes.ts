@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { hostname, homedir } from "node:os";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { createLogger } from "../log.js";
+import { createLogger, errMsg } from "../log.js";
 import {
   CMD_REGEX,
   BRANCH_REGEX,
@@ -33,10 +33,9 @@ import {
 import { cleanupAllExceptFinal } from "../worktree.js";
 import { assets } from "../public-assets.js";
 import { isInputPrompt, isJunkLine, type TriageStatus } from "../triage.js";
-import { createLogger, errMsg } from "../log.js";
+import pkg from "../../package.json";
 
 const log = createLogger("http");
-import pkg from "../../package.json";
 import {
   DEV_DIR,
   TMUX,

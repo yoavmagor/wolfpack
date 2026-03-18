@@ -161,9 +161,13 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
     );
     status.lastOutput = meaningful.slice(-5).join("\n");
 
-    // count tasks from plan file
+    // count tasks from plan file — prefer worktree copy if available
     if (status.planFile) {
-      const tasks = countPlanTasks(join(projectDir, status.planFile));
+      const workdirMatch = content.match(/^workdir:\s*(.+)/m);
+      const planBase = workdirMatch && existsSync(join(workdirMatch[1].trim(), status.planFile))
+        ? workdirMatch[1].trim()
+        : projectDir;
+      const tasks = countPlanTasks(join(planBase, status.planFile));
       status.tasksDone = tasks.done;
       status.tasksTotal = tasks.total;
       if (tasks.done > 0 && tasks.done === tasks.total && !status.active) {
