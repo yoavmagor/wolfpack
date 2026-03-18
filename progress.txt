@@ -227,3 +227,11 @@
 - Only 2 `console.log` calls remain: `cli/formatting.ts` `print()` (CLI UI output) and `qr.ts` (QR code rendering) — these are intentional user-facing terminal output, not log messages
 - Component tags used: `ralph`, `server`, `http`, `ws`, `tmux`, `auth`, `service`, `setup`, `pty`
 - 716 unit tests pass
+
+## Add structured logging — console.debug sweep (Task 10 followup)
+- Replaced 22 remaining `console.debug()` calls missed in prior sweep:
+  - `server/websocket.ts`: 21 calls → `log.debug()` with `{ session, error }` structured extra
+  - `server/tmux.ts`: 1 call → `log.debug()` with `{ session, error }` structured extra
+- These were all error-swallowing catch handlers for expected failures (ws close, ping, proc kill, tmux resize)
+- Zero `console.*` calls remain in server code; only 2 intentional `console.log` in CLI output (`formatting.ts`, `qr.ts`)
+- 921 unit tests pass (137 integration failures are pre-existing, unrelated to this change)

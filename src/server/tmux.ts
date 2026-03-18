@@ -214,7 +214,7 @@ let _capturePane: (session: string) => Promise<string> = async (session) => {
     ]);
     return stdout;
   } catch (e: unknown) {
-    console.debug(`capturePane failed [${session}]:`, errMsg(e));
+    log.debug(`capturePane failed`, { session, error: errMsg(e) });
     return "";
   }
 };
