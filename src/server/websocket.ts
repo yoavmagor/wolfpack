@@ -16,24 +16,8 @@ import {
   tmuxResize,
   capturePane,
 } from "./tmux.js";
-import { isAllowedSession } from "./http.js";
+import { isAllowedSession, createRateLimiter } from "./http.js";
 import { errMsg } from "../shared/process-cleanup.js";
-
-/** Token bucket rate limiter. */
-function createRateLimiter(rate: number) {
-  let tokens = rate;
-  let last = Date.now();
-  return {
-    allow(): boolean {
-      const now = Date.now();
-      tokens = Math.min(rate, tokens + ((now - last) / 1000) * rate);
-      last = now;
-      if (tokens < 1) return false;
-      tokens--;
-      return true;
-    },
-  };
-}
 
 // ── PTY session tracking ──
 

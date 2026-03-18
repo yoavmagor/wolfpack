@@ -24,6 +24,7 @@ import {
   isAllowedSession,
   discoverPeers,
   cachedPeers,
+  createPerIpRateLimiter,
 } from "./http.js";
 import { handleTerminalWs, handlePtyWs } from "./websocket.js";
 
@@ -84,6 +85,17 @@ function isAllowedOrigin(origin: string): boolean {
   return false;
 }
 
+// ── Rate limiting ──
+
+/** Poll-heavy endpoints get a tighter limit (10 req/s per IP). */
+const POLL_HEAVY_PATHS = new Set(["/api/sessions", "/api/ralph/log", "/api/ralph"]);
+const pollRateLimiter = createPerIpRateLimiter(10);
+
+/** Global limit for all routes (120 req/s per IP). */
+const globalRateLimiter = createPerIpRateLimiter(120);
+
+export { pollRateLimiter as __pollRateLimiter, globalRateLimiter as __globalRateLimiter };
+
 // ── Server ──
 
 const wss = new WebSocketServer({ noServer: true });
@@ -116,6 +128,17 @@ const server = createServer(async (req, res) => {
       writeUnauthorized(res);
       return;
     }
+  }
+
+  // Rate limiting — per-IP, checked before route dispatch
+  const clientIp = req.socket.remoteAddress ?? "unknown";
+  if (!globalRateLimiter.allow(clientIp)) {
+    json(res, { error: "rate limit exceeded" }, 429);
+    return;
+  }
+  if (POLL_HEAVY_PATHS.has(url.pathname) && !pollRateLimiter.allow(clientIp)) {
+    json(res, { error: "rate limit exceeded" }, 429);
+    return;
   }
 
   const key = `${req.method ?? "GET"} ${url.pathname}`;

@@ -115,3 +115,14 @@
   - `ralph-macchio.ts`: 2 catches fixed — added comments for expected binary/plan probe failures
 - Decision framework applied: **log + continue** for background/optional ops, **log + return error** for user-facing, **comments** for expected control flow
 - 932 tests pass, 0 failures
+
+## Add HTTP rate limiting (Task 4)
+- Extracted `createRateLimiter` from `websocket.ts` into `http.ts` as shared export; websocket.ts now imports it
+- Added `createPerIpRateLimiter` to `http.ts` — per-IP token-bucket map with automatic stale-entry eviction
+- Applied rate limiting in `server/index.ts` request handler (before route dispatch):
+  - Poll-heavy endpoints (`/api/sessions`, `/api/ralph/log`, `/api/ralph`): 10 req/s per IP
+  - Global limit on all routes: 120 req/s per IP
+  - Returns `429 { error: "rate limit exceeded" }` when exceeded
+- Unit tests (`tests/unit/rate-limiter.test.ts`): 5 tests — token bucket drain/refill, per-IP isolation, burst 200 → 10 allowed + 190 denied, stale eviction
+- Integration tests (`tests/integration/rate-limit.test.ts`): 3 tests — poll endpoint 429 after burst, global limit on non-poll endpoints, 429 response body format
+- 631 unit tests pass, integration tests pass

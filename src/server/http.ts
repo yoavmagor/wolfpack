@@ -7,6 +7,56 @@ import { assets } from "../public-assets.js";
 import { tmuxList } from "./tmux.js";
 import { exec } from "./tmux.js";
 
+// ── Token-bucket rate limiter ──
+
+/** Single token-bucket instance (tokens refill at `rate` per second). */
+export function createRateLimiter(rate: number) {
+  let tokens = rate;
+  let last = Date.now();
+  return {
+    allow(): boolean {
+      const now = Date.now();
+      tokens = Math.min(rate, tokens + ((now - last) / 1000) * rate);
+      last = now;
+      if (tokens < 1) return false;
+      tokens--;
+      return true;
+    },
+  };
+}
+
+type RateLimiter = ReturnType<typeof createRateLimiter>;
+
+/**
+ * Per-IP rate limiter map. Creates a limiter on first request from each IP.
+ * Evicts stale entries every `evictIntervalMs` to prevent unbounded growth.
+ */
+export function createPerIpRateLimiter(rate: number, evictIntervalMs = 60_000) {
+  const map = new Map<string, { rl: RateLimiter; lastSeen: number }>();
+
+  const evict = setInterval(() => {
+    const cutoff = Date.now() - evictIntervalMs;
+    for (const [ip, entry] of map) {
+      if (entry.lastSeen < cutoff) map.delete(ip);
+    }
+  }, evictIntervalMs).unref();
+
+  return {
+    allow(ip: string): boolean {
+      let entry = map.get(ip);
+      if (!entry) {
+        entry = { rl: createRateLimiter(rate), lastSeen: Date.now() };
+        map.set(ip, entry);
+      }
+      entry.lastSeen = Date.now();
+      return entry.rl.allow();
+    },
+    /** Exposed for testing. */
+    _map: map,
+    _evictTimer: evict,
+  };
+}
+
 // ── Session helpers ──
 
 export async function uniqueSessionName(base: string): Promise<string> {
