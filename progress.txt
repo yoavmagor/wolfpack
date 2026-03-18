@@ -159,3 +159,12 @@
 - Unit tests (`tests/unit/csp-nonce.test.ts`): 2 tests — nonce format, uniqueness
 - Integration tests (`tests/integration/csp.test.ts`): 6 tests — nonce in script-src, no unsafe-inline, nonce matches HTML script tags, unique per request, style-src allows unsafe-inline, non-HTML assets no CSP
 - 643 unit tests pass, 187+ integration tests pass, bundle builds (152.9 KB)
+
+## Validation fuzzing edge-case tests (Task 7c)
+- Created `tests/unit/validation-fuzzing.test.ts` — 67 tests covering hostile/edge-case inputs
+- **shellEscape**: null bytes, control chars (BEL/ESC/BS/DEL/CR), mixed control+quotes, unicode emoji/CJK/RTL-override/ZWJ/ZWS, 100KB string
+- **isValidSessionName**: boundary (100/101/empty/single char), null bytes, control chars, ANSI escapes, unicode, newline/CR/tab injection, space-padding, tmux restrictions (dot/colon)
+- **isValidPlanFile**: path traversal variants (`../../etc/passwd`, `..%2f` URL-encoded, `....//`, backslash Windows paths), null bytes before/after extension, control chars, unicode, `.md` alone, empty
+- **BRANCH_REGEX**: documents that `../` passes regex (safety from git+isUnderDevDir, not regex), tests rejection of shell metacharacters (semicolon/backtick/$()//pipe/ampersand/backslash), null bytes, newlines, unicode
+- **isValidProjectName**: null bytes, control chars, unicode emoji/CJK, newline/CR injection, space-padding, path traversal, URL-encoded traversal
+- 710 unit tests pass (67 new)
