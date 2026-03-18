@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { hostname, homedir } from "node:os";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { createLogger } from "../log.js";
 import {
   CMD_REGEX,
   BRANCH_REGEX,
@@ -33,6 +34,8 @@ import { cleanupAllExceptFinal } from "../worktree.js";
 import { assets } from "../public-assets.js";
 import { isInputPrompt, isJunkLine, type TriageStatus } from "../triage.js";
 import { createLogger, errMsg } from "../log.js";
+
+const log = createLogger("http");
 import pkg from "../../package.json";
 import {
   DEV_DIR,
@@ -55,8 +58,6 @@ import {
   scanRalphLoops,
   countPlanTasks,
 } from "./ralph.js";
-
-const log = createLogger("http");
 
 // ── Constants ──
 const PEER_FETCH_TIMEOUT_MS = 3_000;
@@ -369,7 +370,7 @@ export const routes: Record<
     const projectDir = join(DEV_DIR, folderName);
     if (newProject) {
       try { mkdirSync(projectDir, { recursive: true }); } catch (e: unknown) {
-        console.error(`/api/create: failed to create project directory ${projectDir}:`, errMsg(e));
+        log.error("/api/create: failed to create project directory", { path: projectDir, error: errMsg(e) });
       }
     }
     if (!validateProjectDir(res, projectDir)) return;
@@ -644,7 +645,7 @@ export const routes: Record<
         const lockPid = Number(readFileSync(lockPath, "utf-8").trim());
         if (!lockPid || lockPid <= 1) {
           try { unlinkSync(lockPath); } catch (e: unknown) {
-            if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`ralph start: failed to remove invalid lock:`, errMsg(e));
+            if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("ralph start: failed to remove invalid lock", { error: errMsg(e) });
           }
         } else {
           try {
@@ -656,19 +657,19 @@ export const routes: Record<
                 // PID reused by unrelated process — stale lock, remove it
                 log.warn("lock PID belongs to unrelated process, removing stale lock", { pid: lockPid, command: cmdline.trim() });
                 try { unlinkSync(lockPath); } catch (e: unknown) {
-                  if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`ralph start: failed to remove reused-PID lock:`, errMsg(e));
+                  if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("ralph start: failed to remove reused-PID lock", { error: errMsg(e) });
                 }
               } else {
                 return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
               }
             } catch { /* ps failed — process may have exited between kill(0) and ps, treat as stale */
               try { unlinkSync(lockPath); } catch (e: unknown) {
-                if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`ralph start: failed to remove stale lock:`, errMsg(e));
+                if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("ralph start: failed to remove stale lock (ps race)", { error: errMsg(e) });
               }
             }
           } catch { /* expected: process dead — stale lock, remove it */
             try { unlinkSync(lockPath); } catch (e: unknown) {
-              if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`ralph start: failed to remove stale lock:`, errMsg(e));
+              if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("ralph start: failed to remove stale lock (dead pid)", { error: errMsg(e) });
             }
           }
         }
@@ -774,7 +775,7 @@ export const routes: Record<
     child.unref();
 
     try { writeFileSync(lockPath, String(child.pid ?? 0)); } catch (e: unknown) {
-      console.error(`ralph start: failed to write lock file with PID:`, errMsg(e));
+      log.error("ralph start: failed to write lock file", { error: errMsg(e) });
     }
 
     json(res, {
@@ -822,7 +823,7 @@ export const routes: Record<
     try {
       process.kill(status.pid, "SIGTERM");
       try { process.kill(-status.pid, "SIGTERM"); } catch (e: unknown) {
-        console.warn(`ralph cancel: failed to SIGTERM process group:`, errMsg(e));
+        log.warn("ralph cancel: failed to SIGTERM process group", { error: errMsg(e) });
       }
       json(res, { ok: true, killed: status.pid });
     } catch (e: unknown) {

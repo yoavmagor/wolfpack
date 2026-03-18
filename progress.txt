@@ -208,3 +208,22 @@
 - Added `__clearBackfillCache()` and `__getBackfillCacheSize()` test helpers
 - Unit tests (`tests/unit/backfill-cache.test.ts`): 6 tests — 20 sessions first poll (20 calls), re-poll (0 calls), cache prevents re-backfill, expired cache triggers fresh call, session deletion prunes cache, show-environment failure caches fallback dir
 - 716 unit tests pass (6 new), 1215 expect() calls
+
+## Add structured logging (Task 10)
+- `src/log.ts` already existed (created in Task 3) — no changes needed to the logger itself
+- Replaced ALL remaining `console.log`/`console.error`/`console.warn` calls across 12 files with structured `log.*()` calls:
+  - `ralph-macchio.ts`: 12 calls → `log.error`/`log.warn` with `{ error }` extra
+  - `server/index.ts`: 6 calls → `log.info`/`log.error`/`log.warn` with structured context
+  - `server/http.ts`: 1 call → `log.error`
+  - `server/routes.ts`: 7 calls → `log.warn`/`log.error`
+  - `server/websocket.ts`: 7 calls → `log.warn`/`log.error` with `{ session }` context
+  - `server/tmux.ts`: 7 calls → `log.warn` with `{ session }` context
+  - `server/ralph.ts`: 1 call → `log.warn`
+  - `worktree.ts`: 3 calls → `log.warn`/`log.error`
+  - `auth.ts`: 1 call → `log.warn`
+  - `cli/service.ts`: 6 calls → `log.warn`
+  - `cli/setup.ts`: 3 calls → `log.warn`
+  - `shared/process-cleanup.ts`: 4 calls → inline `_warn()` (avoids circular dep with log.ts)
+- Only 2 `console.log` calls remain: `cli/formatting.ts` `print()` (CLI UI output) and `qr.ts` (QR code rendering) — these are intentional user-facing terminal output, not log messages
+- Component tags used: `ralph`, `server`, `http`, `ws`, `tmux`, `auth`, `service`, `setup`, `pty`
+- 716 unit tests pass

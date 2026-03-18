@@ -27,6 +27,9 @@ import {
   createPerIpRateLimiter,
 } from "./http.js";
 import { handleTerminalWs, handlePtyWs } from "./websocket.js";
+import { createLogger } from "../log.js";
+
+const log = createLogger("server");
 
 // Re-export everything tests need from a single entry point
 export { __setTestOverrides } from "./tmux.js";
@@ -70,7 +73,7 @@ const TAILNET_SUFFIX = (() => {
 })();
 
 if (!TAILNET_SUFFIX) {
-  console.warn("⚠ No tailscaleHostname in config — remote browser access will be blocked by CORS. Run 'wolfpack setup' to fix.");
+  log.warn("no tailscaleHostname in config — remote browser access will be blocked by CORS", { hint: "run 'wolfpack setup' to fix" });
 }
 
 function isAllowedOrigin(origin: string): boolean {
@@ -147,7 +150,7 @@ const server = createServer(async (req, res) => {
     try {
       await handler(req, res);
     } catch (err) {
-      console.error("Route error:", err);
+      log.error("route error", { error: String(err) });
       if (!res.headersSent) json(res, { error: "internal error" }, 500);
     }
   } else {
@@ -210,19 +213,18 @@ export function startServer(port = PORT, host = "127.0.0.1"): void {
 
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
-      console.error(`wolfpack: port ${port} is already in use.`);
-      console.error("Run 'wolfpack service stop' first, or choose a different port.");
+      log.error("port already in use", { port, hint: "run 'wolfpack service stop' first" });
       process.exit(1);
     }
-    console.error(`wolfpack: server error — ${err.message}`);
+    log.error("server error", { error: err.message });
     process.exit(1);
   });
 
   server.listen(port, host, () => {
-    console.log(`Wolfpack PWA: http://localhost:${port}/`);
+    log.info("server started", { url: `http://localhost:${port}/` });
     discoverPeers().then(() => {
-      if (cachedPeers.length) console.log(`Discovered ${cachedPeers.length} peer(s): ${cachedPeers.map(p => p.name).join(", ")}`);
-    }).catch((e: unknown) => { console.warn(`peer discovery failed at startup:`, e instanceof Error ? e.message : String(e)); });
+      if (cachedPeers.length) log.info("discovered peers", { count: cachedPeers.length, peers: cachedPeers.map(p => p.name) });
+    }).catch((e: unknown) => { log.warn("peer discovery failed at startup", { error: e instanceof Error ? e.message : String(e) }); });
   });
 }
 

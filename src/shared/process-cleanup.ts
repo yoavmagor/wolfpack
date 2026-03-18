@@ -7,6 +7,12 @@ import { spawnSync } from "node:child_process";
 
 const POLL_INTERVAL_MS = 200;
 
+/** Inline JSON warn to avoid circular dep with log.ts (which re-exports errMsg from here). */
+function _warn(msg: string, extra?: Record<string, unknown>): void {
+  const entry = { ts: new Date().toISOString(), level: "warn", component: "pty", msg, ...extra };
+  process.stdout.write(JSON.stringify(entry) + "\n");
+}
+
 /** Extract a human-readable message from an unknown catch value. */
 export function errMsg(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -31,8 +37,8 @@ export async function killProcessTree(
   timeoutMs = 5000,
 ): Promise<void> {
   // Send SIGTERM to process group and individual pid
-  try { process.kill(-pid, "SIGTERM"); } catch (e) { console.warn(`killProcessTree: SIGTERM to group -${pid} failed:`, errMsg(e)); }
-  try { process.kill(pid, "SIGTERM"); } catch (e) { console.warn(`killProcessTree: SIGTERM to pid ${pid} failed:`, errMsg(e)); }
+  try { process.kill(-pid, "SIGTERM"); } catch (e) { _warn("killProcessTree: SIGTERM to group failed", { pid: -pid, error: errMsg(e) }); }
+  try { process.kill(pid, "SIGTERM"); } catch (e) { _warn("killProcessTree: SIGTERM to pid failed", { pid, error: errMsg(e) }); }
 
   // Poll until dead or timeout
   const deadline = Date.now() + timeoutMs;
@@ -42,8 +48,8 @@ export async function killProcessTree(
   }
 
   // Escalate to SIGKILL
-  try { process.kill(-pid, "SIGKILL"); } catch (e) { console.warn(`killProcessTree: SIGKILL to group -${pid} failed:`, errMsg(e)); }
-  try { process.kill(pid, "SIGKILL"); } catch (e) { console.warn(`killProcessTree: SIGKILL to pid ${pid} failed:`, errMsg(e)); }
+  try { process.kill(-pid, "SIGKILL"); } catch (e) { _warn("killProcessTree: SIGKILL to group failed", { pid: -pid, error: errMsg(e) }); }
+  try { process.kill(pid, "SIGKILL"); } catch (e) { _warn("killProcessTree: SIGKILL to pid failed", { pid, error: errMsg(e) }); }
 
   // Brief wait for SIGKILL to take effect
   await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));

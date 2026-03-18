@@ -1,5 +1,8 @@
 import type { IncomingHttpHeaders } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { createLogger } from "./log.js";
+
+const log = createLogger("auth");
 
 type JsonObject = Record<string, unknown>;
 
@@ -182,7 +185,7 @@ export function getCachedJwtAuthConfig(): JwtAuthConfig {
   if (!_cachedConfig) {
     _cachedConfig = getJwtAuthConfig();
     if (_cachedConfig.warning) {
-      console.warn(`⚠ ${_cachedConfig.warning}`);
+      log.warn(_cachedConfig.warning);
     }
   }
   return _cachedConfig;

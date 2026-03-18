@@ -7,6 +7,9 @@ import { randomBytes } from "node:crypto";
 import { assets } from "../public-assets.js";
 import { tmuxList } from "./tmux.js";
 import { exec } from "./tmux.js";
+import { createLogger } from "../log.js";
+
+const log = createLogger("http");
 
 // ── Token-bucket rate limiter ──
 
@@ -213,7 +216,7 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
     cachedPeers = wolfpackPeers.map(p => ({ url: p.url, name: p.name }));
     return { peers: wolfpackPeers };
   } catch (e: any) {
-    console.error("discover error:", e?.message || e);
+    log.error("discover error", { error: e?.message || String(e) });
     return { peers: [], error: "failed to query tailscale" };
   }
 }

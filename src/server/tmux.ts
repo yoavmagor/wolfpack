@@ -7,7 +7,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { shellEscape } from "../validation.js";
 import { INTERACTIVE_CONTEXT } from "../wolfpack-context.js";
-import { errMsg } from "../shared/process-cleanup.js";
+import { createLogger, errMsg } from "../log.js";
+
+const log = createLogger("tmux");
 
 const exec = promisify(execFile);
 
@@ -101,7 +103,7 @@ async function _realTmuxList(): Promise<string[]> {
           const val = eqIdx !== -1 ? envOut.substring(eqIdx + 1).trim() : "";
           if (val && isUnderDevDir(val)) resolved = val;
         } catch (e: unknown) {
-          console.warn(`tmuxList: failed to read tmux env for session ${name}:`, errMsg(e));
+          log.warn("tmuxList: failed to read tmux env for session", { session: name, error: errMsg(e) });
         }
         sessionDirMap.set(name, resolved);
         _backfillCacheMap.set(name, { dir: resolved, ts: Date.now() });
@@ -120,7 +122,7 @@ async function _realTmuxList(): Promise<string[]> {
     }
     return sessions;
   } catch (e: unknown) {
-    console.warn(`tmuxList: failed to list sessions:`, errMsg(e));
+    log.warn("tmuxList: failed to list sessions", { error: errMsg(e) });
     return [];
   }
 }
@@ -294,13 +296,13 @@ export async function tmuxNewSession(
   }
   // enforce sane defaults for wolfpack sessions (scoped to this session only)
   await exec(TMUX, ["set-option", "-t", name, "mouse", "on"]).catch((e: unknown) => {
-    console.warn(`tmuxNewSession: failed to set mouse option [${name}]:`, errMsg(e));
+    log.warn("tmuxNewSession: failed to set mouse option", { session: name, error: errMsg(e) });
   });
   // cache only after successful creation to avoid poisoning map on failed attempts
   sessionDirMap.set(name, cwd);
   // persist project root in tmux session env — survives server restarts
   await exec(TMUX, ["set-environment", "-t", name, WOLFPACK_DIR_ENV, cwd]).catch((e: unknown) => {
-    console.warn(`tmuxNewSession: failed to persist project dir in tmux env [${name}]:`, errMsg(e));
+    log.warn("tmuxNewSession: failed to persist project dir in tmux env", { session: name, error: errMsg(e) });
   });
 }
 
@@ -312,12 +314,12 @@ export async function cleanupOrphanPtySessions(): Promise<void> {
     for (const name of stdout.split("\n")) {
       if (name.startsWith("wp_")) {
         await exec(TMUX, ["kill-session", "-t", name], { timeout: 2000 }).catch((e: unknown) => {
-          console.warn(`cleanupOrphanPtySessions: failed to kill session ${name}:`, errMsg(e));
+          log.warn("cleanupOrphanPtySessions: failed to kill session", { session: name, error: errMsg(e) });
         });
       }
     }
   } catch (e: unknown) {
-    console.warn(`cleanupOrphanPtySessions: failed to list sessions:`, errMsg(e));
+    log.warn("cleanupOrphanPtySessions: failed to list sessions", { error: errMsg(e) });
   }
 }
 

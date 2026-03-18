@@ -17,7 +17,9 @@ import {
   capturePane,
 } from "./tmux.js";
 import { isAllowedSession, createRateLimiter } from "./http.js";
-import { errMsg } from "../shared/process-cleanup.js";
+import { createLogger, errMsg } from "../log.js";
+
+const log = createLogger("ws");
 
 // ── PTY session tracking ──
 
@@ -140,7 +142,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
         ws.send(JSON.stringify({ type: "output", data: pane }));
       }
     } catch (e: unknown) {
-      console.warn(`sendUpdate failed [${session}]:`, errMsg(e));
+      log.warn("sendUpdate failed", { session, error: errMsg(e) });
     }
     updating = false;
     schedulePoll();
@@ -194,7 +196,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
       }
     } catch (e: unknown) {
       if (e instanceof SyntaxError) return;
-      console.warn(`WS error [${session}]:`, errMsg(e));
+      log.warn("WS error", { session, error: errMsg(e) });
     }
   });
 
@@ -290,10 +292,10 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
           // Promote this viewer — spawn fresh PTY on first resize
           setupNewPtyEntry(ws, session);
           // Tell client takeover succeeded so it re-sends resize
-          try { ws.send(JSON.stringify({ type: "control_granted" })); } catch (e: unknown) { console.warn(`control_granted send failed [${session}]:`, errMsg(e)); }
+          try { ws.send(JSON.stringify({ type: "control_granted" })); } catch (e: unknown) { log.warn("control_granted send failed", { session, error: errMsg(e) }); }
         }
       } catch (e: unknown) {
-        if (!(e instanceof SyntaxError)) console.warn(`pendingMessage handler failed [${session}]:`, errMsg(e));
+        if (!(e instanceof SyntaxError)) log.warn("pendingMessage handler failed", { session, error: errMsg(e) });
       }
     }
 
@@ -389,11 +391,11 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               await sendPrefillChunked(entry, prefill, session);
               shouldDedupeInitialAttach = true;
             } catch (e: unknown) {
-              console.error(`PTY prefill send failed [${session}]:`, errMsg(e));
+              log.error("PTY prefill send failed", { session, error: errMsg(e) });
             }
           }
         } catch (e: unknown) {
-          console.warn(`PTY prefill capture failed [${session}]:`, errMsg(e));
+          log.warn("PTY prefill capture failed", { session, error: errMsg(e) });
         }
       }
 
@@ -510,7 +512,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
       }
     } catch (e: unknown) {
       if (e instanceof SyntaxError) return;
-      console.warn(`PTY WS error [${session}]:`, errMsg(e));
+      log.warn("PTY WS error", { session, error: errMsg(e) });
     }
   });
 

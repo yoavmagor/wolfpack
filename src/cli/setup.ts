@@ -24,6 +24,9 @@ import {
   type Config,
 } from "./config.js";
 import { serviceInstall } from "./service.js";
+import { createLogger } from "../log.js";
+
+const log = createLogger("setup");
 
 const IS_MACOS = platform() === "darwin";
 const IS_LINUX = platform() === "linux";
@@ -216,7 +219,7 @@ export async function setup() {
       if (IS_MACOS) {
         print(dim("  Launching Tailscale.app for sign-in..."));
         try { execSync("open /Applications/Tailscale.app", { stdio: "ignore" }); } catch (e: unknown) {
-          console.warn(`setup: failed to launch Tailscale.app:`, e instanceof Error ? e.message : String(e));
+          log.warn("setup: failed to launch Tailscale.app", { error: e instanceof Error ? e.message : String(e) });
         }
       } else if (IS_LINUX) {
         print(dim("  Run 'sudo tailscale up' in another terminal to sign in."));
@@ -254,7 +257,7 @@ export async function setup() {
 
       if (ttyFd !== null) {
         try { closeSync(ttyFd); } catch (e: unknown) {
-          console.warn(`setup: failed to close tty fd:`, e instanceof Error ? e.message : String(e));
+          log.warn("setup: failed to close tty fd", { error: e instanceof Error ? e.message : String(e) });
         }
       }
 
@@ -269,7 +272,7 @@ export async function setup() {
         execSync(`${sudoPrefix}${tsBin} serve --bg ${port}`, { stdio: "inherit" });
         print(green(`  Tailscale serving at https://${tailscaleHostname}/`));
       } catch (e: unknown) {
-        console.warn("tailscale serve failed:", e instanceof Error ? e.message : String(e));
+        log.warn("tailscale serve failed", { error: e instanceof Error ? e.message : String(e) });
         print(red("  Failed to configure tailscale serve. You can do it manually later."));
         print(dim(`  Try: ${sudoPrefix}tailscale serve --bg ${port}`));
       }

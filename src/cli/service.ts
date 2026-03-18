@@ -65,7 +65,7 @@ function programArgs(): string[] {
       chmodSync(stableBin, 0o755);
       return [stableBin];
     } catch (e: unknown) {
-      console.warn(`programArgs: failed to copy binary to stable location:`, errMsg(e));
+      log.warn("programArgs: failed to copy binary to stable location", { error: errMsg(e) });
     }
   }
   return [exe];
@@ -192,7 +192,7 @@ function launchdBootout() {
     try {
       execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null`);
     } catch (e: unknown) {
-      console.warn(`launchdBootout: legacy unload also failed:`, errMsg(e));
+      log.warn("launchdBootout: legacy unload also failed", { error: errMsg(e) });
     }
   }
 }
@@ -270,16 +270,16 @@ export function serviceUninstall() {
   if (IS_MACOS) {
     launchdBootout();
     try { unlinkSync(PLIST_PATH); } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`serviceUninstall: failed to remove plist:`, errMsg(e));
+      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("serviceUninstall: failed to remove plist", { error: errMsg(e) });
     }
   } else if (IS_LINUX) {
     try { execSync(`systemctl --user stop ${SYSTEMD_SERVICE} 2>/dev/null`); } catch { /* expected: exits non-zero when service not running */ }
     try { execSync(`systemctl --user disable ${SYSTEMD_SERVICE} 2>/dev/null`); } catch { /* expected: exits non-zero when already disabled */ }
     try { unlinkSync(SYSTEMD_PATH); } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`serviceUninstall: failed to remove unit file:`, errMsg(e));
+      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("serviceUninstall: failed to remove unit file", { error: errMsg(e) });
     }
     try { execSync("systemctl --user daemon-reload"); } catch (e: unknown) {
-      console.warn(`serviceUninstall: failed to reload systemd daemon:`, errMsg(e));
+      log.warn("serviceUninstall: failed to reload systemd daemon", { error: errMsg(e) });
     }
   }
   print(green("  Wolfpack service removed."));
@@ -381,7 +381,7 @@ export function serviceStatus() {
 export function uninstall() {
   serviceUninstall();
   try { rmSync(WOLFPACK_DIR, { recursive: true, force: true }); } catch (e: unknown) {
-    console.warn(`uninstall: failed to remove ${WOLFPACK_DIR}:`, errMsg(e));
+    log.warn("uninstall: failed to remove wolfpack dir", { path: WOLFPACK_DIR, error: errMsg(e) });
   }
   print("");
   print(green("  Wolfpack uninstalled."));
