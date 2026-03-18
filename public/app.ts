@@ -1,80 +1,13 @@
-// ── Settings (persisted to localStorage) ──
-const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:300, debugPanel:false, ralphEnabled:false};
-function loadStoredJson(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : fallback;
-  } catch {
-    return fallback;
-  }
-}
-const wpSettings = Object.assign({}, wpDefaults, loadStoredJson("wp-effects", {}));
-function toggleSetting(key, val) {
-  wpSettings[key] = val;
-  localStorage.setItem("wp-effects", JSON.stringify(wpSettings));
-  // Invalidate cached char dimensions on font changes
-  if (key === "termFontSize" || key === "termFont") _charDimCache = { key: "", w: 0, h: 0 };
-  applySetting(key, val);
-}
-function applySetting(key, val) {
-  if (key === "animations") document.body.classList.toggle("no-animations", !val);
-  if (key === "notifications" && val) requestNotifications();
-  if (key === "enterSends") {
-    const el = document.getElementById("msg-input");
-    if (el) el.placeholder = val ? "$ (Enter to send)" : "$ (⚡ to send)";
-  }
-  if (key === "termFontSize") {
-    document.body.classList.remove("term-size-small", "term-size-medium", "term-size-large");
-    document.body.classList.add("term-size-" + val);
-    document.querySelectorAll(".term-size-btn").forEach(b => b.classList.toggle("active", b.dataset.size === val));
-    applyTermToXterm();
-  }
-  if (key === "termWrap") {
-    document.body.classList.toggle("term-wrap", val);
-  }
-  if (key === "ralphEnabled") {
-    document.body.classList.toggle("ralph-hidden", !val);
-  }
-  if (key === "termFont") {
-    document.body.classList.toggle("term-font-alt", val === "alt");
-    document.querySelectorAll(".term-font-btn").forEach(b => b.classList.toggle("active", b.dataset.font === val));
-    applyTermToXterm();
-  }
-}
-const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
-function applyTermToXterm() {
-  const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-  const fontFamily = getTerminalFontFamily();
-  if (state.desktopController?.term) {
-    state.desktopController.term.options.fontSize = p.fontSize;
-    state.desktopController.term.options.lineHeight = p.lineHeight;
-    state.desktopController.term.options.fontFamily = fontFamily;
-    state.desktopController.resize();
-  }
-  for (const gs of state.gridSessions) {
-    if (!gs.controller?.term) continue;
-    gs.controller.term.options.fontSize = Math.max(p.fontSize - 2, 10);
-    gs.controller.term.options.lineHeight = p.lineHeight;
-    gs.controller.term.options.fontFamily = fontFamily;
-    gs.controller.resize();
-  }
-}
-function initSettings() {
-  Object.entries(wpSettings).forEach(([k, v]) => {
-    applySetting(k, v);
-    const el = document.getElementById("setting-" + k);
-    if (!el) return;
-    if (el.type === "checkbox") el.checked = v;
-    else el.value = v;
-  });
-  const ttlLabel = document.getElementById("snapshot-ttl-val");
-  if (ttlLabel) ttlLabel.textContent = formatSnapshotTtl(wpSettings.snapshotTtl);
-}
-function haptic(pattern) {
-  if (wpSettings.haptics && navigator.vibrate) navigator.vibrate(pattern);
-}
+import {
+  esc, escAttr, loadStoredJson, isDesktop, formatSnapshotTtl,
+  getTerminalFontFamily, _charDimCache, getCharDimensions,
+  wpDefaults, wpSettings, TERM_PRESETS, toggleSetting, applySetting,
+  applyTermToXterm, initSettings, haptic, requestNotifications,
+  QC_STORAGE_KEY, loadQuickCmds, RECENTS_STORAGE_KEY, MAX_RECENTS,
+  state, setState,
+  SNAPSHOT_KEY_PREFIX, SNAPSHOT_MAX_BYTES, SNAPSHOT_SAVE_INTERVAL,
+  DESKTOP_TERMINAL_SCROLLBACK, GRID_TERMINAL_SCROLLBACK,
+} from "./app-state";
 
 // ── Performance Metrics (UX-16) ──
 
@@ -156,19 +89,6 @@ function renderDebugPanel() {
 }
 
 // ── Quick Commands (UX-08) ──
-
-const QC_STORAGE_KEY = "wp-quick-cmds";
-
-function loadQuickCmds() {
-  try {
-    const raw = localStorage.getItem(QC_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch {}
-  return [];
-}
 
 function saveQuickCmds() {
   localStorage.setItem(QC_STORAGE_KEY, JSON.stringify(state.quickCmds));
@@ -281,19 +201,8 @@ function dismissGitStatus() {
 
 // ── Session Recents ──
 
-const RECENTS_STORAGE_KEY = "wp-recents";
-const MAX_RECENTS = 20;
-
 function sessionKey(machine, name) {
   return (machine || "") + "|" + name;
-}
-
-function loadRecents() {
-  try {
-    const raw = localStorage.getItem(RECENTS_STORAGE_KEY);
-    if (raw) { const r = JSON.parse(raw); if (Array.isArray(r)) return r; }
-  } catch {}
-  return [];
 }
 
 function saveRecents() {
@@ -307,16 +216,6 @@ function recordRecent(machine, name) {
   if (state.sessionRecents.length > MAX_RECENTS) state.sessionRecents.length = MAX_RECENTS;
   saveRecents();
 }
-
-function loadSidebarPinned() {
-  const v = localStorage.getItem("wolfpack-sidebar-pinned");
-  if (v !== null) return v !== "0";
-  const old = localStorage.getItem("wolfpack-sidebar-collapsed");
-  if (old === "1") return false;
-  return true;
-}
-
-const _initSidebarPinned = loadSidebarPinned();
 const RECONNECT_BUDGET_MS = 2 * 60 * 1000;
 const RECONNECT_BASE_DELAY_MS = 500;
 const RECONNECT_MAX_DELAY_MS = 5000;
@@ -390,76 +289,6 @@ function createReconnector(opts = {}) {
     get pending() { return !!_timer; },
   };
 }
-
-const state = {
-  currentView: "sessions",
-  currentSession: null,
-  currentMachine: "", // "" = self, URL string = remote
-  viewBeforePicker: "sessions", // stashed view to return to on Escape from project/agent picker
-  viewBeforeSettings: "sessions",
-  // session/data state
-  allSessions: [],
-  lastSessionGroups: [],
-  firstLoad: true,
-  lastSessionsHtml: "",
-  loadSessionsEpoch: 0,
-  selfName: "",
-  selfVersion: "",
-  sessionRecents: loadRecents(),
-  quickCmds: loadQuickCmds(),
-  // ralph state
-  currentRalphProject: null,
-  currentRalphMachine: "",
-  ralphStartMachine: "",
-  ralphLogPollTimer: null,
-  currentRalphPlanFile: "",
-  restartingRalph: false,
-  currentRalphAgent: "",
-  // desktop/grid terminal state
-  desktopController: null,
-  useDesktopTerminal: false,
-  desktopResizeHandler: null,
-  desktopResizeTimer: null,
-  gridSessions: [],
-  gridFocusIndex: 0,
-  preservedGridSessions: [],
-  preservedGridFocusIndex: 0,
-  gridResizeHandler: null,
-  gridRelayoutTransitionId: 0,
-  // sidebar state
-  sidebarPinned: _initSidebarPinned,
-  sidebarCollapsed: !_initSidebarPinned,
-  sidebarAutoExpanded: false,
-  sidebarTransitionIsHover: false,
-  sidebarResizeDone: false,
-  sessionsExpanded: true,
-  // mobile/connection state
-  mobileWs: null,
-  mobileStreamingActive: false,
-  termFollowMode: true,
-  sessionRefreshTimer: null,
-  // UI interaction state
-  snapshotTimer: null,
-  swipeNavigated: false,
-  projectMachine: "",
-  selectedProject: "",
-  isNewProject: false,
-  enterRetryTimer: null,
-  drawerOpen: false,
-  notificationsEnabled: ("Notification" in window && Notification.permission === "granted"),
-  kbAccessoryOpen: false,
-  searchActive: false,
-  searchTerm: "",
-  searchMatches: [],
-  searchIndex: -1,
-  lastRawPane: null,
-};
-function setState(patch) { Object.assign(state, patch); }
-const SNAPSHOT_KEY_PREFIX = "wp-snap|";
-const SNAPSHOT_MAX_BYTES = 8192;
-const SNAPSHOT_SAVE_INTERVAL = 2000;
-const DESKTOP_TERMINAL_SCROLLBACK = 2000;
-const GRID_TERMINAL_SCROLLBACK = 1000;
 
 /**
  * Creates a configured ghostty-web Terminal with addons, copy/paste, and stdin wired up.
@@ -1083,11 +912,6 @@ function createPtyTerminalController(opts) {
   };
 }
 
-function getTerminalFontFamily() {
-  return wpSettings.termFont === "alt"
-    ? '"JetBrains Mono", "Fira Code", "Source Code Pro", "Cascadia Code", monospace'
-    : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
-}
 
 var encodeTerminalBinary = WP.encodeTerminalBinary;
 
@@ -1712,9 +1536,6 @@ function toggleGrid(session, machine, event) {
   }
 }
 
-function isDesktop() {
-  return window.innerWidth > 768;
-}
 
 // ── Per-session draft persistence (UX-03) ──
 
@@ -1799,11 +1620,6 @@ function flushSnapshot() {
 }
 function serializeXtermTail(term, maxLines) {
   return WP.serializeBufferTail(term.buffer.active, maxLines);
-}
-function formatSnapshotTtl(seconds) {
-  seconds = +seconds;
-  if (seconds < 60) return seconds + 's';
-  return Math.floor(seconds / 60) + 'm';
 }
 
 // ── Machine registry ──
@@ -2775,21 +2591,6 @@ async function openSession(name, machineUrl) {
   renderSidebar();
 }
 
-let _charDimCache = { key: "", w: 0, h: 0 };
-function getCharDimensions() {
-  const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-  const key = tp.fontSize + "|" + tp.lineHeight + "|" + wpSettings.termFont;
-  if (_charDimCache.key === key && _charDimCache.w > 0) return _charDimCache;
-  const probe = document.createElement("span");
-  probe.style.cssText =
-    'position:absolute;visibility:hidden;white-space:pre;font-size:' + tp.fontSize + 'px;line-height:' + tp.lineHeight + ';font-family:inherit';
-  probe.textContent = "X";
-  document.body.appendChild(probe);
-  _charDimCache = { key, w: probe.offsetWidth, h: probe.offsetHeight };
-  document.body.removeChild(probe);
-  return _charDimCache;
-}
-
 async function resizePane() {
   if (!state.currentSession) return;
   const term = document.getElementById("terminal");
@@ -3751,16 +3552,6 @@ async function switchSession(val) {
 
 // ── Notifications ──
 
-function requestNotifications() {
-  if ("Notification" in window && Notification.permission === "default") {
-    Notification.requestPermission().then((p) => {
-      state.notificationsEnabled = p === "granted";
-    });
-  } else if ("Notification" in window && Notification.permission === "granted") {
-    state.notificationsEnabled = true;
-  }
-}
-
 // State-transition notification tracking
 const prevSessionStates = {};  // "machineUrl|sessionName" → triage
 const prevRalphStates = {};    // "machineUrl|project" → status
@@ -4315,21 +4106,6 @@ document.getElementById("search-input").addEventListener("keydown", (e) => {
   }
 });
 
-function esc(s) {
-  if (s == null) return "";
-  const d = document.createElement("div");
-  d.textContent = String(s);
-  return d.innerHTML.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
-}
-
-// JS-safe escaper for use inside onclick="func('...')" attribute contexts.
-// Backslash-escapes characters that could break out of a JS string literal
-// AFTER HTML attribute decoding.
-function escAttr(s) {
-  if (s == null) return "";
-  return String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, '\\"')
-    .replace(/</g, "\\x3c").replace(/>/g, "\\x3e").replace(/&/g, "\\x26");
-}
 
 // ── Swipe Gesture Engine (mobile only) ──
 if (!isDesktop()) {
