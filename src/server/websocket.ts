@@ -29,10 +29,21 @@ export const activePtySessions = new Map<string, {
 }>();
 
 const ptySpawnAttempts = new Map<string, number>();
+
+// ── Constants ──
 const DESKTOP_PREFILL_MAX_BYTES = 256 * 1024;
 const PREFILL_CHUNK_SIZE = 32 * 1024;
 const PREFILL_CHUNK_DELAY_MS = 8;
 const PREFILL_OVERLAP_LIMIT = 32 * 1024;
+const POLL_INTERVAL_MS = 50;
+const PING_INTERVAL_MS = 25_000;
+const RATE_LIMIT_PER_SEC = 60;
+const MAX_WS_MESSAGE_BYTES = 65_536;
+const MAX_PTY_BINARY_BYTES = 16_384;
+const RESIZE_DEBOUNCE_MS = 80;
+const RAPID_EXIT_THRESHOLD_MS = 3_000;
+const POST_INPUT_DELAY_MS = 15;
+const POST_SPAWN_RESIZE_DELAY_MS = 100;
 
 function bufferStartsWithPrefillSuffix(prefillTail: Buffer, attachPrefix: Buffer, overlap: number): boolean {
   const prefillStart = prefillTail.length - overlap;
@@ -138,7 +149,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
   function schedulePoll() {
     if (!alive) return;
     if (pollTimer) clearTimeout(pollTimer);
-    pollTimer = setTimeout(sendUpdate, 50);
+    pollTimer = setTimeout(sendUpdate, POLL_INTERVAL_MS);
   }
 
   schedulePoll();
@@ -149,24 +160,24 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
     } else {
       clearInterval(pingTimer);
     }
-  }, 25000);
+  }, PING_INTERVAL_MS);
 
-  const rl = createRateLimiter(60);
+  const rl = createRateLimiter(RATE_LIMIT_PER_SEC);
 
   ws.on("message", async (raw) => {
     if (!rl.allow()) return;
 
     try {
       const str = String(raw);
-      if (str.length > 65536) return;
+      if (str.length > MAX_WS_MESSAGE_BYTES) return;
       const msg = JSON.parse(str);
       if (msg.type === "input" && typeof msg.data === "string") {
         await tmuxSend(session, msg.data, true);
-        setTimeout(sendUpdate, 15);
+        setTimeout(sendUpdate, POST_INPUT_DELAY_MS);
       } else if (msg.type === "key" && typeof msg.key === "string") {
         if (WS_ALLOWED_KEYS.has(msg.key)) {
           await tmuxSendKey(session, msg.key);
-          setTimeout(sendUpdate, 15);
+          setTimeout(sendUpdate, POST_INPUT_DELAY_MS);
         }
       } else if (
         msg.type === "resize" &&
@@ -178,7 +189,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
         }
         if (!sized) {
           sized = true;
-          setTimeout(sendUpdate, 50);
+          setTimeout(sendUpdate, POLL_INTERVAL_MS);
         }
       }
     } catch (e: unknown) {
@@ -246,7 +257,7 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
     const pingTimer = setInterval(() => {
       if (ws.readyState === 1) { try { ws.ping(); } catch (e: unknown) { console.debug(`pending ws ping failed [${session}]:`, errMsg(e)); } }
       else clearInterval(pingTimer);
-    }, 25000);
+    }, PING_INTERVAL_MS);
 
     function pendingMessage(raw: Buffer | string) {
       try {
@@ -416,7 +427,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
             if (!entry.alive) return;
             entry.alive = false;
             activePtySessions.delete(session);
-            const rapid = Date.now() - spawnedAt < 3000;
+            const rapid = Date.now() - spawnedAt < RAPID_EXIT_THRESHOLD_MS;
             const code = rapid ? 4001 : 1000;
             const reason = rapid ? "session unavailable" : "pty exited";
             if (entry.viewer) {
@@ -442,13 +453,13 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
         try {
           entry.proc.terminal!.resize(latestSize.cols, latestSize.rows);
         } catch (e: unknown) { console.debug(`post-spawn terminal resize failed [${session}]:`, errMsg(e)); }
-      }, 100);
+      }, POST_SPAWN_RESIZE_DELAY_MS);
     } finally {
       spawning = false;
     }
   }
 
-  const rl = createRateLimiter(60);
+  const rl = createRateLimiter(RATE_LIMIT_PER_SEC);
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
   ws.on("message", (raw: Buffer | string, isBinary: boolean) => {
@@ -490,11 +501,11 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               exec(TMUX, ["set-option", "-t", session, "window-size", "latest"], { timeout: 2000 })
                 .then(() => exec(TMUX, ["resize-window", "-t", session, "-x", String(cols), "-y", String(rows)], { timeout: 2000 }))
                 .catch((e: unknown) => { console.debug(`tmux resize failed [${session}]:`, errMsg(e)); });
-            }, 80);
+            }, RESIZE_DEBOUNCE_MS);
           }
         }
       } else if (entry.proc) {
-        if (Buffer.isBuffer(raw) && raw.length > 16384) return;
+        if (Buffer.isBuffer(raw) && raw.length > MAX_PTY_BINARY_BYTES) return;
         entry.proc.terminal!.write(raw as Buffer);
       }
     } catch (e: unknown) {
@@ -506,7 +517,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
   const pingTimer = setInterval(() => {
     if (ws.readyState === 1) { try { ws.ping(); } catch (e: unknown) { console.debug(`pty ws ping failed [${session}]:`, errMsg(e)); } }
     else clearInterval(pingTimer);
-  }, 25000);
+  }, PING_INTERVAL_MS);
 
   function detach() {
     clearInterval(pingTimer);

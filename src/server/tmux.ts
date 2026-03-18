@@ -166,11 +166,12 @@ export async function tmuxList(): Promise<string[]> {
 // ── tmuxSend / tmuxSendKey ──
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const SEND_ENTER_DELAY_MS = 50;
 
 async function _realTmuxSend(session: string, text: string, noEnter = false): Promise<void> {
   await exec(TMUX, ["send-keys", "-l", "-t", session, text]);
   if (!noEnter) {
-    await sleep(50);
+    await sleep(SEND_ENTER_DELAY_MS);
     await exec(TMUX, ["send-keys", "-t", session, "Enter"]);
   }
 }

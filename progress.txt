@@ -190,6 +190,15 @@
   - Whitespace-padded PID → parsed correctly
 - 69 ralph-api integration tests pass (9 new), 195 expect() calls
 
+## Extract magic numbers into named constants (Task 9)
+- Extracted magic numbers into named constants across 4 server files:
+  - `websocket.ts`: added `POLL_INTERVAL_MS`, `PING_INTERVAL_MS`, `RATE_LIMIT_PER_SEC`, `MAX_WS_MESSAGE_BYTES`, `MAX_PTY_BINARY_BYTES`, `RESIZE_DEBOUNCE_MS`, `RAPID_EXIT_THRESHOLD_MS`, `POST_INPUT_DELAY_MS`, `POST_SPAWN_RESIZE_DELAY_MS` (existing: `DESKTOP_PREFILL_MAX_BYTES`, `PREFILL_CHUNK_SIZE`, `PREFILL_CHUNK_DELAY_MS`, `PREFILL_OVERLAP_LIMIT`)
+  - `tmux.ts`: added `SEND_ENTER_DELAY_MS` (existing: `BACKFILL_CACHE_TTL_MS`, `TRIAGE_CACHE_TTL_MS`)
+  - `routes.ts`: added `PEER_FETCH_TIMEOUT_MS`, `RALPH_LOG_MAX_TAIL_BYTES`, `RALPH_LOG_MAX_LINES`
+  - `http.ts`: added `PEER_PROBE_TIMEOUT_MS`, `TAILSCALE_MAX_BUFFER` (existing: `MAX_BODY`)
+- Eliminated duplicate `60` (rate limit) in websocket.ts — now single `RATE_LIMIT_PER_SEC` constant
+- 716 unit tests pass, bundle builds (152.9 KB)
+
 ## Cache tmux show-environment backfill (Task 8)
 - Added `_backfillCacheMap` with 30s TTL to `src/server/tmux.ts` — prevents N `show-environment` spawns on every poll
 - On first poll, `show-environment` runs once per session; result cached in `_backfillCacheMap`

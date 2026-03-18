@@ -58,6 +58,11 @@ import {
 
 const log = createLogger("http");
 
+// ── Constants ──
+const PEER_FETCH_TIMEOUT_MS = 3_000;
+const RALPH_LOG_MAX_TAIL_BYTES = 128 * 1024;
+const RALPH_LOG_MAX_LINES = 500;
+
 // ── Peer ralph-response validation ──
 
 /** Allowed keys on a ralph loop entry from a remote peer. */
@@ -508,7 +513,7 @@ export const routes: Record<
       remotePeers.map(async (peer) => {
         try {
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 3000);
+          const timer = setTimeout(() => ctrl.abort(), PEER_FETCH_TIMEOUT_MS);
           const authHeader = Array.isArray(req.headers.authorization)
             ? req.headers.authorization[0]
             : req.headers.authorization;
@@ -588,18 +593,17 @@ export const routes: Record<
       return json(res, { error: "no ralph log found" }, 404);
     }
     try {
-      const MAX_TAIL = 128 * 1024;
       const fd = openSync(logPath, "r");
       try {
         const size = statSync(logPath).size;
-        const offset = Math.max(0, size - MAX_TAIL);
-        const buf = Buffer.alloc(Math.min(size, MAX_TAIL));
+        const offset = Math.max(0, size - RALPH_LOG_MAX_TAIL_BYTES);
+        const buf = Buffer.alloc(Math.min(size, RALPH_LOG_MAX_TAIL_BYTES));
         readSync(fd, buf, 0, buf.length, offset);
         const content = buf.toString("utf-8");
         const lines = content.split("\n");
         if (offset > 0) lines.shift();
         const totalLines = lines.length;
-        const log = lines.slice(-500).join("\n");
+        const log = lines.slice(-RALPH_LOG_MAX_LINES).join("\n");
         json(res, { log, totalLines });
       } finally {
         closeSync(fd);

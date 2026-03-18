@@ -94,7 +94,10 @@ export function writeUnauthorized(res: ServerResponse): void {
   res.end(JSON.stringify({ error: "unauthorized" }));
 }
 
-const MAX_BODY = 64 * 1024; // 64KB
+// ── Constants ──
+const MAX_BODY = 64 * 1024;
+const PEER_PROBE_TIMEOUT_MS = 3_000;
+const TAILSCALE_MAX_BUFFER = 10 * 1024 * 1024;
 
 export function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -180,7 +183,7 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
   try {
     const { stdout } = await exec(
       "/bin/sh", ["-l", "-c", `"${tsBin}" status --json`],
-      { maxBuffer: 10 * 1024 * 1024 },
+      { maxBuffer: TAILSCALE_MAX_BUFFER },
     );
     const status = JSON.parse(stdout);
     const self = status.Self?.DNSName?.replace(/\.$/, "");
@@ -196,7 +199,7 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
       peers.map(async (p) => {
         try {
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 3000);
+          const timer = setTimeout(() => ctrl.abort(), PEER_PROBE_TIMEOUT_MS);
           const r = await fetch(p.url + "/api/info", { signal: ctrl.signal });
           clearTimeout(timer);
           const info = await r.json();
