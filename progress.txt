@@ -272,3 +272,7 @@
 - Added old-format warning in `src/ralph-macchio.ts` startup — logs warning before plan validation if old format detected, suggests running `wolfpack migrate-plan`
 - Unit tests in `tests/unit/plan-parsing.test.ts`: 16 new tests — `detectOldPlanFormat` (9 tests: bare Task N:, Task N., sub-letters, case insensitive, negative cases), `migratePlanFormat` (7 tests: basic conversion, sub-letters, preserves non-task content, count accuracy, title trimming)
 - 733 unit tests pass (16 new)
+
+## README personality section (Task 12c)
+- Added 2-sentence "why I built this" section after ASCII art, before the feature description
+- Tone: personal, opinionated — "I got tired of SSHing into 4 machines to check if Claude was stuck"
