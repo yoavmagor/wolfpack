@@ -515,6 +515,8 @@ function createPtySocketClient(opts) {
   let _skipInitialPrefill = !!opts.skipInitialPrefill;
   let _attachAckTimer = null;
   let _awaitingAttachAck = false;
+  let _prefillChunks: Uint8Array[] = [];
+  let _awaitingPrefillDone = false;
 
   function buildUrl() {
     const resetSuffix = consumeReset ? "&reset=1" : "";
@@ -539,6 +541,8 @@ function createPtySocketClient(opts) {
     _skipInitialPrefill = false;
     _lastSentResize = dims.cols + "x" + dims.rows;
     _awaitingAttachAck = true;
+    _prefillChunks = [];
+    _awaitingPrefillDone = !skipPrefill;
     ws.send(JSON.stringify({ type: "attach", cols: dims.cols, rows: dims.rows, skipPrefill }));
     if (_attachAckTimer) clearTimeout(_attachAckTimer);
     // Compatibility fallback: older servers don't implement attach_ack.
@@ -597,8 +601,18 @@ function createPtySocketClient(opts) {
           if (msg.type === "attach_ack") {
             _awaitingAttachAck = false;
             if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+          } else if (msg.type === "prefill_done") {
+            // Flush buffered prefill chunks to the terminal in one batch.
+            _awaitingPrefillDone = false;
+            const chunks = _prefillChunks;
+            _prefillChunks = [];
+            if (opts.onBinaryData) {
+              for (const chunk of chunks) opts.onBinaryData(chunk);
+            }
           } else if (msg.type === "viewer_conflict") {
             _awaitingAttachAck = false;
+            _awaitingPrefillDone = false;
+            _prefillChunks = [];
             if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
             if (opts.onViewerConflict) opts.onViewerConflict();
           } else if (msg.type === "control_granted") {
@@ -609,12 +623,18 @@ function createPtySocketClient(opts) {
         } catch {}
         return;
       }
+      if (_awaitingPrefillDone) {
+        _prefillChunks.push(new Uint8Array(ev.data));
+        return;
+      }
       if (opts.onBinaryData) opts.onBinaryData(new Uint8Array(ev.data));
     };
 
     sock.onclose = (ev) => {
       if (ws === sock) ws = null;
       _awaitingAttachAck = false;
+      _awaitingPrefillDone = false;
+      _prefillChunks = [];
       if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
       if (opts.onDisconnected) opts.onDisconnected(ev.code, ev.reason);
     };

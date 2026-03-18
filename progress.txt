@@ -126,3 +126,13 @@
 - Unit tests (`tests/unit/rate-limiter.test.ts`): 5 tests — token bucket drain/refill, per-IP isolation, burst 200 → 10 allowed + 190 denied, stale eviction
 - Integration tests (`tests/integration/rate-limit.test.ts`): 3 tests — poll endpoint 429 after burst, global limit on non-poll endpoints, 429 response body format
 - 631 unit tests pass, integration tests pass
+
+## Chunk PTY prefill delivery (Task 5)
+- `websocket.ts`: replaced single-frame prefill send with `sendPrefillChunked()` — splits buffer into 32KB frames with 8ms delay between chunks
+- Added `PREFILL_CHUNK_SIZE` (32KB) and `PREFILL_CHUNK_DELAY_MS` (8ms) constants
+- Server sends `{ type: "prefill_done" }` JSON message after last binary chunk
+- `sendPrefillChunked` bails early if entry dies or viewer disconnects mid-delivery
+- `public/app.ts` (`createPtySocketClient`): client buffers binary frames into `_prefillChunks` while `_awaitingPrefillDone` is true, flushes all chunks to `onBinaryData` when `prefill_done` arrives
+- Clears prefill state on `viewer_conflict`, `onclose`, and `skipPrefill` attach
+- Unit tests (`tests/unit/prefill-chunking.test.ts`): 5 tests — small prefill single chunk, large prefill multi-chunk split + reassembly, mid-delivery disconnect abort, empty prefill, exact boundary (32KB)
+- 631 unit tests pass, bundle builds (140.6 KB)

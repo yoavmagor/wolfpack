@@ -30,6 +30,8 @@ export const activePtySessions = new Map<string, {
 
 const ptySpawnAttempts = new Map<string, number>();
 const DESKTOP_PREFILL_MAX_BYTES = 256 * 1024;
+const PREFILL_CHUNK_SIZE = 32 * 1024;
+const PREFILL_CHUNK_DELAY_MS = 8;
 const PREFILL_OVERLAP_LIMIT = 32 * 1024;
 
 function bufferStartsWithPrefillSuffix(prefillTail: Buffer, attachPrefix: Buffer, overlap: number): boolean {
@@ -65,10 +67,36 @@ export function __stripInitialPtyOverlap(
   return { awaitingMore: false, data: attachPrefix };
 }
 
+/** Send prefill buffer in 32KB chunks with short delays to avoid stalling mobile connections. */
+async function sendPrefillChunked(
+  entry: { viewer: WebSocket | null; alive: boolean },
+  prefill: Buffer,
+  session: string,
+): Promise<void> {
+  let offset = 0;
+  while (offset < prefill.length) {
+    if (!entry.alive || !entry.viewer || entry.viewer.readyState !== 1) return;
+    const end = Math.min(offset + PREFILL_CHUNK_SIZE, prefill.length);
+    entry.viewer.send(prefill.subarray(offset, end));
+    offset = end;
+    if (offset < prefill.length) {
+      await new Promise(resolve => setTimeout(resolve, PREFILL_CHUNK_DELAY_MS));
+    }
+  }
+  if (entry.alive && entry.viewer && entry.viewer.readyState === 1) {
+    entry.viewer.send(JSON.stringify({ type: "prefill_done" }));
+  }
+}
+
 /** Test hook: expose PTY internal state for assertions */
-export function __getTestState(): { activePtySessions: typeof activePtySessions; ptySpawnAttempts: Map<string, number> } {
+export function __getTestState(): {
+  activePtySessions: typeof activePtySessions;
+  ptySpawnAttempts: Map<string, number>;
+  sendPrefillChunked: typeof sendPrefillChunked;
+  PREFILL_CHUNK_SIZE: number;
+} {
   if (!process.env.WOLFPACK_TEST) throw new Error("__getTestState() is only available in test mode (WOLFPACK_TEST=1)");
-  return { activePtySessions, ptySpawnAttempts };
+  return { activePtySessions, ptySpawnAttempts, sendPrefillChunked, PREFILL_CHUNK_SIZE };
 }
 
 // ── Terminal WS handler (mobile — capture-pane polling) ──
@@ -347,7 +375,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               prefill = rawPrefill;
             }
             try {
-              entry.viewer.send(prefill);
+              await sendPrefillChunked(entry, prefill, session);
               shouldDedupeInitialAttach = true;
             } catch (e: unknown) {
               console.error(`PTY prefill send failed [${session}]:`, errMsg(e));
