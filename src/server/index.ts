@@ -39,7 +39,7 @@ const VERSION: string = pkg.version;
 try {
   const shellPath = execFileSync(SHELL, ["-lic", "echo $PATH"]).toString().trim();
   if (shellPath) process.env.PATH = shellPath;
-} catch {
+} catch { /* shell PATH extraction failed — apply common fallback paths */
   const extra = [
     `${process.env.HOME}/.local/bin`,
     "/opt/homebrew/bin",

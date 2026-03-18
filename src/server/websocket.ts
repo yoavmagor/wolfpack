@@ -326,7 +326,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
     try {
       try {
         await exec(TMUX, ["has-session", "-t", session], { timeout: 2000 });
-      } catch {
+      } catch { /* expected: tmux session no longer exists */
         entry.alive = false;
         activePtySessions.delete(session);
         if (entry.viewer) {

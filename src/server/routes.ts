@@ -32,7 +32,7 @@ import {
 import { cleanupAllExceptFinal } from "../worktree.js";
 import { assets } from "../public-assets.js";
 import { isInputPrompt, isJunkLine, type TriageStatus } from "../triage.js";
-import { errMsg } from "../shared/process-cleanup.js";
+import { createLogger, errMsg } from "../log.js";
 import pkg from "../../package.json";
 import {
   DEV_DIR,
@@ -56,6 +56,8 @@ import {
   countPlanTasks,
 } from "./ralph.js";
 
+const log = createLogger("http");
+
 /** Validate project name param. Returns project string or sends 400 and returns null. */
 function validateProject(res: ServerResponse, project: string | null | undefined): project is string {
   if (!project || !isValidProjectName(project)) {
@@ -77,7 +79,7 @@ function validateProjectDir(res: ServerResponse, projectDir: string): boolean {
       json(res, { error: "not a directory" }, 400);
       return false;
     }
-  } catch {
+  } catch { /* expected: stat fails when project dir doesn't exist */
     json(res, { error: "project directory not found" }, 404);
     return false;
   }
@@ -135,7 +137,7 @@ export function loadSettings(): Settings {
     const agentCmd = s.agentCmd && CMD_REGEX.test(s.agentCmd) ? s.agentCmd : "claude";
     const customCmds = (s.customCmds || []).filter((c: string) => CMD_REGEX.test(c));
     return { agentCmd, customCmds };
-  } catch {
+  } catch { /* expected: settings file doesn't exist yet */
     return { agentCmd: "claude", customCmds: [] };
   }
 }
@@ -456,7 +458,7 @@ export const routes: Record<
           clearTimeout(timer);
           const data = await r.json() as { loops: any[] };
           return (data.loops || []).map((l: any) => ({ ...l, machineName: peer.name, machineUrl: peer.url }));
-        } catch {
+        } catch { /* expected: peer unreachable or non-wolfpack — skip silently */
           return [];
         }
       })
@@ -503,10 +505,11 @@ export const routes: Record<
     try {
       const files = readdirSync(projectDir)
         .filter((f) => f.endsWith(".md") && !f.startsWith(".") && !/^(readme|doc|changelog|contributing|license|code.of.conduct)\.md$/i.test(f))
-        .filter((f) => { try { return statSync(join(projectDir, f)).isFile(); } catch { return false; } })
+        .filter((f) => { try { return statSync(join(projectDir, f)).isFile(); } catch { /* race: file removed between readdir and stat */ return false; } })
         .sort();
       json(res, { plans: files });
-    } catch {
+    } catch (e: unknown) {
+      log.warn("failed to list plan files", { error: errMsg(e) });
       json(res, { plans: [] });
     }
   },
@@ -537,7 +540,8 @@ export const routes: Record<
       } finally {
         closeSync(fd);
       }
-    } catch {
+    } catch (e: unknown) {
+      log.error("failed to read ralph log", { error: errMsg(e) });
       json(res, { error: "failed to read log" }, 500);
     }
   },
@@ -578,7 +582,7 @@ export const routes: Record<
           try {
             process.kill(lockPid, 0);
             return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
-          } catch {
+          } catch { /* expected: process dead — stale lock, remove it */
             try { unlinkSync(lockPath); } catch (e: unknown) {
               if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn(`ralph start: failed to remove stale lock:`, errMsg(e));
             }
@@ -642,7 +646,7 @@ export const routes: Record<
           execFileSync("git", ["rev-parse", "--verify", source], {
             cwd: projectDir, encoding: "utf-8", timeout: 5000,
           });
-        } catch {
+        } catch { /* local ref also not found — report fetch failure to user */
           return json(res, { error: `failed to fetch source branch '${source}': ${stderr}` }, 400);
         }
       }
@@ -728,7 +732,7 @@ export const routes: Record<
       if (!cmdline.includes("ralph-macchio") && !cmdline.includes("worker")) {
         return json(res, { error: "PID does not belong to a ralph process" }, 400);
       }
-    } catch {
+    } catch { /* expected: process already exited */
       return json(res, { error: "process not found" }, 404);
     }
     try {
@@ -737,7 +741,8 @@ export const routes: Record<
         console.warn(`ralph cancel: failed to SIGTERM process group:`, errMsg(e));
       }
       json(res, { ok: true, killed: status.pid });
-    } catch {
+    } catch (e: unknown) {
+      log.error("failed to kill ralph process", { pid: status.pid, error: errMsg(e) });
       json(res, { error: "failed to kill process" }, 500);
     }
   },
@@ -763,7 +768,7 @@ export const routes: Record<
     const tryDelete = (path: string, label: string) => {
       try {
         if (existsSync(path)) { unlinkSync(path); deleted.push(label); }
-      } catch { failed.push(label); }
+      } catch (e: unknown) { log.warn(`dismiss: failed to delete ${label}`, { error: errMsg(e) }); failed.push(label); }
     };
 
     tryDelete(join(projectDir, ".ralph.log"), ".ralph.log");
@@ -790,8 +795,8 @@ export const routes: Record<
         if (result.removed.length > 0 || result.kept) {
           worktreeCleanup = result;
         }
-      } catch {
-        // Cleanup failed — not critical
+      } catch (e: unknown) {
+        log.warn("dismiss: worktree cleanup failed", { error: errMsg(e) });
       }
     }
 

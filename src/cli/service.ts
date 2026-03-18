@@ -16,8 +16,10 @@ import {
 import { join, resolve } from "node:path";
 import { homedir, platform } from "node:os";
 import { xmlEsc, systemdEsc } from "../validation.js";
-import { errMsg } from "../shared/process-cleanup.js";
+import { createLogger, errMsg } from "../log.js";
 import { print, bold, green, red, dim } from "./formatting.js";
+
+const log = createLogger("service");
 import {
   WOLFPACK_DIR,
   loadConfig,
@@ -94,7 +96,8 @@ export function updateStableBinary(): boolean {
     copyFileSync(exe, stableBin);
     chmodSync(stableBin, 0o755);
     return true;
-  } catch {
+  } catch (e: unknown) {
+    log.warn("failed to update stable binary", { error: errMsg(e) });
     return false;
   }
 }
@@ -242,7 +245,8 @@ export function serviceInstall() {
       } else {
         execFileSync("sudo", ["loginctl", "enable-linger", user]);
       }
-    } catch {
+    } catch (e: unknown) {
+      log.warn("failed to enable linger", { error: errMsg(e) });
       print(dim("  Note: Could not enable linger. Service may not start at boot."));
       print(dim("  Run: sudo loginctl enable-linger $USER"));
     }
@@ -289,7 +293,8 @@ export function serviceStop() {
       execSync(`systemctl --user stop ${SYSTEMD_SERVICE}`);
     }
     print(green("  Wolfpack service stopped."));
-  } catch {
+  } catch (e: unknown) {
+    log.error("failed to stop service", { error: errMsg(e) });
     print(red("  Failed to stop service."));
   }
   const config = loadConfig();
@@ -312,7 +317,8 @@ export function serviceStart() {
       execSync(`systemctl --user start ${SYSTEMD_SERVICE}`);
     }
     print(green("  Wolfpack service started."));
-  } catch {
+  } catch (e: unknown) {
+    log.error("failed to start service", { error: errMsg(e) });
     print(red("  Failed to start service."));
   }
 }
@@ -341,7 +347,7 @@ export function serviceStatus() {
       } else {
         print(dim("  Wolfpack service is loaded but not running."));
       }
-    } catch {
+    } catch { /* expected: launchctl print exits non-zero when service not loaded */
       if (existsSync(PLIST_PATH)) {
         print(dim("  Wolfpack service is installed but not loaded."));
       } else {
@@ -360,7 +366,7 @@ export function serviceStatus() {
       } else {
         print(dim(`  Wolfpack service status: ${out}`));
       }
-    } catch {
+    } catch { /* expected: systemctl exits non-zero when service not active */
       if (existsSync(SYSTEMD_PATH)) {
         print(dim("  Wolfpack service is installed but not running."));
       } else {

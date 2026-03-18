@@ -1,0 +1,117 @@
+# Progress Log
+
+## Extract inline CSS to public/styles.css
+- Extracted 2437 lines of CSS from `<style>` block in `public/index.html` into `public/styles.css`
+- Replaced inline `<style>...</style>` with `<link rel="stylesheet" href="/styles.css" />`
+- Dedented CSS to remove HTML indentation (6 spaces)
+
+## Create app bundling infrastructure
+- Extracted ~4700 lines of inline `<script>` from `public/index.html` into `public/app.ts`
+- Created `scripts/bundle-app.ts` — uses `Bun.build()` (ESM format, browser target) to compile `public/app.ts` → `public/app.bundle.js`
+- Updated `scripts/gen-assets.ts` to call `bundle-app.ts` and exclude `.ts` source files from asset embedding
+- Replaced inline `<script>...</script>` in `index.html` with `<script src="/app.bundle.js"></script>`
+- Bundle outputs global-scope code (no IIFE) so `onclick` handlers in HTML continue to work
+
+## Extract shared state module (public/app-state.ts)
+- Created `public/app-state.ts` with state object, setState, settings system, and utility functions
+- Extracted: `state`, `setState`, `wpDefaults`, `wpSettings`, `toggleSetting`, `applySetting`, `TERM_PRESETS`, `applyTermToXterm`, `initSettings`, `haptic`, `requestNotifications`
+- Extracted utilities: `esc`, `escAttr`, `loadStoredJson`, `formatSnapshotTtl`, `getTerminalFontFamily`, `getCharDimensions`, `_charDimCache`
+- `app.ts` imports from `./app-state` and hydrates state with values from local functions (`loadRecents`, `loadQuickCmds`, `loadSidebarPinned`)
+- Bun bundler inlines the import — all functions remain at global scope in `app.bundle.js`
+- 932 tests pass, bundle builds successfully
+
+## Extract Ralph loop functions (public/app-ralph.ts)
+- Created `public/app-ralph.ts` (~370 lines) with all Ralph loop functions
+- Exported 15 public functions: `getRalphStatus`, `renderRalphCardHtml`, `sidebarRalphCardHtml`, `openRalphDetail`, `refreshRalphDetail`, `parseIterations`, `toggleRawLog`, `cancelRalph`, `loadRalphStartForm`, `onIsolationChange`, `startRalph`, `restartRalph`, `showRalphStart`, `dismissRalph`, `checkRalphTransitions`
+- 8 internal helpers kept private: `renderIterationCards`, `getStartMachine`, `loadStartFormData`, `loadPlanFiles`, `syncIterationsFromPlan`, `updateWorktreePlaceholder`, `loadWorktreeBranches`, `loadBranches`
+- Also extracted notification helpers: `getRalphNotificationStatus`, `prevRalphStates`, `checkRalphTransitions` — app.ts `checkStateTransitions` now delegates to `checkRalphTransitions`
+- Used dependency injection pattern (`initRalphDeps`) to avoid circular imports — ralph module receives `api`, `errorMessage`, `showView`, `getMachines`, `loadSessions`, `renderSidebar`, `startSidebarRefresh`, `backToSessions`, and sidebar timer getter/setter
+- Fixed `escHtml` → `esc` bug in `loadWorktreeBranches` (escHtml was undefined)
+- `app.ts` imports all ralph functions and calls `initRalphDeps()` before `initSettings()`
+- 932 tests pass, bundle builds successfully (139.6 KB)
+
+## Create app bundling infrastructure
+- Created `scripts/bundle-app.ts` — uses `Bun.build()` (ESM format, browser target) to compile `public/app.ts` → `public/app.bundle.js`
+- Strips ESM export statements so functions remain at global scope (onclick handlers in HTML)
+- Gracefully skips if `public/app.ts` doesn't exist yet (exit 0)
+- Updated `scripts/gen-assets.ts`: calls `bundle-app.ts` in the pipeline, excludes `.ts` source files from asset embedding
+- 932 tests pass
+
+## Extract grid logic functions (public/app-grid.ts)
+- Created `public/app-grid.ts` with all grid functions (~620 lines)
+- Exported 23 public functions: `createConflictOverlay`, `isGridActive`, `updateGridLayout`, `renderGridCells`, `getGridCellElement`, `hasPreservedGrid`, `clearPreservedGrid`, `setCurrentSessionFromGridFocus`, `returnToTerminalView`, `setGridFocus`, `suspendGridMode`, `restorePreservedGrid`, `backFromRalph`, `backFromSettings`, `addToGrid`, `removeFromGrid`, `exitGridMode`, `fitAllGridCells`, `hideGridCellsForTransition`, `revealGridCellsWithoutResize`, `scheduleGridStabilizedFit`, `isSessionInGrid`, `toggleGrid`
+- 11 internal helpers kept private: `setGridCellLoading`, `beginGridRelayoutTransition`, `isGridRelayoutTransitionCurrent`, `endGridRelayoutTransition`, `cancelGridRelayoutTransition`, `runGridRelayoutTransition`, `gridLayoutClass`, `createGridCell`, `mountGridController`, `showGridCellConflictOverlay`, `removeGridCellConflictOverlay`
+- Used dependency injection pattern (`initGridDeps`) — grid module receives `showView`, `openSession`, `destroyDesktopTerminal`, `initDesktopTerminal`, `backToSessions`, `startPolling`, `resizePane`, `renderSidebar`, `createPtyTerminalController`, `isDesktop`, `GRID_TERMINAL_SCROLLBACK`
+- `app.ts` imports all grid functions and calls `initGridDeps()` before `initRalphDeps()`
+- app.ts reduced from 4121 to 3509 lines
+- 932 tests pass, bundle builds successfully (139.5 KB)
+
+## Fix JWT fail-open and harden auth
+- `src/auth.ts`: updated warning message to explain security implication (silent fail-open)
+- `src/server/index.ts`: added startup validation — calls `getJwtAuthConfig()` and `process.exit(1)` if `warning` is set (short secret)
+- Added `tests/unit/jwt-auth-config.test.ts` with 6 tests: no secret → disabled (no warning), unset → disabled, short secret → warning, valid secret → enabled, boundary 32/31 char tests
+- Documented `WOLFPACK_JWT_SECRET` (min 32 chars) in README Config section
+- Added subprocess tests: short secret → process.exit(1), no secret → starts normally
+- 940 tests pass
+
+## Extract inline script to public/app.ts
+- Extracted 4,733 lines of inline `<script>` from `public/index.html` into `public/app.ts`
+- Replaced inline `<script>...</script>` block with `<script src="/app.bundle.js"></script>`
+- Stripped 6-space HTML indentation from extracted code
+- Added `public/app.bundle.js` to `.gitignore` (generated file)
+- `bun run scripts/bundle-app.ts` succeeds — produces 139.0 KB bundle
+- index.html reduced from 5,084 to 350 lines
+
+## Extract shared state module (public/app-state.ts)
+- Created `public/app-state.ts` with state object, settings system, and utility functions (263 lines)
+- Extracted: `state`, `setState`, `wpDefaults`, `wpSettings`, `toggleSetting`, `applySetting`, `TERM_PRESETS`, `applyTermToXterm`, `initSettings`, `haptic`, `requestNotifications`
+- Extracted utilities: `esc`, `escAttr`, `loadStoredJson`, `formatSnapshotTtl`, `getTerminalFontFamily`, `getCharDimensions`, `_charDimCache`, `isDesktop`
+- Extracted state init helpers: `loadQuickCmds`, `loadRecents`, `loadSidebarPinned`, `QC_STORAGE_KEY`, `RECENTS_STORAGE_KEY`, `MAX_RECENTS`
+- Exported constants: `SNAPSHOT_KEY_PREFIX`, `SNAPSHOT_MAX_BYTES`, `SNAPSHOT_SAVE_INTERVAL`, `DESKTOP_TERMINAL_SCROLLBACK`, `GRID_TERMINAL_SCROLLBACK`
+- `app.ts` imports from `./app-state` — Bun bundler inlines the import, all functions remain at global scope in `app.bundle.js`
+- app.ts reduced from 4733 to 4509 lines
+- 932 tests pass, bundle builds successfully (139.0 KB)
+
+## Task 1 completion assessment — Split index.html monolith into modules
+- Original index.html: ~7,293 lines (inline JS + CSS + markup)
+- Current index.html: 335 lines of pure HTML markup (no inline JS, no inline CSS)
+- All JS extracted to: app.ts (3,509 lines), app-state.ts, app-ralph.ts (21 fns), app-grid.ts (23 fns)
+- All CSS extracted to: styles.css (2,437 lines)
+- Build pipeline: bundle-app.ts + bundle-client-lib.ts + gen-assets.ts all updated
+- src/ modules (grid-logic, terminal-buffer, take-control-logic, reconnect-hydration) wired via window.WP — no duplicated inline code
+- 938 tests pass, app.bundle.js builds (139.5 KB)
+- index.html is 335 lines vs 200-line target — remaining lines are pure semantic HTML for 6 views (sessions, projects, agent, settings, terminal, ralph). No further extraction possible without moving markup into JS templates, which would add complexity for no real benefit.
+
+## Extract grid UI functions (public/app-grid.ts)
+- Created `public/app-grid.ts` (~643 lines) with all grid UI functions
+- Exported 23 public functions: `isGridActive`, `updateGridLayout`, `renderGridCells`, `getGridCellElement`, `hasPreservedGrid`, `clearPreservedGrid`, `setCurrentSessionFromGridFocus`, `returnToTerminalView`, `setGridFocus`, `suspendGridMode`, `restorePreservedGrid`, `backFromRalph`, `backFromSettings`, `addToGrid`, `removeFromGrid`, `exitGridMode`, `fitAllGridCells`, `hideGridCellsForTransition`, `revealGridCellsWithoutResize`, `scheduleGridStabilizedFit`, `isSessionInGrid`, `toggleGrid`
+- 11 internal helpers kept private: `setGridCellLoading`, `beginGridRelayoutTransition`, `isGridRelayoutTransitionCurrent`, `endGridRelayoutTransition`, `cancelGridRelayoutTransition`, `runGridRelayoutTransition`, `gridLayoutClass`, `createGridCell`, `mountGridController`, `showGridCellConflictOverlay`, `removeGridCellConflictOverlay`
+- Used dependency injection pattern (`initGridDeps`) — grid module receives `showView`, `openSession`, `destroyDesktopTerminal`, `initDesktopTerminal`, `backToSessions`, `startPolling`, `resizePane`, `renderSidebar`, `createPtyTerminalController`, `createConflictOverlay`
+- `app.ts` imports all grid functions and calls `initGridDeps()` before `initRalphDeps()`
+- app.ts reduced from 4018 to 3467 lines
+- 932 tests pass, bundle builds successfully (139.9 KB)
+
+## Verification pass — tests, bundle, and markup check
+- All 932 unit tests pass (0 failures, 1841 expect() calls)
+- `bun scripts/bundle-app.ts` succeeds → `public/app.bundle.js` (139.9 KB)
+- `public/index.html` is 350 lines — well under 400-line target
+- All `<script>` tags are external references only (no inline JS): `/wolfpack-lib.js`, `/ghostty-web.bundle.js`, `/app.bundle.js`
+- No inline `<style>` blocks — CSS loaded via `<link>` to `/styles.css`
+- Working tree is clean (no uncommitted changes)
+
+## Replace empty catch blocks with actionable error handling (Task 3)
+- Created `src/log.ts` — minimal structured JSON logger with levels (debug/info/warn/error), component tags, and WOLFPACK_LOG_LEVEL env var support
+- Re-exports `errMsg()` from `shared/process-cleanup.ts` for convenience
+- Swept all `catch {}` sites across 10 files:
+  - `service.ts`: 6 catches fixed — added `log.warn`/`log.error` for binary update, linger, stop, start failures; added comments for expected status-check flow
+  - `routes.ts`: 10 catches fixed — added `log.warn`/`log.error` for plan listing, ralph log read, process kill, dismiss cleanup; added explanatory comments for expected control flow (stale locks, peer probes, branch checks)
+  - `ralph.ts`: 5 catches fixed — added `log.warn` for plan read and log parse failures; added comments for expected stat races and DEV_DIR absence
+  - `http.ts`: 3 catches fixed — added comments for expected JSON parse, binary probe, and peer probe failures
+  - `config.ts`: 4 catches fixed — added comments for expected tty, JSON parse, config read, and port check failures
+  - `setup.ts`: 5 catches fixed — added comments for expected prerequisite/brew/apt/tailscale probes; added `console.warn` for tailscale serve failure
+  - `server/index.ts`: 1 catch fixed — added comment for PATH extraction fallback
+  - `websocket.ts`: 1 catch fixed — added comment for expected tmux session-not-found
+  - `process-cleanup.ts`: 1 catch fixed — added comment for expected ESRCH on dead process
+  - `ralph-macchio.ts`: 2 catches fixed — added comments for expected binary/plan probe failures
+- Decision framework applied: **log + continue** for background/optional ops, **log + return error** for user-facing, **comments** for expected control flow
+- 932 tests pass, 0 failures

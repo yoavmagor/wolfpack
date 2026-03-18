@@ -97,7 +97,7 @@ function resolveBin(name: string): string {
     const result = execFileSync(cmd, [name], { encoding: "utf-8" }).trim();
     // `where` on windows can return multiple lines, take the first
     return result.split("\n")[0].trim();
-  } catch { return name; }
+  } catch { /* expected: binary not in PATH — use name as-is */ return name; }
 }
 
 interface AgentConfig {
@@ -173,7 +173,7 @@ function extractCurrentTask(): { task: string; checkbox: boolean } | null {
       }
     }
     return null;
-  } catch { return null; }
+  } catch { /* expected: plan file missing or unreadable */ return null; }
 }
 
 function markSectionDone(taskText: string): void {

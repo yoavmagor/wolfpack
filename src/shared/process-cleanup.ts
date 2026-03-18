@@ -17,7 +17,7 @@ export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch { /* expected: kill(0) throws ESRCH when process is dead */
     return false;
   }
 }

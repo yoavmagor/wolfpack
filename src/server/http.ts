@@ -66,7 +66,7 @@ export function readBody(req: IncomingMessage): Promise<string> {
 export async function parseBody<T = any>(req: IncomingMessage, res: ServerResponse): Promise<T | null> {
   try {
     return JSON.parse(await readBody(req)) as T;
-  } catch {
+  } catch { /* expected: client sent malformed JSON */
     json(res, { error: "invalid JSON body" }, 400);
     return null;
   }
@@ -103,7 +103,7 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
     "/usr/bin/tailscale",
     "/opt/homebrew/bin/tailscale",
     "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-  ].find((p) => { try { execFileSync("test", ["-x", p]); return true; } catch { return false; } });
+  ].find((p) => { try { execFileSync("test", ["-x", p]); return true; } catch { /* probe: binary not found at this path */ return false; } });
   if (!tsBin) return { peers: [], error: "tailscale not found" };
 
   try {
@@ -130,7 +130,7 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
           clearTimeout(timer);
           const info = await r.json();
           return { ...p, name: info.name || p.hostname, version: info.version, wolfpack: true as const };
-        } catch {
+        } catch { /* expected: peer unreachable or not running wolfpack */
           return { ...p, name: p.hostname, version: undefined, wolfpack: false as const };
         }
       }),
