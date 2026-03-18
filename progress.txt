@@ -168,3 +168,11 @@
 - **BRANCH_REGEX**: documents that `../` passes regex (safety from git+isUnderDevDir, not regex), tests rejection of shell metacharacters (semicolon/backtick/$()//pipe/ampersand/backslash), null bytes, newlines, unicode
 - **isValidProjectName**: null bytes, control chars, unicode emoji/CJK, newline/CR injection, space-padding, path traversal, URL-encoded traversal
 - 710 unit tests pass (67 new)
+
+## Concurrent PTY viewer conflict tests (Task 7a)
+- Created `tests/integration/concurrent-pty-viewer.test.ts` — 12 tests covering concurrent viewer lifecycle
+- **Simultaneous connect**: second viewer gets `viewer_conflict`, first stays active, both connections remain open
+- **Full displacement + reconnect cycle**: A→B takeover→A reconnects and reclaims, displaced close handler doesn't leak entries
+- **PTY crash mid-take-control**: mock proc exit during takeover, proc crash after takeover tears down cleanly, crash while pending viewer exists closes both, take_control on dead entry handled gracefully
+- **Leak verification**: rapid A→B→A cycle leaves exactly 1 entry, all-disconnect→0 entries, 5 rapid takeover cycles→1 survivor then 0, pending+active disconnect→0 entries
+- 12 integration tests pass, 45 expect() calls
