@@ -309,7 +309,7 @@ export const routes: Record<
       await tmuxNewSession(finalName, projectDir, cmd, loadSettings);
     } catch (e: any) {
       if (e.code === "DUPLICATE_SESSION") {
-        return json(res, { error: "session name already exists" }, 409);
+        return json(res, { error: "session exists", session: finalName, hint: "reconnect or choose a different name" }, 409);
       }
       throw e;
     }
