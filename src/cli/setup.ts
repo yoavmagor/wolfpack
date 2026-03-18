@@ -66,6 +66,13 @@ export async function setup() {
   print(bold("  Checking prerequisites...\n"));
 
   const hasTmux = check("tmux", "tmux -V");
+  if (!hasTmux) {
+    if (IS_MACOS) {
+      print(dim("    → brew install tmux"));
+    } else if (IS_LINUX) {
+      print(dim("    → sudo apt install tmux"));
+    }
+  }
   const tsBin = tailscaleBin();
   const hasTailscale = !!tsBin;
   if (hasTailscale) {

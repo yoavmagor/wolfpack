@@ -276,3 +276,8 @@
 ## README personality section (Task 12c)
 - Added 2-sentence "why I built this" section after ASCII art, before the feature description
 - Tone: personal, opinionated — "I got tired of SSHing into 4 machines to check if Claude was stuck"
+
+## Startup tmux install guidance (Task 12d)
+- When tmux check fails in setup wizard, now prints platform-specific install hint
+- macOS: `brew install tmux` / Linux: `sudo apt install tmux`
+- Hint appears immediately after the `✗ tmux` line, before the auto-install flow
