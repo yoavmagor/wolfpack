@@ -189,3 +189,13 @@
   - Alive PID but `ps` fails → treated as stale (conservative)
   - Whitespace-padded PID → parsed correctly
 - 69 ralph-api integration tests pass (9 new), 195 expect() calls
+
+## Cache tmux show-environment backfill (Task 8)
+- Added `_backfillCacheMap` with 30s TTL to `src/server/tmux.ts` — prevents N `show-environment` spawns on every poll
+- On first poll, `show-environment` runs once per session; result cached in `_backfillCacheMap`
+- On re-poll: `sessionDirMap` has entries → no backfill. If `sessionDirMap` cleared (server restart) but cache valid → uses cached dir without spawning tmux
+- Cache pruned alongside `sessionDirMap` and `_triageCacheMap` when sessions disappear
+- Extracted `_listSessionsRaw` and `_showEnvironment` as hookable functions (overridable via `__setTestOverrides`) for testability
+- Added `__clearBackfillCache()` and `__getBackfillCacheSize()` test helpers
+- Unit tests (`tests/unit/backfill-cache.test.ts`): 6 tests — 20 sessions first poll (20 calls), re-poll (0 calls), cache prevents re-backfill, expired cache triggers fresh call, session deletion prunes cache, show-environment failure caches fallback dir
+- 716 unit tests pass (6 new), 1215 expect() calls
