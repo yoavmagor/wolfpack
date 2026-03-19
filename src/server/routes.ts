@@ -86,6 +86,7 @@ const RALPH_LOOP_SCHEMA: Record<string, "string" | "number" | "boolean"> = {
   tasksDone: "number",
   tasksTotal: "number",
   worktreeMode: "string",
+  worktreeBranch: "string",
 };
 
 /**

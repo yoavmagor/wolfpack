@@ -122,8 +122,9 @@ export async function refreshRalphDetail() {
       actions.innerHTML = '<button class="ralph-launch-btn ralph-cancel-btn" onclick="cancelRalph()">Cancel</button>';
     } else {
       const wt = escAttr(loop.worktreeMode || 'false');
+      const wtBranch = escAttr(loop.worktreeBranch || '');
       actions.innerHTML =
-        '<button class="ralph-launch-btn" onclick="continueRalph(\'' + escAttr(loop.planFile || '') + '\',\'' + escAttr(loop.agent || '') + '\',' + cleanupEnabled + ',' + auditFixEnabled + ',\'' + wt + '\')">Continue</button>' +
+        '<button class="ralph-launch-btn" onclick="continueRalph(\'' + escAttr(loop.planFile || '') + '\',\'' + escAttr(loop.agent || '') + '\',' + cleanupEnabled + ',' + auditFixEnabled + ',\'' + wt + '\',\'' + wtBranch + '\')">Continue</button>' +
         '<button class="ralph-launch-btn ralph-cancel-btn" onclick="discardRalph()">Discard</button>';
     }
 
@@ -339,6 +340,11 @@ async function loadStartFormData() {
     document.getElementById("ralph-branch-name"), document.getElementById("ralph-source-branch")] as HTMLElement[];
   if (state.restartingRalph) {
     lockable.forEach(el => { if (el) (el as any).disabled = true; });
+    // Show the actual worktree branch name in the disabled field
+    if (state.currentRalphWorktreeBranch) {
+      (document.getElementById("ralph-worktree-name") as HTMLInputElement).value = state.currentRalphWorktreeBranch;
+    }
+    state.currentRalphWorktreeBranch = "";
   } else {
     lockable.forEach(el => { if (el) (el as any).disabled = false; });
   }
@@ -481,12 +487,13 @@ export async function startRalph() {
   }
 }
 
-export function continueRalph(planFile, agent, cleanup, auditFix, worktreeMode) {
+export function continueRalph(planFile, agent, cleanup, auditFix, worktreeMode, worktreeBranch?) {
   state.currentRalphPlanFile = planFile || "";
   state.currentRalphAgent = agent || "";
   state.currentRalphCleanup = cleanup;
   state.currentRalphAuditFix = auditFix;
   state.currentRalphWorktreeMode = worktreeMode || "false";
+  state.currentRalphWorktreeBranch = worktreeBranch || "";
   state.restartingRalph = true;
   state.ralphStartMachine = state.currentRalphMachine;
   deps.showView("ralph-start");

@@ -35,6 +35,7 @@ export interface RalphStatus {
   tasksDone: number;
   tasksTotal: number;
   worktreeMode: string;
+  worktreeBranch: string;
 }
 
 export function listDevProjects(): string[] {
@@ -98,6 +99,7 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
     tasksDone: 0,
     tasksTotal: 0,
     worktreeMode: "false",
+    worktreeBranch: "",
   };
 
   try {
@@ -127,6 +129,10 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
     // parse total iterations from header line
     const totalMatch = content.match(/ralph — (\d+) iterations/);
     if (totalMatch) status.totalIterations = Number(totalMatch[1]);
+
+    // parse worktree branch from "worktree created/reused" log line
+    const wtBranchMatch = content.match(/^worktree (?:created|reused):.+\(branch ([^,)]+)/m);
+    if (wtBranchMatch) status.worktreeBranch = wtBranchMatch[1].trim();
 
     // find iterations (supports both old "Iteration" and new "Wax On" format)
     const iterRegex = /=== (?:Iteration|🥋 Wax On) (\d+)\/(\d+)/g;

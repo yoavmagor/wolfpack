@@ -212,6 +212,7 @@ export const state = {
   currentRalphPlanFile: "",
   restartingRalph: false,
   currentRalphWorktreeMode: "false",
+  currentRalphWorktreeBranch: "",
   currentRalphAgent: "",
   // desktop/grid terminal state
   desktopController: null,
