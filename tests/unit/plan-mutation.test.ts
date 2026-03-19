@@ -46,7 +46,7 @@ function extractCurrentTask(planPath: string, progressPath: string): { task: str
     const lines = plan.split("\n");
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (TASK_HEADER.test(line) && !line.includes("~~")) {
+      if (TASK_HEADER.test(line)) {
         if (completed.has(`section: ${line}`)) continue;
         const level = line.match(/^(#{2,3})/)?.[1] || "##";
         const sectionLines = [line];

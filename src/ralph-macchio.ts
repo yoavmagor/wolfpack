@@ -194,7 +194,7 @@ function extractCurrentTask(): { task: string; checkbox: boolean } | null {
     const lines = plan.split("\n");
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (TASK_HEADER.test(line) && !line.includes("~~")) {
+      if (TASK_HEADER.test(line)) {
         if (completed.has(`section: ${line}`)) continue;
         const level = line.match(/^(#{2,3})/)?.[1] || "##";
         // collect the full section until the next header at same or higher level
