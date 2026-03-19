@@ -148,10 +148,10 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
         process.kill(status.pid, 0);
         status.active = true;
         status.completed = false;
-        if (content.includes("Wax Inspect") && !content.includes("Wax Inspect complete") && !content.includes("Wax Inspect FAILED")) {
+        if (content.includes("=== 🥋 Wax Inspect —") && !content.includes("Wax Inspect complete") && !content.includes("Wax Inspect FAILED")) {
           status.audit = true;
         }
-        if (content.includes("🥋 Wax Off") && !content.includes("Wax Off complete") && !content.includes("Wax Off FAILED")) {
+        if (content.includes("=== 🥋 Wax Off —") && !content.includes("Wax Off complete") && !content.includes("Wax Off FAILED")) {
           status.cleanup = true;
         }
       } catch { /* expected: process exited — mark inactive */

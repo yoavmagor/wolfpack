@@ -712,10 +712,15 @@ async function main() {
     // extract current task from plan
     const result = extractCurrentTask();
     if (!result) {
-      // Check if plan has content but nothing parseable — possible format corruption
+      // Distinguish "all tasks completed" from "plan is corrupted"
       const planContent = readPlan().trim();
-      const hasSubstantiveContent = planContent.split("\n").some(l => /^#{2,3} /.test(l) || /^- /.test(l));
-      const msg = hasSubstantiveContent
+      const { total: planTotal } = countTasksInContent(planContent);
+      const completedCount = readCompletedTasks().size;
+      const allDone = planTotal > 0 && completedCount > 0;
+      const hasSubstantiveContent = !allDone && planContent.split("\n").some(l => /^#{2,3} /.test(l) || /^- \[ \] /.test(l));
+      const msg = allDone
+        ? "All tasks completed"
+        : hasSubstantiveContent
         ? "Plan has content but no parseable tasks — format may be corrupted"
         : "No unchecked tasks remain";
       appendFileSync(LOG_FILE, `\n=== ${hasSubstantiveContent ? "⚠️" : "🥋"} ${msg} — ${new Date().toString()} ===\n`);
