@@ -106,6 +106,31 @@ describe("worktree restart/reuse", () => {
     expect(ralphWts[0].branch).toBe("ralph/plan-main");
   });
 
+  test("orphan branch is deleted so fresh worktree creation succeeds", () => {
+    // first run: create worktree + branch
+    const wtPath = createWorktree(repoDir, "ralph/plan-orphan", "main");
+    expect(existsSync(wtPath)).toBe(true);
+
+    // simulate cleanup: remove worktree but leave the branch behind
+    removeWorktree(wtPath, repoDir);
+    const wts = listWorktrees(repoDir);
+    expect(wts.find(w => w.branch === "ralph/plan-orphan")).toBeUndefined();
+
+    // branch still exists
+    const branchCheck = git("branch", "--list", "ralph/plan-orphan").trim();
+    expect(branchCheck).toContain("ralph/plan-orphan");
+
+    // createWorktree with -b would fail here — verify it does
+    expect(() => createWorktree(repoDir, "ralph/plan-orphan", "main")).toThrow(/already exists/);
+
+    // fix: delete the orphan branch, then create fresh
+    git("branch", "-D", "ralph/plan-orphan");
+    const freshWt = createWorktree(repoDir, "ralph/plan-orphan", "main");
+    expect(existsSync(freshWt)).toBe(true);
+    const found = listWorktrees(repoDir).find(w => w.branch === "ralph/plan-orphan");
+    expect(found).toBeDefined();
+  });
+
   test("task worktree merges into main worktree", () => {
     const mainWt = createWorktree(repoDir, "ralph/plan-merge", "main");
 
