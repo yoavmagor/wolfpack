@@ -28,10 +28,11 @@ export async function bootTestServer(overrides: {
   capturePane: () => Promise<string>;
 }): Promise<PtyTestContext> {
   process.env.WOLFPACK_TEST = "1";
-  const { server } = await import("../../src/server/index.ts");
+  const { createServerInstance } = await import("../../src/server/index.ts");
   const { __setTestOverrides, __getTestState } = await import("../../src/test-hooks.ts");
   const { activePtySessions, ptySpawnAttempts } = __getTestState();
   __setTestOverrides(overrides);
+  const { server } = createServerInstance();
 
   const realConsoleError = console.error;
   console.error = (...args: any[]) => {
