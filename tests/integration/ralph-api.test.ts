@@ -293,6 +293,11 @@ const routes: Record<
       if (fakeProcessKillResult === "throw") throw new Error("kill failed");
       // kill process group
       processKillCalls.push({ pid: -status.pid, signal: "SIGTERM" });
+      // Clean up progress file so cancelled loop starts fresh on next continue
+      const SAFE_FILENAME = /^[a-zA-Z0-9._\- ]+$/;
+      if (status.progressFile && SAFE_FILENAME.test(status.progressFile) && !status.progressFile.includes("..")) {
+        try { unlinkSync(join(projectDir, status.progressFile)); } catch { /* may not exist */ }
+      }
       json(res, { ok: true, killed: status.pid });
     } catch {
       json(res, { error: "failed to kill process" }, 500);
@@ -717,6 +722,68 @@ describe("POST /api/ralph/start", () => {
     expect(data.error).toBe("ralph loop already running");
     expect(data.pid).toBe(process.pid);
   });
+
+  test("worktree plan mode — passes --worktree plan and returns mode", async () => {
+    setupProject("start-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "start-test",
+      worktree: "plan",
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.worktree).toBe("plan");
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--worktree")).toBe("plan");
+  });
+
+  test("worktree task mode — passes --worktree task and returns mode", async () => {
+    setupProject("start-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "start-test",
+      worktree: "task",
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.worktree).toBe("task");
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--worktree")).toBe("task");
+  });
+
+  test("worktree false — no worktree in response", async () => {
+    setupProject("start-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "start-test",
+      worktree: false,
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.worktree).toBeUndefined();
+    expect(valueAfterFlag(lastSpawnArgs!.args, "--worktree")).toBe("false");
+  });
+
+  test("invalid worktree mode → 400", async () => {
+    setupProject("start-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "start-test",
+      worktree: "invalid",
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("invalid worktree mode");
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -969,6 +1036,60 @@ describe("POST /api/ralph/cancel", () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toBe("invalid project name");
+  });
+
+  test("cancel deletes progress file", async () => {
+    const dir = setupProject("cancel-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+      log: `ralph — 5 iterations\nagent: claude\nplan: PLAN.md\nprogress: progress.txt\npid: ${process.pid}\nstarted: 2025-01-01\n`,
+    });
+    writeFileSync(join(dir, "progress.txt"), "iteration 1 done\niteration 2 done\n");
+    fakeExecResult = { stdout: `bun ralph-macchio.ts --plan PLAN.md` };
+
+    expect(existsSync(join(dir, "progress.txt"))).toBe(true);
+    const res = await post("/api/ralph/cancel", { project: "cancel-test" });
+    expect(res.status).toBe(200);
+    expect(existsSync(join(dir, "progress.txt"))).toBe(false);
+  });
+
+  test("cancel without progress file does not error", async () => {
+    setupProject("cancel-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+      log: `ralph — 5 iterations\nagent: claude\nplan: PLAN.md\nprogress: progress.txt\npid: ${process.pid}\nstarted: 2025-01-01\n`,
+    });
+    // no progress.txt file on disk
+    fakeExecResult = { stdout: `bun ralph-macchio.ts --plan PLAN.md` };
+
+    const res = await post("/api/ralph/cancel", { project: "cancel-test" });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+  });
+
+  test("cancel preserves plan file and log", async () => {
+    const dir = setupProject("cancel-test", {
+      plan: { name: "PLAN.md", content: "- [x] done\n- [ ] pending\n" },
+      log: `ralph — 5 iterations\nagent: claude\nplan: PLAN.md\nprogress: progress.txt\npid: ${process.pid}\nstarted: 2025-01-01\n`,
+    });
+    writeFileSync(join(dir, "progress.txt"), "iteration 1");
+    fakeExecResult = { stdout: `bun ralph-macchio.ts --plan PLAN.md` };
+
+    await post("/api/ralph/cancel", { project: "cancel-test" });
+    expect(existsSync(join(dir, "PLAN.md"))).toBe(true);
+    expect(existsSync(join(dir, ".ralph.log"))).toBe(true);
+    expect(existsSync(join(dir, "progress.txt"))).toBe(false);
+  });
+
+  test("cancel ignores unsafe progress file names", async () => {
+    const dir = setupProject("cancel-test", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+      log: `ralph — 5 iterations\nagent: claude\nplan: PLAN.md\nprogress: ../../../etc/passwd\npid: ${process.pid}\nstarted: 2025-01-01\n`,
+    });
+    fakeExecResult = { stdout: `bun ralph-macchio.ts --plan PLAN.md` };
+
+    const res = await post("/api/ralph/cancel", { project: "cancel-test" });
+    expect(res.status).toBe(200);
+    // Should not have attempted to delete anything outside project dir
   });
 });
 

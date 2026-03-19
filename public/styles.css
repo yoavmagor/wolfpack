@@ -1327,6 +1327,9 @@ body.ralph-hidden .sidebar-ralph-card { display: none !important; }
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 .ralph-start-form label {
   font-size: 12px;

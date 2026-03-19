@@ -3597,3 +3597,18 @@ if ("serviceWorker" in navigator) {
     regs.forEach(r => r.unregister());
   });
 }
+
+// ── Expose onclick-referenced functions to global scope ──
+// Bun's bundler tree-shakes functions only referenced in HTML onclick strings.
+// Assigning to window ensures they survive bundling and are callable from inline handlers.
+Object.assign(window, {
+  // ralph onclick handlers
+  openRalphDetail, dismissRalph, cancelRalph, continueRalph, discardRalph, showRalphStart,
+  // session/project onclick handlers
+  openSession, killSession, selectProject, showProjectPicker,
+  sendQuickCmd, editQuickCmd, deleteQuickCmd, moveQuickCmd,
+  createSessionWithAgent, deleteCustomCmd, removeMachineUI,
+  // grid + view (used by onclick and e2e page.evaluate)
+  toggleGrid, addToGrid, removeFromGrid, suspendGridMode,
+  showView, state,
+});

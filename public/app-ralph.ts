@@ -332,6 +332,14 @@ async function loadStartFormData() {
     (document.getElementById("ralph-agent-select") as HTMLSelectElement).value = state.currentRalphAgent;
     state.currentRalphAgent = "";
   }
+  // Lock all fields except iterations when continuing a stopped loop
+  const lockable = [sel, document.getElementById("ralph-plan-select"), document.getElementById("ralph-agent-select"),
+    document.getElementById("ralph-cleanup-toggle"), document.getElementById("ralph-audit-fix-toggle")] as HTMLElement[];
+  if (state.restartingRalph) {
+    lockable.forEach(el => { if (el) (el as any).disabled = true; });
+  } else {
+    lockable.forEach(el => { if (el) (el as any).disabled = false; });
+  }
 }
 
 async function loadPlanFiles(project) {

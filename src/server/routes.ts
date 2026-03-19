@@ -824,6 +824,11 @@ export const routes: Record<
       try { process.kill(-status.pid, "SIGTERM"); } catch (e: unknown) {
         log.warn("ralph cancel: failed to SIGTERM process group", { error: errMsg(e) });
       }
+      // Clean up progress file so cancelled loop starts fresh on next continue
+      const SAFE_FILENAME = /^[a-zA-Z0-9._\- ]+$/;
+      if (status.progressFile && SAFE_FILENAME.test(status.progressFile) && !status.progressFile.includes("..")) {
+        try { unlinkSync(join(projectDir, status.progressFile)); } catch { /* may not exist */ }
+      }
       json(res, { ok: true, killed: status.pid });
     } catch (e: unknown) {
       log.error("failed to kill ralph process", { pid: status.pid, error: errMsg(e) });
