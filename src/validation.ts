@@ -16,8 +16,9 @@ export const WS_ALLOWED_KEYS = new Set([
 // ── Regex patterns ──
 
 export const CMD_REGEX = /^[a-zA-Z0-9 \-._/=]+$/;
-export const BRANCH_REGEX = /^[a-zA-Z0-9._\-/]+$/;
+export const BRANCH_REGEX = /^(?!.*\.\.)(?!.*\/\/)[a-zA-Z0-9._\-/]+$/;
 export const PLAN_FILE_REGEX = /^[a-zA-Z0-9._\- ]+\.md$/;
+export const SAFE_FILENAME = /^[a-zA-Z0-9._\- ]+$/;
 
 // ── Validation functions ──
 

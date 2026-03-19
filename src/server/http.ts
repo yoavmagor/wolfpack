@@ -160,7 +160,7 @@ export function serveFile(res: ServerResponse, filename: string): void {
     headers["Content-Security-Policy"] = buildCsp(nonce);
     // Inject nonce into all <script> tags
     const html = (typeof asset.content === "string" ? asset.content : asset.content.toString())
-      .replace(/<script /g, `<script nonce="${nonce}" `);
+      .replace(/<script(?=[\s>])/g, `<script nonce="${nonce}"`);
     res.writeHead(200, headers);
     res.end(html);
     return;

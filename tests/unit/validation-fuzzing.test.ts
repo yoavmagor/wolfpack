@@ -220,20 +220,24 @@ describe("isValidPlanFile — path traversal", () => {
 // ── BRANCH_REGEX: ../ sequences and injection ──
 
 describe("BRANCH_REGEX — traversal and injection", () => {
-  test("../main → rejected (has dots but no dot-dot traversal risk?)", () => {
-    // BRANCH_REGEX allows dots and slashes — ../main matches [a-zA-Z0-9._\-/]+
-    // This is a documentation test: BRANCH_REGEX alone does NOT prevent traversal.
-    // The regex accepts it — the safety comes from git itself + isUnderDevDir checks.
-    const result = BRANCH_REGEX.test("../main");
-    expect(result).toBe(true); // regex allows dots+slashes
+  test("../main → rejected (dot-dot traversal)", () => {
+    expect(BRANCH_REGEX.test("../main")).toBe(false);
   });
 
-  test("../../etc/passwd — also passes regex (dots+slashes allowed)", () => {
-    expect(BRANCH_REGEX.test("../../etc/passwd")).toBe(true);
+  test("../../etc/passwd → rejected (dot-dot traversal)", () => {
+    expect(BRANCH_REGEX.test("../../etc/passwd")).toBe(false);
   });
 
-  test("feature/../../main — passes regex", () => {
-    expect(BRANCH_REGEX.test("feature/../../main")).toBe(true);
+  test("feature/../../main → rejected (dot-dot traversal)", () => {
+    expect(BRANCH_REGEX.test("feature/../../main")).toBe(false);
+  });
+
+  test("single dot in path is still allowed", () => {
+    expect(BRANCH_REGEX.test("release/v2.0.1")).toBe(true);
+  });
+
+  test("double slash rejected", () => {
+    expect(BRANCH_REGEX.test("feature//login")).toBe(false);
   });
 
   // These ARE rejected by the regex:

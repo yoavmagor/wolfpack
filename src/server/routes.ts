@@ -27,6 +27,7 @@ import {
   isValidProjectName,
   isValidSessionName,
   isValidPlanFile,
+  SAFE_FILENAME,
   clampCols,
   clampRows,
 } from "../validation.js";
@@ -641,46 +642,41 @@ export const routes: Record<
     }
 
     const lockPath = join(projectDir, ".ralph.lock");
+    // Try atomic create first — avoids TOCTOU between stale-check and create
     try {
-      if (existsSync(lockPath)) {
-        const lockPid = Number(readFileSync(lockPath, "utf-8").trim());
-        if (!lockPid || lockPid <= 1) {
-          try { unlinkSync(lockPath); } catch (e: unknown) {
-            if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("ralph start: failed to remove invalid lock", { error: errMsg(e) });
-          }
-        } else {
-          try {
-            process.kill(lockPid, 0);
-            // PID is alive — verify it's actually a ralph process (not a reused PID)
-            try {
-              const cmdline = execFileSync("ps", ["-p", String(lockPid), "-o", "command="], { encoding: "utf-8", timeout: 3000 });
-              if (!cmdline.includes("ralph-macchio") && !cmdline.includes("worker")) {
-                // PID reused by unrelated process — stale lock, remove it
-                log.warn("lock PID belongs to unrelated process, removing stale lock", { pid: lockPid, command: cmdline.trim() });
-                try { unlinkSync(lockPath); } catch (e: unknown) {
-                  if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("ralph start: failed to remove reused-PID lock", { error: errMsg(e) });
-                }
-              } else {
-                return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
-              }
-            } catch { /* ps failed — process may have exited between kill(0) and ps, treat as stale */
-              try { unlinkSync(lockPath); } catch (e: unknown) {
-                if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("ralph start: failed to remove stale lock (ps race)", { error: errMsg(e) });
-              }
-            }
-          } catch { /* expected: process dead — stale lock, remove it */
-            try { unlinkSync(lockPath); } catch (e: unknown) {
-              if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("ralph start: failed to remove stale lock (dead pid)", { error: errMsg(e) });
-            }
-          }
-        }
-      }
       writeFileSync(lockPath, "", { flag: "wx" });
     } catch (e: unknown) {
-      if ((e as NodeJS.ErrnoException)?.code === "EEXIST") {
-        return json(res, { error: "ralph loop already starting (lock contention)" }, 409);
+      if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") {
+        return json(res, { error: "failed to acquire lock" }, 500);
       }
-      return json(res, { error: "failed to acquire lock" }, 500);
+      // Lock exists — check if it's stale
+      let lockPid = 0;
+      try { lockPid = Number(readFileSync(lockPath, "utf-8").trim()); } catch { /* lock may have been removed between wx and read */ }
+      if (lockPid > 1) {
+        try {
+          process.kill(lockPid, 0);
+          // PID is alive — verify it's actually a ralph process (not a reused PID)
+          try {
+            const cmdline = execFileSync("ps", ["-p", String(lockPid), "-o", "command="], { encoding: "utf-8", timeout: 3000 });
+            if (cmdline.includes("ralph-macchio") || cmdline.includes("worker")) {
+              return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
+            }
+            log.warn("lock PID belongs to unrelated process, removing stale lock", { pid: lockPid, command: cmdline.trim() });
+          } catch { /* ps failed — process may have exited between kill(0) and ps, treat as stale */ }
+        } catch { /* expected: process dead — stale lock */ }
+      }
+      // Stale lock — remove and retry atomic create
+      try { unlinkSync(lockPath); } catch (e2: unknown) {
+        if ((e2 as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("ralph start: failed to remove stale lock", { error: errMsg(e2) });
+      }
+      try {
+        writeFileSync(lockPath, "", { flag: "wx" });
+      } catch (e2: unknown) {
+        if ((e2 as NodeJS.ErrnoException)?.code === "EEXIST") {
+          return json(res, { error: "ralph loop already starting (lock contention)" }, 409);
+        }
+        return json(res, { error: "failed to acquire lock" }, 500);
+      }
     }
 
     const removeLock = () => {
@@ -846,7 +842,6 @@ export const routes: Record<
         log.warn("ralph cancel: failed to SIGTERM process group", { error: errMsg(e) });
       }
       // Clean up progress file so cancelled loop starts fresh on next continue
-      const SAFE_FILENAME = /^[a-zA-Z0-9._\- ]+$/;
       if (status.progressFile && SAFE_FILENAME.test(status.progressFile) && !status.progressFile.includes("..")) {
         try { unlinkSync(join(projectDir, status.progressFile)); } catch { /* may not exist */ }
       }
@@ -871,7 +866,6 @@ export const routes: Record<
       return json(res, { error: "no ralph log found" }, 404);
     }
 
-    const SAFE_FILENAME = /^[a-zA-Z0-9._\- ]+$/;
     const deleted: string[] = [];
     const failed: string[] = [];
 

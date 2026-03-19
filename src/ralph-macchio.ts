@@ -224,6 +224,50 @@ function taskSectionHeader(task: string): string | null {
   return TASK_HEADER.test(line) ? line : null;
 }
 
+/** Enumerate all task keys in the plan — the same keys that markTaskCompleted writes. */
+function extractAllTaskKeys(): string[] {
+  try {
+    const plan = readPlan();
+    const keys: string[] = [];
+    const lines = plan.split("\n");
+
+    // checkboxes
+    for (const line of lines) {
+      const cbMatch = line.match(/^- \[ \] (.+)$/);
+      if (cbMatch) keys.push(`checkbox: ${cbMatch[1]}`);
+    }
+
+    // section headers (only those without child checkboxes — sections with
+    // children are considered done when all children are done, and only the
+    // children appear as keys)
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!TASK_HEADER.test(line)) continue;
+      const level = line.match(/^(#{2,3})/)?.[1] || "##";
+      const sectionLines = [line];
+      for (let j = i + 1; j < lines.length; j++) {
+        const nextMatch = lines[j].match(/^(#{1,3}) /);
+        if (nextMatch && nextMatch[1].length <= level.length) break;
+        sectionLines.push(lines[j]);
+      }
+      const hasChildren = sectionLines.some(l => /^- \[ \] /.test(l));
+      if (!hasChildren) {
+        keys.push(`section: ${line}`);
+      }
+    }
+
+    return keys;
+  } catch { return []; }
+}
+
+/** Check if every task in the plan has a matching DONE entry in progress.txt. */
+function areAllTasksDone(): boolean {
+  const keys = extractAllTaskKeys();
+  if (keys.length === 0) return false;
+  const completed = readCompletedTasks();
+  return keys.every(k => completed.has(k));
+}
+
 
 function numberPlanTasks(): Promise<{ exitCode: number; output: string }> {
   const prompt = `You are reformatting a plan file for an automated task runner.
@@ -567,6 +611,7 @@ function mergeTaskBranch(taskBranch: string): boolean {
     });
     return true;
   } catch (e: unknown) {
+    appendFileSync(LOG_FILE, `merge error: ${errMsg(e)}\n`);
     // abort the failed merge so mainWorkDir is clean
     try { execFileSync("git", ["merge", "--abort"], { cwd: mainWorkDir, stdio: "pipe" }); } catch { /* already clean */ }
     return false;
@@ -712,10 +757,9 @@ async function main() {
     // extract current task from plan
     const result = extractCurrentTask();
     if (!result) {
-      // Strict all-done detection: extractCurrentTask returned null + plan has tasks
+      // Strict all-done detection: every plan task has a matching DONE key in progress.txt
+      const allDone = areAllTasksDone();
       const planContent = readPlan().trim();
-      const { total: planTotal } = countTasksInContent(planContent);
-      const allDone = planTotal > 0;
       const hasSubstantiveContent = !allDone && planContent.split("\n").some(l => /^#{2,3} /.test(l) || /^- \[ \] /.test(l));
       const msg = allDone
         ? "All tasks completed"
@@ -750,9 +794,9 @@ async function main() {
 
     const { task, checkbox } = result;
 
-    // same-task-twice guard: if we picked the same section task again, force-mark done in progress
-    if (task === lastTask && !checkbox) {
-      appendFileSync(LOG_FILE, `\n=== ⚠️ Same section task picked twice — force-marking done ===\n`);
+    // same-task-twice guard: if we picked the same task again, force-mark done in progress
+    if (task === lastTask && !lastWasSubtaskEmission) {
+      appendFileSync(LOG_FILE, `\n=== ⚠️ Same task picked twice — force-marking done ===\n`);
       markTaskCompleted(task, checkbox);
       lastTask = null;
       lastWasSubtaskEmission = false;
@@ -901,6 +945,11 @@ async function main() {
       appendFileSync(LOG_FILE, `\n=== ❌ Merge failed for ${currentTaskBranch} into main worktree — stopping ===\n`);
       appendFileSync(LOG_FILE, `Task worktree preserved at: ${currentTaskWorktree}\n`);
       appendFileSync(LOG_FILE, `Main worktree: ${mainWorkDir}\n`);
+      syncPlanToProject();
+      logSummary(tasksCompleted, subtasksAdded);
+      appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
+      removeLock();
+      process.exit(1);
     } else {
       cleanupTaskWorktree(currentTaskWorktree);
     }
@@ -910,8 +959,7 @@ async function main() {
   appendFileSync(LOG_FILE, `=== Completed ${maxIterations} iterations ===\n`);
   const remaining = extractCurrentTask();
   if (!remaining) {
-    const { total } = countTasksInContent(readPlan());
-    if (total > 0) appendFileSync(LOG_FILE, `all_tasks_done: true\n`);
+    if (areAllTasksDone()) appendFileSync(LOG_FILE, `all_tasks_done: true\n`);
     await runFinalPhases();
   } else {
     appendFileSync(LOG_FILE, `=== ⏭️  Skipping final phases — tasks still remain ===\n`);

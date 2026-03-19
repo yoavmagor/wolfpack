@@ -1380,7 +1380,7 @@ function renderMachineGroupHtml(g, multiMachine) {
   const statusDot = !multiMachine ? "green" : g.online ? "green" : (g.pending ? "gray" : "red");
   const statusTitle = !multiMachine ? "online" : g.online ? "online" : (g.pending ? "connecting" : "offline");
   const versionWarning = multiMachine && g.outdated ? `<span class="version-warning" onclick="event.stopPropagation();alert('Running v${escAttr(g.machine.version || "?")} — newer version available on another machine')">⚠ UPDATE</span>` : "";
-  let html = multiMachine ? `<div class="machine-group" data-machine="${mUrl}">` : `<div class="machine-group">`;
+  let html = multiMachine ? `<div class="machine-group" data-machine="${mUrlAttr}">` : `<div class="machine-group">`;
   html += `<div class="machine-header"><div class="dot ${statusDot}" title="${statusTitle}"></div>${mName}${versionWarning}<div class="machine-header-btns"><button class="machine-ralph-btn" onclick="showRalphStart('${mUrlAttr}')">&#129355;</button><button class="machine-add-btn" onclick="showProjectPicker('${mUrlAttr}')">+</button></div></div>`;
   if (multiMachine && g.pending) {
     html += `<div class="group-status">Connecting...</div>`;
@@ -1401,6 +1401,10 @@ function renderMachineGroupHtml(g, multiMachine) {
       }).join("");
     }
     if (g.loops && g.loops.length) {
+      // TRUST BOUNDARY: g.loops from remote peers is untrusted — all fields are
+      // escaped via esc()/escAttr() in renderRalphCardHtml; status classes are
+      // hardcoded enum values from getRalphStatus(). Server-side validation in
+      // validatePeerLoops() strips unexpected keys and enforces types.
       html += g.loops.map(loop => renderRalphCardHtml(loop, g.machine.url || "")).join("");
     }
   } else if (multiMachine) {
@@ -1464,7 +1468,7 @@ async function loadSessions() {
       groups[i] = g;
       state.lastSessionGroups = groups.filter(Boolean);
       if (state.firstLoad) {
-        const existing = el.querySelector(`[data-machine="${esc(m.url)}"]`);
+        const existing = el.querySelector(`[data-machine="${escAttr(m.url)}"]`);
         if (existing) {
           const tmp = document.createElement("div");
           tmp.innerHTML = renderMachineGroupHtml(g, true);
@@ -1928,22 +1932,22 @@ function terminalSessionKey() {
   return (state.currentMachine || "") + "|" + (state.currentSession || "");
 }
 
-function setConnState(state) {
+function setConnState(connState) {
   const statusEl = document.getElementById("conn-status");
   if (!statusEl) return;
   const active = state.useDesktopTerminal ? !!state.desktopController?.term : state.mobileStreamingActive;
-  if (state.currentView !== "terminal" || !active || state === "live") {
+  if (state.currentView !== "terminal" || !active || connState === "live") {
     statusEl.style.display = "none";
     statusEl.style.background = "#cc3333";
     return;
   }
-  if (state === "reconnecting") {
+  if (connState === "reconnecting") {
     statusEl.style.display = "block";
     statusEl.style.background = "#8a5a00";
     statusEl.innerHTML = '<img src="/wolfpack-icon.svg" class="conn-icon">reconnecting\u2026';
     return;
   }
-  if (state === "displaced") {
+  if (connState === "displaced") {
     statusEl.style.display = "block";
     statusEl.style.background = "#8a5a00";
     statusEl.innerHTML = '<img src="/wolfpack-icon.svg" class="conn-icon">taken over by another viewer \u2014 <button type="button" id="conn-retry-btn" class="conn-retry-btn">Reconnect</button>';
@@ -1951,7 +1955,7 @@ function setConnState(state) {
     if (retryBtn) retryBtn.onclick = retryConnection;
     return;
   }
-  if (state === "offline") {
+  if (connState === "offline") {
     statusEl.style.display = "block";
     statusEl.style.background = "#cc3333";
     statusEl.innerHTML = '<img src="/wolfpack-icon.svg" class="conn-icon">connection lost \u2014 <button type="button" id="conn-retry-btn" class="conn-retry-btn">Reconnect</button>';
@@ -3273,7 +3277,7 @@ function _renderSidebarNow() {
   } else {
     // Multi-machine
     for (const g of groups) {
-      const mUrl = esc(g.machine.url);
+      const mUrl = escAttr(g.machine.url);
       const mName = esc(g.machine.name);
       const statusDot = g.online ? "green" : (g.pending ? "gray" : "red");
       html += `<div class="machine-group" data-machine="${mUrl}">`;

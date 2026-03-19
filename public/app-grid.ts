@@ -66,7 +66,7 @@ function runGridRelayoutTransition(primaryFit) {
   const transitionId = beginGridRelayoutTransition();
   requestAnimationFrame(() => {
     if (!isGridRelayoutTransitionCurrent(transitionId) || !isGridActive()) return;
-    try { primaryFit(); } catch {}
+    try { primaryFit(); } catch (e) { console.warn("[grid] primaryFit failed:", e); }
     requestAnimationFrame(() => {
       if (!isGridRelayoutTransitionCurrent(transitionId) || !isGridActive()) return;
       fitAllGridCells();
@@ -567,7 +567,7 @@ export function exitGridMode(skipRestore?) {
 export function fitAllGridCells() {
   for (const gs of state.gridSessions) {
     if (gs.controller) {
-      try { gs.controller.resize(); } catch {}
+      try { gs.controller.resize(); } catch (e) { console.warn("[grid] cell resize failed:", e); }
     }
   }
 }
