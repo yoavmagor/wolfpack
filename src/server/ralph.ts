@@ -53,6 +53,14 @@ export function listDevProjects(): string[] {
   }
 }
 
+/** Count completed tasks from progress.txt by counting DONE: lines */
+export function countProgressDone(progressPath: string): number {
+  try {
+    const content = readFileSync(progressPath, "utf-8");
+    return (content.match(/^DONE: /gm) || []).length;
+  } catch { return 0; }
+}
+
 export function countPlanTasks(planPath: string): { done: number; total: number; issues: string[] } {
   try {
     const plan = readFileSync(planPath, "utf-8");
@@ -174,9 +182,13 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
         ? workdirPath
         : projectDir;
       const tasks = countPlanTasks(join(planBase, status.planFile));
-      status.tasksDone = tasks.done;
       status.tasksTotal = tasks.total;
-      if (tasks.done > 0 && tasks.done === tasks.total && !status.active) {
+      // done count comes from progress.txt DONE: lines, not plan markers
+      const progressBase = workdirPath && workdirPath.startsWith(projectDir) && existsSync(join(workdirPath, status.progressFile))
+        ? workdirPath
+        : projectDir;
+      status.tasksDone = countProgressDone(join(progressBase, status.progressFile));
+      if (status.tasksDone > 0 && status.tasksDone === status.tasksTotal && !status.active) {
         status.completed = true;
       }
     }

@@ -1242,11 +1242,12 @@ describe("GET /api/ralph", () => {
     expect(Array.isArray(data.loops)).toBe(true);
   });
 
-  test("includes task counts from plan files", async () => {
-    setupProject("proj-a", {
-      plan: { name: "PLAN.md", content: "- [x] done\n- [ ] pending\n- [ ] also pending\n" },
-      log: `ralph — 5 iterations\nagent: claude\nplan: PLAN.md\npid: 2\nstarted: 2025-01-01\nfinished: 2025-01-01\n`,
+  test("includes task counts from plan + progress files", async () => {
+    const dir = setupProject("proj-a", {
+      plan: { name: "PLAN.md", content: "- [ ] done\n- [ ] pending\n- [ ] also pending\n" },
+      log: `ralph — 5 iterations\nagent: claude\nplan: PLAN.md\nprogress: progress.txt\npid: 2\nstarted: 2025-01-01\nfinished: 2025-01-01\n`,
     });
+    writeFileSync(join(dir, "progress.txt"), "DONE: checkbox: done\n");
 
     const res = await get("/api/ralph");
     const data = await res.json();

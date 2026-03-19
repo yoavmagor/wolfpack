@@ -159,19 +159,43 @@ function readPlan(): string {
   return readFileSync(PLAN_PATH, "utf-8");
 }
 
+/** Read completed task keys from progress.txt. Format: `DONE: checkbox: <text>` or `DONE: section: <header>` */
+function readCompletedTasks(): Set<string> {
+  const completed = new Set<string>();
+  try {
+    const content = readFileSync(PROGRESS_PATH, "utf-8");
+    for (const line of content.split("\n")) {
+      if (line.startsWith("DONE: ")) completed.add(line.slice(6));
+    }
+  } catch { /* no progress file yet */ }
+  return completed;
+}
+
+/** Record a task as completed in progress.txt */
+function markTaskCompleted(task: string, checkbox: boolean): void {
+  const key = checkbox ? `checkbox: ${task}` : `section: ${taskSectionHeader(task) || task.split("\n")[0]}`;
+  appendFileSync(PROGRESS_PATH, `DONE: ${key}\n`);
+}
+
 function extractCurrentTask(): { task: string; checkbox: boolean } | null {
   try {
     const plan = readPlan();
+    const completed = readCompletedTasks();
 
     // try checkboxes first (subtasks appended at bottom)
-    const cbMatch = plan.match(/^- \[ \] (.+)$/m);
-    if (cbMatch) return { task: cbMatch[1], checkbox: true };
+    for (const line of plan.split("\n")) {
+      const cbMatch = line.match(/^- \[ \] (.+)$/);
+      if (cbMatch && !completed.has(`checkbox: ${cbMatch[1]}`)) {
+        return { task: cbMatch[1], checkbox: true };
+      }
+    }
 
-    // then section headers: find first ## or ### numbered header not struck through
+    // then section headers: find first ## or ### numbered header not yet completed
     const lines = plan.split("\n");
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (TASK_HEADER.test(line) && !line.includes("~~")) {
+        if (completed.has(`section: ${line}`)) continue;
         const level = line.match(/^(#{2,3})/)?.[1] || "##";
         // collect the full section until the next header at same or higher level
         const sectionLines = [line];
@@ -180,10 +204,13 @@ function extractCurrentTask(): { task: string; checkbox: boolean } | null {
           if (nextMatch && nextMatch[1].length <= level.length) break;
           sectionLines.push(lines[j]);
         }
-        // skip sections where all child checkboxes are already done
-        const childChecked = sectionLines.filter(l => /^- \[x\] /.test(l)).length;
-        const childUnchecked = sectionLines.filter(l => /^- \[ \] /.test(l)).length;
-        if (childChecked > 0 && childUnchecked === 0) continue;
+        // skip sections where all child checkboxes are completed
+        const children = sectionLines.filter(l => /^- \[ \] /.test(l));
+        const allChildrenDone = children.length > 0 && children.every(l => {
+          const text = l.match(/^- \[ \] (.+)$/)?.[1];
+          return text && completed.has(`checkbox: ${text}`);
+        });
+        if (allChildrenDone) continue;
         return { task: sectionLines.join("\n").trim(), checkbox: false };
       }
     }
@@ -197,71 +224,6 @@ function taskSectionHeader(task: string): string | null {
   return TASK_HEADER.test(line) ? line : null;
 }
 
-function markSectionDone(taskText: string): void {
-  try {
-    const plan = readPlan();
-    const headerLine = taskText.split("\n")[0];
-    if (!headerLine || !plan.includes(headerLine)) return;
-    const prefix = headerLine.match(/^(#{2,3} )/)?.[1] || "### ";
-    const rest = headerLine.slice(prefix.length);
-    // use line-start anchor to avoid replacing text that appears elsewhere
-    const escaped = headerLine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const lineRegex = new RegExp("^" + escaped + "$", "m");
-    const updated = plan.replace(lineRegex, `${prefix}~~${rest}~~`);
-    writeFileSync(PLAN_PATH, updated);
-  } catch (e: unknown) {
-    console.error(`markSectionDone: failed to update plan file:`, errMsg(e));
-  }
-}
-
-function markCheckboxDone(taskText: string): void {
-  try {
-    const plan = readPlan();
-    const lines = plan.split("\n");
-    const cbIndex = lines.findIndex(l => l === `- [ ] ${taskText}`);
-    if (cbIndex === -1) return;
-    lines[cbIndex] = `- [x] ${taskText}`;
-    // auto-strikethrough parent section header if all its child checkboxes are now done
-    const updated = strikethroughCompletedParent(lines, cbIndex);
-    writeFileSync(PLAN_PATH, updated);
-  } catch (e: unknown) {
-    console.error(`markCheckboxDone: failed to update plan file:`, errMsg(e));
-  }
-}
-
-/** Strikethrough parent section header if all its child checkboxes are done. Takes lines array and the index of the just-checked checkbox. */
-function strikethroughCompletedParent(lines: string[], cbIndex: number): string {
-  // walk backwards to find the parent section header
-  let parentIndex = -1;
-  let parentLevel = "";
-  for (let i = cbIndex - 1; i >= 0; i--) {
-    const m = lines[i].match(/^(#{2,3}) /);
-    if (m) {
-      parentIndex = i;
-      parentLevel = m[1];
-      break;
-    }
-  }
-  if (parentIndex === -1) return lines.join("\n");
-  const parentLine = lines[parentIndex];
-  // skip if already struck through or not a task header
-  if (parentLine.includes("~~") || !TASK_HEADER.test(parentLine)) return lines.join("\n");
-  // collect child lines of this section
-  let hasUnchecked = false;
-  let hasChecked = false;
-  for (let j = parentIndex + 1; j < lines.length; j++) {
-    const nextMatch = lines[j].match(/^(#{1,3}) /);
-    if (nextMatch && nextMatch[1].length <= parentLevel.length) break;
-    if (/^- \[ \] /.test(lines[j])) { hasUnchecked = true; break; }
-    if (/^- \[x\] /.test(lines[j])) hasChecked = true;
-  }
-  if (hasChecked && !hasUnchecked) {
-    const prefix = parentLine.match(/^(#{2,3} )/)?.[1] || "## ";
-    const rest = parentLine.slice(prefix.length);
-    lines[parentIndex] = `${prefix}~~${rest}~~`;
-  }
-  return lines.join("\n");
-}
 
 function numberPlanTasks(): Promise<{ exitCode: number; output: string }> {
   const prompt = `You are reformatting a plan file for an automated task runner.
@@ -290,8 +252,8 @@ The total task count shrank from ${totalBefore} to ${totalAfter}. Tasks were los
 
 The plan file MUST use this format:
 - Section headers: \`## N. Title\` (e.g. \`## 1. Add auth\`), subtasks: \`## Na. Title\` (e.g. \`## 1a. Tests\`)
-- Completed tasks: wrap title in \`~~\` (e.g. \`## ~~1. Done~~\`)
-- OR checkbox format: \`- [ ] task\` / \`- [x] done\`
+- Checkbox format: \`- [ ] task\`
+- Do NOT mark tasks as done in the plan file — completion is tracked separately.
 
 Here is the ORIGINAL plan content before corruption:
 \`\`\`
@@ -302,10 +264,9 @@ INSTRUCTIONS:
 1. Read the current ${PLAN_FILE}
 2. Compare it against the original content above
 3. Restore ALL missing tasks — use the original as the source of truth
-4. Preserve any tasks that were legitimately marked as completed (~~strikethrough~~ or [x])
-5. Write the fixed plan back to ${PLAN_FILE}
-6. Do NOT add, remove, or reorder tasks beyond what the original had
-7. Do NOT modify any other files or make commits
+4. Write the fixed plan back to ${PLAN_FILE}
+5. Do NOT add, remove, or reorder tasks beyond what the original had
+6. Do NOT modify any other files or make commits
 
 BEGIN.`;
 }
@@ -342,7 +303,7 @@ RULES:
 - ONLY work on ONE task per iteration.
 - If a task has sub-tasks, complete one sub-task.
 - If you decide the task needs breakdown, output a <subtasks> block with one task per line, and DO NOT modify any files or make a commit in that iteration. Follow the Task Granularity rules from the context above.
-- Do NOT write to ${PLAN_FILE}. The task runner handles all plan mutations (strikethrough, subtask appending). If you need subtasks, output a <subtasks> block.
+- Do NOT write to ${PLAN_FILE}. The task runner handles all plan mutations. If you need subtasks, output a <subtasks> block.
 - Do NOT remove or renumber tasks in the plan file.
 - Be thorough but focused.
 
@@ -784,11 +745,10 @@ async function main() {
 
     const { task, checkbox } = result;
 
-    // same-task-twice guard: if we picked the same section task again,
-    // the previous markSectionDone was overwritten (e.g. agent wrote plan file) — force it now
+    // same-task-twice guard: if we picked the same section task again, force-mark done in progress
     if (task === lastTask && !checkbox) {
       appendFileSync(LOG_FILE, `\n=== ⚠️ Same section task picked twice — force-marking done ===\n`);
-      markSectionDone(task);
+      markTaskCompleted(task, checkbox);
       lastTask = null;
       lastWasSubtaskEmission = false;
       continue;
@@ -856,7 +816,7 @@ async function main() {
 
     // snapshot plan state before iteration for corruption detection
     const planSnapshot = readPlan();
-    const { total: totalBefore, done: doneBefore } = countTasksInContent(planSnapshot);
+    const { total: totalBefore } = countTasksInContent(planSnapshot);
 
     const prompt = buildPrompt(task);
     appendFileSync(LOG_FILE, `\n=== 🥋 Wax On ${i}/${maxIterations} — ${new Date().toString()} ===\n`);
@@ -867,23 +827,21 @@ async function main() {
     // write iter file for inspection
     writeFileSync(ITER_FILE, output);
 
-    // plan corruption detection: runs BEFORE exit code check because
-    // the typical corruption case is the agent dying mid-write to the plan file
+    // plan corruption detection: check that task count didn't shrink
+    // (completion is tracked in progress.txt, not in plan markers)
     const afterCounts = countTasksInContent(readPlan());
-    if (afterCounts.total < totalBefore || afterCounts.done < doneBefore) {
-      const reason = afterCounts.total < totalBefore
-        ? `task count shrank from ${totalBefore} to ${afterCounts.total}`
-        : `completed count shrank from ${doneBefore} to ${afterCounts.done}`;
+    if (afterCounts.total < totalBefore) {
+      const reason = `task count shrank from ${totalBefore} to ${afterCounts.total}`;
       appendFileSync(LOG_FILE, `\n=== ⚠️ Plan corruption detected: ${reason} — attempting recovery ===\n`);
       const recoveryPrompt = buildRecoveryPrompt(planSnapshot, totalBefore, afterCounts.total);
       const { exitCode: recoveryExit } = await runIteration(recoveryPrompt);
       appendFileSync(LOG_FILE, `\n=== Recovery agent exited (code ${recoveryExit}) ===\n`);
       const recoveredCounts = countTasksInContent(readPlan());
-      if (recoveredCounts.total < totalBefore || recoveredCounts.done < doneBefore) {
-        appendFileSync(LOG_FILE, `\n=== ⚠️ Recovery failed (${recoveredCounts.total} tasks, ${recoveredCounts.done} done) — restoring from backup ===\n`);
+      if (recoveredCounts.total < totalBefore) {
+        appendFileSync(LOG_FILE, `\n=== ⚠️ Recovery failed (${recoveredCounts.total} tasks) — restoring from backup ===\n`);
         writeFileSync(PLAN_PATH, planSnapshot);
       } else {
-        appendFileSync(LOG_FILE, `\n=== ✅ Plan recovered (${recoveredCounts.total} tasks, ${recoveredCounts.done} done) ===\n`);
+        appendFileSync(LOG_FILE, `\n=== ✅ Plan recovered (${recoveredCounts.total} tasks) ===\n`);
       }
       cleanupIterFile();
       continue;
@@ -903,11 +861,7 @@ async function main() {
       subtasksAdded += subtasks.length;
       appendSubtasksToPlan(subtasks);
       // mark parent done so it's never re-picked
-      if (checkbox) {
-        markCheckboxDone(task);
-      } else {
-        markSectionDone(task);
-      }
+      markTaskCompleted(task, checkbox);
       maxIterations = expandBudget(maxIterations, subtasks.length, MAX_CEILING);
       appendFileSync(LOG_FILE, `\n=== 🧩 Subtasks detected (${subtasks.length}) — extended to ${maxIterations} iterations (ceiling ${MAX_CEILING}, expansions ${subtaskExpansions}/${MAX_SUBTASK_EXPANSIONS}) ===\n`);
       for (const st of subtasks) appendFileSync(LOG_FILE, `  + ${st}\n`);
@@ -926,12 +880,8 @@ async function main() {
     // sync progress back from task sub-worktree to mainWorkDir
     syncProgressBack();
 
-    // mark task done in plan file (PLAN_PATH = mainWorkDir)
-    if (checkbox) {
-      markCheckboxDone(task);
-    } else {
-      markSectionDone(task);
-    }
+    // record task completion in progress file
+    markTaskCompleted(task, checkbox);
 
     // sync plan to PROJECT_DIR for UI
     syncPlanToProject();
