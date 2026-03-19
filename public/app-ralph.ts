@@ -334,7 +334,9 @@ async function loadStartFormData() {
   }
   // Lock all fields except iterations when continuing a stopped loop
   const lockable = [sel, document.getElementById("ralph-plan-select"), document.getElementById("ralph-agent-select"),
-    document.getElementById("ralph-cleanup-toggle"), document.getElementById("ralph-audit-fix-toggle")] as HTMLElement[];
+    document.getElementById("ralph-cleanup-toggle"), document.getElementById("ralph-audit-fix-toggle"),
+    document.getElementById("ralph-worktree-name"), document.getElementById("ralph-worktree-base"),
+    document.getElementById("ralph-branch-name"), document.getElementById("ralph-source-branch")] as HTMLElement[];
   if (state.restartingRalph) {
     lockable.forEach(el => { if (el) (el as any).disabled = true; });
   } else {
