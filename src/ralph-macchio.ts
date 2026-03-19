@@ -660,12 +660,21 @@ function createMainWorktree(): void {
   }
 
   // fresh start — create new worktree
+  // Delete orphan branch from a previous run (worktree cleaned up but branch survived).
+  // Start fresh to avoid inheriting dirty state.
+  try {
+    execFileSync("git", ["rev-parse", "--verify", branchName], { cwd: PROJECT_DIR, stdio: "pipe" });
+    // Branch exists without a worktree — delete it so createWorktree can start clean
+    appendFileSync(LOG_FILE, `deleting orphan branch ${branchName} from previous run\n`);
+    execFileSync("git", ["branch", "-D", branchName], { cwd: PROJECT_DIR, stdio: "pipe" });
+  } catch { /* branch doesn't exist — good */ }
+
   try {
     mainWorkDir = createWorktree(PROJECT_DIR, branchName, baseBranch);
+    appendFileSync(LOG_FILE, `worktree created: ${mainWorkDir} (branch ${branchName}, base ${baseBranch})\n`);
     workingDir = mainWorkDir;
     PLAN_PATH = join(mainWorkDir, PLAN_FILE);
     PROGRESS_PATH = join(mainWorkDir, PROGRESS_FILE);
-    appendFileSync(LOG_FILE, `worktree created: ${mainWorkDir} (branch ${branchName}, base ${baseBranch})\n`);
     appendFileSync(LOG_FILE, `workdir: ${mainWorkDir}\n\n`);
     try { START_COMMIT = execFileSync("git", ["rev-parse", "HEAD"], { cwd: mainWorkDir, encoding: "utf-8" }).trim(); } catch (e: unknown) {
       console.warn(`could not capture worktree starting commit:`, errMsg(e));
