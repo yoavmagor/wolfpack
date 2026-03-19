@@ -209,7 +209,7 @@ const routes: Record<
       await tmuxNewSession(finalName, `/tmp/dev/${folderName}`, cmd);
     } catch (e: any) {
       if (e.code === "DUPLICATE_SESSION") {
-        return json(res, { error: "session name already exists" }, 409);
+        return json(res, { error: "session exists", session: finalName, hint: "reconnect or choose a different name" }, 409);
       }
       throw e;
     }
@@ -623,7 +623,9 @@ describe("POST /api/create", () => {
     const res = await post("/api/create", { project: "my-app" });
     expect(res.status).toBe(409);
     const data = await res.json();
-    expect(data.error).toBe("session name already exists");
+    expect(data.error).toBe("session exists");
+    expect(data.session).toBe("my-app");
+    expect(data.hint).toBe("reconnect or choose a different name");
   });
 });
 

@@ -3,9 +3,63 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { assets } from "../public-assets.js";
 import { tmuxList } from "./tmux.js";
 import { exec } from "./tmux.js";
+import { createLogger } from "../log.js";
+
+const log = createLogger("http");
+
+// ── Token-bucket rate limiter ──
+
+/** Single token-bucket instance (tokens refill at `rate` per second). */
+export function createRateLimiter(rate: number) {
+  let tokens = rate;
+  let last = Date.now();
+  return {
+    allow(): boolean {
+      const now = Date.now();
+      tokens = Math.min(rate, tokens + ((now - last) / 1000) * rate);
+      last = now;
+      if (tokens < 1) return false;
+      tokens--;
+      return true;
+    },
+  };
+}
+
+type RateLimiter = ReturnType<typeof createRateLimiter>;
+
+/**
+ * Per-IP rate limiter map. Creates a limiter on first request from each IP.
+ * Evicts stale entries every `evictIntervalMs` to prevent unbounded growth.
+ */
+export function createPerIpRateLimiter(rate: number, evictIntervalMs = 60_000) {
+  const map = new Map<string, { rl: RateLimiter; lastSeen: number }>();
+
+  const evict = setInterval(() => {
+    const cutoff = Date.now() - evictIntervalMs;
+    for (const [ip, entry] of map) {
+      if (entry.lastSeen < cutoff) map.delete(ip);
+    }
+  }, evictIntervalMs).unref();
+
+  return {
+    allow(ip: string): boolean {
+      let entry = map.get(ip);
+      if (!entry) {
+        entry = { rl: createRateLimiter(rate), lastSeen: Date.now() };
+        map.set(ip, entry);
+      }
+      entry.lastSeen = Date.now();
+      return entry.rl.allow();
+    },
+    /** Exposed for testing. */
+    _map: map,
+    _evictTimer: evict,
+  };
+}
 
 // ── Session helpers ──
 
@@ -43,7 +97,10 @@ export function writeUnauthorized(res: ServerResponse): void {
   res.end(JSON.stringify({ error: "unauthorized" }));
 }
 
-const MAX_BODY = 64 * 1024; // 64KB
+// ── Constants ──
+const MAX_BODY = 64 * 1024;
+const PEER_PROBE_TIMEOUT_MS = 3_000;
+const TAILSCALE_MAX_BUFFER = 10 * 1024 * 1024;
 
 export function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -66,13 +123,26 @@ export function readBody(req: IncomingMessage): Promise<string> {
 export async function parseBody<T = any>(req: IncomingMessage, res: ServerResponse): Promise<T | null> {
   try {
     return JSON.parse(await readBody(req)) as T;
-  } catch {
+  } catch { /* expected: client sent malformed JSON */
     json(res, { error: "invalid JSON body" }, 400);
     return null;
   }
 }
 
-const CSP = "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' wss: https:; img-src 'self' data:";
+/** Generate a cryptographically random base64 nonce for CSP. */
+export function generateCspNonce(): string {
+  return randomBytes(16).toString("base64");
+}
+
+function buildCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline'",
+    "connect-src 'self' wss: https:",
+    "img-src 'self' data:",
+  ].join("; ");
+}
 
 export function serveFile(res: ServerResponse, filename: string): void {
   const asset = assets.get(filename);
@@ -86,7 +156,14 @@ export function serveFile(res: ServerResponse, filename: string): void {
     "Cache-Control": "no-cache",
   };
   if (asset.mime === "text/html") {
-    headers["Content-Security-Policy"] = CSP;
+    const nonce = generateCspNonce();
+    headers["Content-Security-Policy"] = buildCsp(nonce);
+    // Inject nonce into all <script> tags
+    const html = (typeof asset.content === "string" ? asset.content : asset.content.toString())
+      .replace(/<script(?=[\s>])/g, `<script nonce="${nonce}"`);
+    res.writeHead(200, headers);
+    res.end(html);
+    return;
   }
   res.writeHead(200, headers);
   res.end(asset.content);
@@ -103,13 +180,13 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
     "/usr/bin/tailscale",
     "/opt/homebrew/bin/tailscale",
     "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-  ].find((p) => { try { execFileSync("test", ["-x", p]); return true; } catch { return false; } });
+  ].find((p) => { try { execFileSync("test", ["-x", p]); return true; } catch { /* probe: binary not found at this path */ return false; } });
   if (!tsBin) return { peers: [], error: "tailscale not found" };
 
   try {
     const { stdout } = await exec(
       "/bin/sh", ["-l", "-c", `"${tsBin}" status --json`],
-      { maxBuffer: 10 * 1024 * 1024 },
+      { maxBuffer: TAILSCALE_MAX_BUFFER },
     );
     const status = JSON.parse(stdout);
     const self = status.Self?.DNSName?.replace(/\.$/, "");
@@ -125,12 +202,12 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
       peers.map(async (p) => {
         try {
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 3000);
+          const timer = setTimeout(() => ctrl.abort(), PEER_PROBE_TIMEOUT_MS);
           const r = await fetch(p.url + "/api/info", { signal: ctrl.signal });
           clearTimeout(timer);
           const info = await r.json();
           return { ...p, name: info.name || p.hostname, version: info.version, wolfpack: true as const };
-        } catch {
+        } catch { /* expected: peer unreachable or not running wolfpack */
           return { ...p, name: p.hostname, version: undefined, wolfpack: false as const };
         }
       }),
@@ -139,7 +216,7 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
     cachedPeers = wolfpackPeers.map(p => ({ url: p.url, name: p.name }));
     return { peers: wolfpackPeers };
   } catch (e: any) {
-    console.error("discover error:", e?.message || e);
+    log.error("discover error", { error: e?.message || String(e) });
     return { peers: [], error: "failed to query tailscale" };
   }
 }

@@ -8,11 +8,10 @@ process.env.WOLFPACK_JWT_SECRET = "wolfpack-test-secret-long-enough-for-validati
 process.env.WOLFPACK_JWT_AUDIENCE = "wolfpack-client";
 
 // Reset cached auth config + dynamic import so env vars take effect
-const { __resetJwtAuthConfig } = await import("../../src/auth.ts");
+const { __resetJwtAuthConfig, __setTestOverrides } = await import("../../src/test-hooks.ts");
 __resetJwtAuthConfig();
 
-const { __setTestOverrides, server } = await import("../../src/server/index.ts") as {
-  __setTestOverrides: (overrides: Partial<{ tmuxList: () => Promise<string[]> }>) => void;
+const { server } = await import("../../src/server/index.ts") as {
   server: Server;
 };
 

@@ -16,8 +16,8 @@ function isValidPlanFile(name: string): boolean {
   return /^[a-zA-Z0-9._\- ]+\.md$/.test(name) && name !== ".." && name !== ".";
 }
 
-/** Mirrors serve.ts BRANCH_REGEX (inline in ralph start handler) */
-const BRANCH_REGEX = /^[a-zA-Z0-9._\-/]+$/;
+/** Mirrors validation.ts BRANCH_REGEX — rejects .. and // sequences */
+const BRANCH_REGEX = /^(?!.*\.\.)(?!.*\/\/)[a-zA-Z0-9._\-/]+$/;
 
 /** Mirrors validation.ts isValidSessionName() — no dots or colons (tmux restriction) */
 function isValidSessionName(name: string): boolean {

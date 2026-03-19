@@ -1,104 +1,83 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { writeFileSync, readFileSync, appendFileSync, mkdtempSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, appendFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-// ── Plan-mutation functions from ralph-macchio.ts ──
-// These are module-private; replicated here as pure-ish functions that
-// operate on a configurable plan path instead of the module-level PLAN_PATH.
-
-/** Mirrors ralph-macchio.ts markSectionDone() */
-function markSectionDone(planPath: string, taskText: string): void {
-  try {
-    const plan = readFileSync(planPath, "utf-8");
-    const headerLine = taskText.split("\n")[0];
-    if (!headerLine || !plan.includes(headerLine)) return;
-    const prefix = headerLine.match(/^(#{2,3} )/)?.[1] || "### ";
-    const rest = headerLine.slice(prefix.length);
-    const escaped = headerLine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const lineRegex = new RegExp("^" + escaped + "$", "m");
-    const updated = plan.replace(lineRegex, `${prefix}~~${rest}~~`);
-    writeFileSync(planPath, updated);
-  } catch {}
-}
-
-/** Matches plan task headers: ## 1. Title, ### 2a. Title, etc. */
+// ── Matches plan task headers: ## 1. Title, ### 2a. Title, etc. ──
 const TASK_HEADER = /^#{2,3} (?:~~)?(?:\w+ )?\d+[a-z]?[\.\):]\s+/;
 
-/** Mirrors ralph-macchio.ts strikethroughCompletedParent() */
-function strikethroughCompletedParent(lines: string[], cbIndex: number): string {
-  let parentIndex = -1;
-  let parentLevel = "";
-  for (let i = cbIndex - 1; i >= 0; i--) {
-    const m = lines[i].match(/^(#{2,3}) /);
-    if (m) {
-      parentIndex = i;
-      parentLevel = m[1];
-      break;
-    }
-  }
-  if (parentIndex === -1) return lines.join("\n");
-  const parentLine = lines[parentIndex];
-  if (parentLine.includes("~~") || !TASK_HEADER.test(parentLine)) return lines.join("\n");
-  let hasUnchecked = false;
-  let hasChecked = false;
-  for (let j = parentIndex + 1; j < lines.length; j++) {
-    const nextMatch = lines[j].match(/^(#{1,3}) /);
-    if (nextMatch && nextMatch[1].length <= parentLevel.length) break;
-    if (/^- \[ \] /.test(lines[j])) { hasUnchecked = true; break; }
-    if (/^- \[x\] /.test(lines[j])) hasChecked = true;
-  }
-  if (hasChecked && !hasUnchecked) {
-    const prefix = parentLine.match(/^(#{2,3} )/)?.[1] || "## ";
-    const rest = parentLine.slice(prefix.length);
-    lines[parentIndex] = `${prefix}~~${rest}~~`;
-  }
-  return lines.join("\n");
+// ── Progress-based completion tracking (mirrors ralph-macchio.ts) ──
+
+function taskSectionHeader(task: string): string | null {
+  const line = task.split("\n")[0];
+  return TASK_HEADER.test(line) ? line : null;
 }
 
-/** Mirrors ralph-macchio.ts markCheckboxDone() — with auto-strikethrough */
-function markCheckboxDone(planPath: string, taskText: string): void {
+function readCompletedTasks(progressPath: string): Set<string> {
+  const completed = new Set<string>();
+  try {
+    const content = readFileSync(progressPath, "utf-8");
+    for (const line of content.split("\n")) {
+      if (line.startsWith("DONE: ")) completed.add(line.slice(6));
+    }
+  } catch { /* no progress file yet */ }
+  return completed;
+}
+
+function markTaskCompleted(progressPath: string, task: string, checkbox: boolean): void {
+  const key = checkbox ? `checkbox: ${task}` : `section: ${taskSectionHeader(task) || task.split("\n")[0]}`;
+  appendFileSync(progressPath, `DONE: ${key}\n`);
+}
+
+function extractCurrentTask(planPath: string, progressPath: string): { task: string; checkbox: boolean } | null {
   try {
     const plan = readFileSync(planPath, "utf-8");
+    const completed = readCompletedTasks(progressPath);
+
+    // try checkboxes first
+    for (const line of plan.split("\n")) {
+      const cbMatch = line.match(/^- \[ \] (.+)$/);
+      if (cbMatch && !completed.has(`checkbox: ${cbMatch[1]}`)) {
+        return { task: cbMatch[1], checkbox: true };
+      }
+    }
+
+    // then section headers
     const lines = plan.split("\n");
-    const cbIndex = lines.findIndex(l => l === `- [ ] ${taskText}`);
-    if (cbIndex === -1) return;
-    lines[cbIndex] = `- [x] ${taskText}`;
-    const updated = strikethroughCompletedParent(lines, cbIndex);
-    writeFileSync(planPath, updated);
-  } catch {}
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (TASK_HEADER.test(line)) {
+        if (completed.has(`section: ${line}`)) continue;
+        const level = line.match(/^(#{2,3})/)?.[1] || "##";
+        const sectionLines = [line];
+        for (let j = i + 1; j < lines.length; j++) {
+          const nextMatch = lines[j].match(/^(#{1,3}) /);
+          if (nextMatch && nextMatch[1].length <= level.length) break;
+          sectionLines.push(lines[j]);
+        }
+        const children = sectionLines.filter(l => /^- \[ \] /.test(l));
+        const allChildrenDone = children.length > 0 && children.every(l => {
+          const text = l.match(/^- \[ \] (.+)$/)?.[1];
+          return text && completed.has(`checkbox: ${text}`);
+        });
+        if (allChildrenDone) continue;
+        return { task: sectionLines.join("\n").trim(), checkbox: false };
+      }
+    }
+    return null;
+  } catch { return null; }
 }
 
-/** Mirrors ralph-macchio.ts appendSubtasksToPlan() */
+// ── appendSubtasksToPlan (unchanged from ralph-macchio.ts) ──
+
 function appendSubtasksToPlan(planPath: string, subtasks: string[]): void {
   const safe = subtasks.map(t => t.replace(/^#+\s*/, "").replace(/~~/g, "").trim()).filter(Boolean);
   const lines = safe.map(t => `- [ ] ${t}`).join("\n");
   appendFileSync(planPath, "\n" + lines + "\n");
 }
 
-// ── Test helpers ──
+// ── dedupCheckboxes (unchanged from ralph-macchio.ts) ──
 
-let tmpDir: string;
-let planPath: string;
-
-function writePlan(content: string): void {
-  writeFileSync(planPath, content);
-}
-
-function readPlan(): string {
-  return readFileSync(planPath, "utf-8");
-}
-
-beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), "plan-mutation-"));
-  planPath = join(tmpDir, "PLAN.md");
-});
-
-afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
-});
-
-/** Mirrors ralph-macchio.ts dedupCheckboxes() — operates on a configurable path */
 function dedupCheckboxes(planPath: string): void {
   try {
     const plan = readFileSync(planPath, "utf-8");
@@ -127,6 +106,30 @@ function dedupCheckboxes(planPath: string): void {
     }
   } catch {}
 }
+
+// ── Test helpers ──
+
+let tmpDir: string;
+let planPath: string;
+let progressPath: string;
+
+function writePlan(content: string): void {
+  writeFileSync(planPath, content);
+}
+
+function readPlan(): string {
+  return readFileSync(planPath, "utf-8");
+}
+
+beforeEach(() => {
+  tmpDir = mkdtempSync(join(tmpdir(), "plan-mutation-"));
+  planPath = join(tmpDir, "PLAN.md");
+  progressPath = join(tmpDir, "progress.txt");
+});
+
+afterEach(() => {
+  rmSync(tmpDir, { recursive: true, force: true });
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // dedupCheckboxes
@@ -177,7 +180,6 @@ describe("dedupCheckboxes", () => {
     writePlan("- [x] Done\n- [x] Done\n");
     dedupCheckboxes(planPath);
     const result = readPlan();
-    // checked items are not deduped — they're historical markers
     expect((result.match(/- \[x\] Done/g) || []).length).toBe(2);
   });
 
@@ -192,157 +194,144 @@ describe("dedupCheckboxes", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// markSectionDone
+// markTaskCompleted + readCompletedTasks (progress-file based)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("markSectionDone", () => {
-  test("wraps ## header text in strikethrough", () => {
-    writePlan("## 1. Build the widget\nSome body text\n");
-    markSectionDone(planPath, "## 1. Build the widget\nSome body text");
-    expect(readPlan()).toBe("## ~~1. Build the widget~~\nSome body text\n");
+describe("markTaskCompleted", () => {
+  test("records checkbox completion in progress file", () => {
+    writeFileSync(progressPath, "# Progress\n");
+    markTaskCompleted(progressPath, "Write tests", true);
+    const content = readFileSync(progressPath, "utf-8");
+    expect(content).toContain("DONE: checkbox: Write tests");
   });
 
-  test("wraps ### header text in strikethrough", () => {
-    writePlan("### 2. Deploy service\nDetails here\n");
-    markSectionDone(planPath, "### 2. Deploy service\nDetails here");
-    expect(readPlan()).toBe("### ~~2. Deploy service~~\nDetails here\n");
+  test("records section completion in progress file", () => {
+    writeFileSync(progressPath, "# Progress\n");
+    markTaskCompleted(progressPath, "## 1. Build the widget\nSome body text", false);
+    const content = readFileSync(progressPath, "utf-8");
+    expect(content).toContain("DONE: section: ## 1. Build the widget");
   });
 
-  test("only strikes the header line, not the body", () => {
-    const plan = "## 1. First task\nBody of first\n## 2. Second task\nBody of second\n";
-    writePlan(plan);
-    markSectionDone(planPath, "## 1. First task\nBody of first");
-    const result = readPlan();
-    expect(result).toContain("## ~~1. First task~~");
-    expect(result).toContain("## 2. Second task");
-    expect(result).not.toContain("~~2. Second task~~");
+  test("appends without overwriting existing content", () => {
+    writeFileSync(progressPath, "# Progress\nDONE: checkbox: First\n");
+    markTaskCompleted(progressPath, "Second", true);
+    const content = readFileSync(progressPath, "utf-8");
+    expect(content).toContain("DONE: checkbox: First");
+    expect(content).toContain("DONE: checkbox: Second");
   });
 
-  test("is line-anchored — does not match partial lines", () => {
-    const plan = "## 1. Setup\nSome text mentioning ## 1. Setup in prose\n";
-    writePlan(plan);
-    markSectionDone(planPath, "## 1. Setup");
-    const result = readPlan();
-    // header struck
-    expect(result).toMatch(/^## ~~1\. Setup~~$/m);
-    // prose line untouched
-    expect(result).toContain("Some text mentioning ## 1. Setup in prose");
+  test("creates progress file if missing", () => {
+    expect(existsSync(progressPath)).toBe(false);
+    markTaskCompleted(progressPath, "Task", true);
+    expect(existsSync(progressPath)).toBe(true);
+    expect(readFileSync(progressPath, "utf-8")).toContain("DONE: checkbox: Task");
+  });
+});
+
+describe("readCompletedTasks", () => {
+  test("returns empty set when no progress file", () => {
+    const completed = readCompletedTasks(progressPath);
+    expect(completed.size).toBe(0);
   });
 
-  test("no-op when header not found in plan", () => {
-    const plan = "## 1. Real task\n";
-    writePlan(plan);
-    markSectionDone(planPath, "## 99. Ghost task");
-    expect(readPlan()).toBe(plan);
+  test("parses checkbox DONE lines", () => {
+    writeFileSync(progressPath, "# Progress\nDONE: checkbox: Write tests\nDONE: checkbox: Deploy\n");
+    const completed = readCompletedTasks(progressPath);
+    expect(completed.has("checkbox: Write tests")).toBe(true);
+    expect(completed.has("checkbox: Deploy")).toBe(true);
   });
 
-  test("no-op when taskText is empty", () => {
-    const plan = "## 1. Task\n";
-    writePlan(plan);
-    markSectionDone(planPath, "");
-    expect(readPlan()).toBe(plan);
+  test("parses section DONE lines", () => {
+    writeFileSync(progressPath, "DONE: section: ## 1. Build widget\n");
+    const completed = readCompletedTasks(progressPath);
+    expect(completed.has("section: ## 1. Build widget")).toBe(true);
   });
 
-  test("handles regex-special characters in header", () => {
-    writePlan("## 1. Fix bug (critical) [P0]\n");
-    markSectionDone(planPath, "## 1. Fix bug (critical) [P0]");
-    expect(readPlan()).toBe("## ~~1. Fix bug (critical) [P0]~~\n");
-  });
-
-  test("only strikes the first matching header when duplicates exist", () => {
-    // regex replaces first match only
-    writePlan("## 1. Dup\nfirst body\n## 1. Dup\nsecond body\n");
-    markSectionDone(planPath, "## 1. Dup\nfirst body");
-    const result = readPlan();
-    const matches = result.match(/~~1\. Dup~~/g);
-    // .replace only replaces first match
-    expect(matches?.length).toBe(1);
-  });
-
-  test("handles multiline taskText — uses only first line", () => {
-    writePlan("### 3a. Multi\nline1\nline2\n");
-    markSectionDone(planPath, "### 3a. Multi\nline1\nline2");
-    expect(readPlan()).toBe("### ~~3a. Multi~~\nline1\nline2\n");
-  });
-
-  test("handles header with trailing whitespace in plan", () => {
-    // the plan file has the header; taskText must match exactly
-    writePlan("## 1. Trim test\nBody\n");
-    markSectionDone(planPath, "## 1. Trim test\nBody");
-    expect(readPlan()).toContain("## ~~1. Trim test~~");
+  test("ignores non-DONE lines", () => {
+    writeFileSync(progressPath, "# Progress\nSome freeform notes\nDONE: checkbox: Real task\nMore notes\n");
+    const completed = readCompletedTasks(progressPath);
+    expect(completed.size).toBe(1);
+    expect(completed.has("checkbox: Real task")).toBe(true);
   });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// markCheckboxDone
+// extractCurrentTask (progress-based skip logic)
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("markCheckboxDone", () => {
-  test("checks an unchecked checkbox", () => {
-    writePlan("- [ ] Write tests\n- [ ] Ship it\n");
-    markCheckboxDone(planPath, "Write tests");
-    expect(readPlan()).toBe("- [x] Write tests\n- [ ] Ship it\n");
+describe("extractCurrentTask", () => {
+  test("returns first unchecked checkbox", () => {
+    writePlan("- [ ] Task A\n- [ ] Task B\n");
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result).toEqual({ task: "Task A", checkbox: true });
   });
 
-  test("does not re-check an already checked item", () => {
-    writePlan("- [x] Already done\n");
-    markCheckboxDone(planPath, "Already done");
-    // pattern requires `- [ ] ` so nothing changes
-    expect(readPlan()).toBe("- [x] Already done\n");
+  test("skips checkboxes marked done in progress file", () => {
+    writePlan("- [ ] Task A\n- [ ] Task B\n");
+    writeFileSync(progressPath, "DONE: checkbox: Task A\n");
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result).toEqual({ task: "Task B", checkbox: true });
   });
 
-  test("exact match — no partial substring replacement", () => {
-    writePlan("- [ ] Write tests for auth\n- [ ] Write tests\n");
-    markCheckboxDone(planPath, "Write tests");
-    const result = readPlan();
-    // "Write tests" (exact) is checked, "Write tests for auth" is NOT
-    expect(result).toContain("- [ ] Write tests for auth");
-    expect(result).toMatch(/^- \[x\] Write tests$/m);
+  test("returns first non-struck section header", () => {
+    writePlan("## 1. First task\nBody\n## 2. Second task\nMore body\n");
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result?.checkbox).toBe(false);
+    expect(result?.task).toContain("## 1. First task");
   });
 
-  test("handles regex-special characters in task text", () => {
-    writePlan("- [ ] Fix bug (critical) [P0]\n");
-    markCheckboxDone(planPath, "Fix bug (critical) [P0]");
-    expect(readPlan()).toBe("- [x] Fix bug (critical) [P0]\n");
+  test("skips sections marked done in progress file", () => {
+    writePlan("## 1. First task\nBody\n## 2. Second task\nMore body\n");
+    writeFileSync(progressPath, "DONE: section: ## 1. First task\n");
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result?.task).toContain("## 2. Second task");
   });
 
-  test("no-op when task not found", () => {
-    const plan = "- [ ] Real task\n";
-    writePlan(plan);
-    markCheckboxDone(planPath, "Nonexistent task");
-    expect(readPlan()).toBe(plan);
+  test("returns null when all tasks completed", () => {
+    writePlan("- [ ] Task A\n- [ ] Task B\n");
+    writeFileSync(progressPath, "DONE: checkbox: Task A\nDONE: checkbox: Task B\n");
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result).toBeNull();
   });
 
-  test("line-anchored — requires full line match", () => {
-    writePlan("Some prose: - [ ] Inline checkbox\n- [ ] Inline checkbox\n");
-    markCheckboxDone(planPath, "Inline checkbox");
-    const result = readPlan();
-    // only the line-start checkbox is replaced
-    expect(result).toContain("Some prose: - [ ] Inline checkbox");
-    expect(result).toMatch(/^- \[x\] Inline checkbox$/m);
+  test("skips section when all child checkboxes are completed", () => {
+    writePlan("## 1. Setup\n- [ ] Install deps\n- [ ] Configure\n\n## 2. Build\nBody\n");
+    writeFileSync(progressPath, "DONE: checkbox: Install deps\nDONE: checkbox: Configure\n");
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result?.task).toContain("## 2. Build");
   });
 
-  test("handles task text with leading/trailing spaces literally", () => {
-    writePlan("- [ ]  extra space task\n");
-    // taskText without leading space won't match `- [ ]  extra space task`
-    markCheckboxDone(planPath, "extra space task");
-    // pattern becomes `^- \[ \] extra space task$` which doesn't match the double-space
-    expect(readPlan()).toBe("- [ ]  extra space task\n");
+  test("does not skip section with uncompleted children", () => {
+    writePlan("## 1. Setup\n- [ ] Install deps\n- [ ] Configure\n");
+    writeFileSync(progressPath, "DONE: checkbox: Install deps\n");
+    const result = extractCurrentTask(planPath, progressPath);
+    // Section 1 still has uncompleted children → return checkbox
+    expect(result).toEqual({ task: "Configure", checkbox: true });
   });
 
-  test("checks correct item among many", () => {
-    writePlan("- [x] Done1\n- [ ] Todo1\n- [ ] Todo2\n- [x] Done2\n");
-    markCheckboxDone(planPath, "Todo2");
-    const result = readPlan();
-    expect(result).toBe("- [x] Done1\n- [ ] Todo1\n- [x] Todo2\n- [x] Done2\n");
+  test("returns null when no progress file and no tasks", () => {
+    writePlan("# Just a title\n");
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result).toBeNull();
   });
 
-  test("handles empty taskText gracefully", () => {
-    const plan = "- [ ] Something\n";
-    writePlan(plan);
-    markCheckboxDone(planPath, "");
-    // pattern `^- \[ \] $` won't match `- [ ] Something`
-    expect(readPlan()).toBe(plan);
+  test("plan file is NOT mutated by completion tracking", () => {
+    writePlan("- [ ] Task A\n- [ ] Task B\n");
+    const before = readPlan();
+    markTaskCompleted(progressPath, "Task A", true);
+    expect(readPlan()).toBe(before); // plan unchanged
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result).toEqual({ task: "Task B", checkbox: true });
+  });
+
+  test("discard resets progress — all tasks available again", () => {
+    writePlan("- [ ] Task A\n- [ ] Task B\n");
+    writeFileSync(progressPath, "DONE: checkbox: Task A\nDONE: checkbox: Task B\n");
+    expect(extractCurrentTask(planPath, progressPath)).toBeNull();
+    // simulate discard: delete progress file
+    rmSync(progressPath, { force: true });
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result).toEqual({ task: "Task A", checkbox: true });
   });
 });
 
@@ -381,7 +370,6 @@ describe("appendSubtasksToPlan", () => {
     const result = readPlan();
     expect(result).toContain("- [ ] Real task");
     expect(result).toContain("- [ ] Another task");
-    // only 2 checkboxes
     const checkboxes = result.match(/- \[ \] /g);
     expect(checkboxes?.length).toBe(2);
   });
@@ -389,7 +377,6 @@ describe("appendSubtasksToPlan", () => {
   test("handles all-empty subtasks array", () => {
     writePlan("# Plan\n");
     appendSubtasksToPlan(planPath, ["", "  "]);
-    // safe array is empty → lines is "" → appends "\n\n"
     expect(readPlan()).toBe("# Plan\n\n\n");
   });
 
@@ -417,10 +404,9 @@ describe("appendSubtasksToPlan", () => {
   });
 
   test("preserves existing plan content", () => {
-    writePlan("# Plan\n\n- [x] Done task\n- [ ] Pending task\n");
+    writePlan("# Plan\n\n- [ ] Pending task\n");
     appendSubtasksToPlan(planPath, ["New subtask"]);
     const result = readPlan();
-    expect(result).toContain("- [x] Done task");
     expect(result).toContain("- [ ] Pending task");
     expect(result).toContain("- [ ] New subtask");
   });
@@ -429,131 +415,42 @@ describe("appendSubtasksToPlan", () => {
     writePlan("");
     appendSubtasksToPlan(planPath, ["Fix (bug) in [module]", "Handle $var + *.log"]);
     const result = readPlan();
-    // appendSubtasksToPlan doesn't need to escape — it just concatenates
     expect(result).toContain("- [ ] Fix (bug) in [module]");
     expect(result).toContain("- [ ] Handle $var + *.log");
   });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// mark parent done on subtask emission (integration-style)
+// subtask emission + parent completion via progress file
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("mark parent done on subtask emission", () => {
-  test("checkbox parent marked done after subtask append", () => {
-    writePlan("- [ ] Big task\n- [x] Already done\n");
-    appendSubtasksToPlan(planPath, ["Sub A", "Sub B"]);
-    markCheckboxDone(planPath, "Big task");
-    const result = readPlan();
-    expect(result).toContain("- [x] Big task");
-    expect(result).toContain("- [ ] Sub A");
-    expect(result).toContain("- [ ] Sub B");
-  });
-
-  test("section parent marked done after subtask append", () => {
-    writePlan("## 1. Big task\nSome details\n\n## 2. Other task\nMore details\n");
-    appendSubtasksToPlan(planPath, ["Sub A", "Sub B"]);
-    markSectionDone(planPath, "## 1. Big task\nSome details");
-    const result = readPlan();
-    expect(result).toContain("## ~~1. Big task~~");
-    expect(result).toContain("## 2. Other task");
-    expect(result).toContain("- [ ] Sub A");
-    expect(result).toContain("- [ ] Sub B");
-  });
-
-  test("next extractCurrentTask picks subtask, not parent", () => {
+describe("subtask emission + progress-based completion", () => {
+  test("parent marked done in progress, subtasks picked next", () => {
     writePlan("- [ ] Big task\n");
     appendSubtasksToPlan(planPath, ["Sub A", "Sub B"]);
-    markCheckboxDone(planPath, "Big task");
-    const plan = readPlan();
-    // simulate extractCurrentTask: first unchecked checkbox
-    const match = plan.match(/^- \[ \] (.+)$/m);
-    expect(match).not.toBeNull();
-    expect(match![1]).toBe("Sub A");
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// #74: auto-strikethrough parent section when last child checkbox done
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe("auto-strikethrough parent section on last checkbox done", () => {
-  test("strikes parent header when last child checkbox is marked done", () => {
-    writePlan("## 1. Setup\n- [x] Install deps\n- [ ] Configure build\n\n## 2. Next\nstuff\n");
-    markCheckboxDone(planPath, "Configure build");
-    const result = readPlan();
-    expect(result).toContain("## ~~1. Setup~~");
-    expect(result).toContain("- [x] Configure build");
+    markTaskCompleted(progressPath, "Big task", true);
+    // plan is NOT mutated
+    expect(readPlan()).toContain("- [ ] Big task");
+    // next task should be Sub A (Big task skipped via progress)
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result).toEqual({ task: "Sub A", checkbox: true });
   });
 
-  test("does not strike parent when unchecked children remain", () => {
-    writePlan("## 1. Setup\n- [x] Done\n- [ ] Still open\n- [ ] Mark this\n");
-    markCheckboxDone(planPath, "Mark this");
-    const result = readPlan();
-    // "Still open" is still unchecked → parent stays
-    expect(result).toContain("## 1. Setup");
-    expect(result).not.toContain("~~1. Setup~~");
+  test("section parent marked done in progress, next section picked", () => {
+    writePlan("## 1. Big task\nSome details\n\n## 2. Other task\nMore details\n");
+    appendSubtasksToPlan(planPath, ["Sub A", "Sub B"]);
+    markTaskCompleted(progressPath, "## 1. Big task\nSome details", false);
+    // next should be Sub A (checkbox), not section 2
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result).toEqual({ task: "Sub A", checkbox: true });
   });
 
-  test("does not strike non-task header (unnumbered)", () => {
-    writePlan("## Overview\n- [ ] Only child\n");
-    markCheckboxDone(planPath, "Only child");
-    const result = readPlan();
-    // "## Overview" is not a TASK_HEADER → no strikethrough
-    expect(result).toContain("## Overview");
-    expect(result).not.toContain("~~Overview~~");
-  });
-
-  test("does not strike already-struck parent", () => {
-    writePlan("## ~~1. Already done~~\n- [ ] Straggler\n");
-    markCheckboxDone(planPath, "Straggler");
-    const result = readPlan();
-    // should not double-wrap in ~~
-    expect(result).toContain("## ~~1. Already done~~");
-    expect(result).not.toContain("~~~~");
-  });
-
-  test("only affects the immediate parent section, not grandparent", () => {
-    writePlan("## 1. Big phase\nOverview\n### 1a. Sub-phase\n- [ ] Last item\n\n## 2. Other\nstuff\n");
-    markCheckboxDone(planPath, "Last item");
-    const result = readPlan();
-    // ### 1a should be struck (immediate parent)
-    expect(result).toContain("### ~~1a. Sub-phase~~");
-    // ## 1 should NOT be struck (grandparent)
-    expect(result).toContain("## 1. Big phase");
-    expect(result).not.toContain("~~1. Big phase~~");
-  });
-
-  test("handles section with mixed content and checkboxes", () => {
-    writePlan("## 1. Setup\nSome notes\n- [x] Step A\nMore notes\n- [ ] Step B\n\n## 2. Next\n");
-    markCheckboxDone(planPath, "Step B");
-    const result = readPlan();
-    expect(result).toContain("## ~~1. Setup~~");
-  });
-
-  test("checkbox with no parent header — no crash", () => {
-    writePlan("- [ ] Orphan checkbox\n");
-    markCheckboxDone(planPath, "Orphan checkbox");
-    const result = readPlan();
-    expect(result).toContain("- [x] Orphan checkbox");
-    // no header to strike — just works
-  });
-
-  test("duplicate checkbox text across sections — only strikes correct parent", () => {
-    writePlan([
-      "## 1. Phase one",
-      "- [x] Deploy",
-      "",
-      "## 2. Phase two",
-      "- [ ] Deploy",
-    ].join("\n"));
-    markCheckboxDone(planPath, "Deploy");
-    const result = readPlan();
-    // phase two's "Deploy" was the one just checked → phase two should be struck
-    expect(result).toContain("## ~~2. Phase two~~");
-    // phase one should NOT be struck (it has no unchecked items but the checked
-    // "Deploy" there is not the one we just marked — index-based lookup ensures this)
-    expect(result).toContain("## 1. Phase one");
-    expect(result).not.toContain("~~1. Phase one~~");
+  test("completing all subtasks and parent makes section fully done", () => {
+    writePlan("## 1. Setup\n- [ ] Step A\n- [ ] Step B\n\n## 2. Build\nBody\n");
+    markTaskCompleted(progressPath, "Step A", true);
+    markTaskCompleted(progressPath, "Step B", true);
+    // section 1 has all children done → should skip to section 2
+    const result = extractCurrentTask(planPath, progressPath);
+    expect(result?.task).toContain("## 2. Build");
   });
 });

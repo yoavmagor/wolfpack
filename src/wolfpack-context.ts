@@ -40,6 +40,45 @@ const AMBIGUOUS_HEADERS = [
 ];
 
 /**
+ * Old plan format: lines like "Task 1: Title", "Task 2: Title", optionally
+ * preceded by markdown header markers (## Task 1: ...) or with sub-letters
+ * (Task 1a: ...). Does NOT match the new `## N. Title` format.
+ */
+const OLD_TASK_PATTERN = /^(?:#{1,4}\s+)?Task\s+(\d+[a-z]?)\s*[:\.]\s*(.+)/i;
+
+/**
+ * Detect whether plan content uses the old `Task N: Title` format.
+ * Returns true if at least one old-style task header is found and
+ * no new-style TASK_HEADER is present.
+ */
+export function detectOldPlanFormat(content: string): boolean {
+  const lines = content.split("\n");
+  let hasOld = false;
+  let hasNew = false;
+  for (const line of lines) {
+    if (OLD_TASK_PATTERN.test(line)) hasOld = true;
+    if (TASK_HEADER.test(line)) hasNew = true;
+  }
+  return hasOld && !hasNew;
+}
+
+/**
+ * Migrate plan content from old `Task N: Title` format to `## N. Title`.
+ * Returns { content, count } where count is the number of migrated headers.
+ */
+export function migratePlanFormat(content: string): { content: string; count: number } {
+  let count = 0;
+  const migrated = content.replace(
+    new RegExp(OLD_TASK_PATTERN.source, "gim"),
+    (_match, num: string, title: string) => {
+      count++;
+      return `## ${num}. ${title.trim()}`;
+    },
+  );
+  return { content: migrated, count };
+}
+
+/**
  * Count tasks in plan content — supports both section headers and checkboxes.
  * Pure function (no file I/O) for use in ralph-macchio.ts and ralph.ts.
  */

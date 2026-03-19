@@ -50,11 +50,20 @@ execSync("bun run scripts/bundle-client-lib.ts", {
   stdio: "inherit",
 });
 
+// Bundle public/app.ts into public/app.bundle.js
+console.log("bundling app...");
+execSync("bun run scripts/bundle-app.ts", {
+  cwd: join(import.meta.dirname, ".."),
+  stdio: "inherit",
+});
+
 const files = readdirSync(PUBLIC_DIR).sort();
 const entries: string[] = [];
 
 for (const file of files) {
   const ext = extname(file).toLowerCase();
+  // Skip .ts source files — only serve compiled bundles
+  if (ext === ".ts") continue;
   const mime = MIME_MAP[ext] ?? "application/octet-stream";
   const filePath = join(PUBLIC_DIR, file);
 
