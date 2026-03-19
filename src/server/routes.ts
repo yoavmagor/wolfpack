@@ -85,6 +85,7 @@ const RALPH_LOOP_SCHEMA: Record<string, "string" | "number" | "boolean"> = {
   pid: "number",
   tasksDone: "number",
   tasksTotal: "number",
+  worktreeMode: "string",
 };
 
 /**
@@ -681,32 +682,46 @@ export const routes: Record<
       return json(res, { error: "failed to acquire lock" }, 500);
     }
 
+    const removeLock = () => {
+      try { unlinkSync(lockPath); } catch (e: unknown) {
+        if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn("ralph start: failed to remove lock on validation failure", { error: errMsg(e) });
+      }
+    };
+
     const iters = Math.max(1, Math.min(500, iterations ?? 5));
     const resolvedPlan = planFile || "PLAN.md";
     if (!isValidPlanFile(resolvedPlan)) {
+      removeLock();
       return json(res, { error: "invalid plan file name" }, 400);
     }
     if (cleanup != null && typeof cleanup !== "boolean") {
+      removeLock();
       return json(res, { error: "invalid cleanup flag" }, 400);
     }
     if (auditFix != null && typeof auditFix !== "boolean") {
+      removeLock();
       return json(res, { error: "invalid auditFix flag" }, 400);
     }
     const VALID_WORKTREE_MODES = [false, "false", "plan", "task"];
     if (worktree != null && !VALID_WORKTREE_MODES.includes(worktree as any)) {
+      removeLock();
       return json(res, { error: "invalid worktree mode — must be false, \"plan\", or \"task\"" }, 400);
     }
     const worktreeMode = (worktree === "plan" || worktree === "task") ? worktree : "false";
     if (worktreeBranch != null && typeof worktreeBranch !== "string") {
+      removeLock();
       return json(res, { error: "invalid worktreeBranch" }, 400);
     }
     if (worktreeBranch && !BRANCH_REGEX.test(worktreeBranch)) {
+      removeLock();
       return json(res, { error: "invalid worktree branch name" }, 400);
     }
     if (worktreeBase != null && typeof worktreeBase !== "string") {
+      removeLock();
       return json(res, { error: "invalid worktreeBase" }, 400);
     }
     if (worktreeBase && !BRANCH_REGEX.test(worktreeBase)) {
+      removeLock();
       return json(res, { error: "invalid worktree base branch name" }, 400);
     }
     const cleanupEnabled = cleanup ?? true;
@@ -714,10 +729,12 @@ export const routes: Record<
 
     if (newBranch) {
       if (!BRANCH_REGEX.test(newBranch)) {
+        removeLock();
         return json(res, { error: "invalid branch name" }, 400);
       }
       const source = sourceBranch || "main";
       if (!BRANCH_REGEX.test(source)) {
+        removeLock();
         return json(res, { error: "invalid source branch name" }, 400);
       }
       try {
@@ -731,6 +748,7 @@ export const routes: Record<
             cwd: projectDir, encoding: "utf-8", timeout: 5000,
           });
         } catch { /* local ref also not found — report fetch failure to user */
+          removeLock();
           return json(res, { error: `failed to fetch source branch '${source}': ${stderr}` }, 400);
         }
       }
@@ -740,11 +758,13 @@ export const routes: Record<
         });
       } catch (e: any) {
         const stderr = e.stderr || e.message || "branch creation failed";
+        removeLock();
         return json(res, { error: stderr }, 400);
       }
     }
 
     if (!existsSync(join(projectDir, resolvedPlan))) {
+      removeLock();
       return json(res, { error: `plan file '${resolvedPlan}' not found` }, 404);
     }
 

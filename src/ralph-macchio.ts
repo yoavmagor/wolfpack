@@ -712,11 +712,10 @@ async function main() {
     // extract current task from plan
     const result = extractCurrentTask();
     if (!result) {
-      // Distinguish "all tasks completed" from "plan is corrupted"
+      // Strict all-done detection: extractCurrentTask returned null + plan has tasks
       const planContent = readPlan().trim();
       const { total: planTotal } = countTasksInContent(planContent);
-      const completedCount = readCompletedTasks().size;
-      const allDone = planTotal > 0 && completedCount > 0;
+      const allDone = planTotal > 0;
       const hasSubstantiveContent = !allDone && planContent.split("\n").some(l => /^#{2,3} /.test(l) || /^- \[ \] /.test(l));
       const msg = allDone
         ? "All tasks completed"
@@ -724,6 +723,7 @@ async function main() {
         ? "Plan has content but no parseable tasks — format may be corrupted"
         : "No unchecked tasks remain";
       appendFileSync(LOG_FILE, `\n=== ${hasSubstantiveContent ? "⚠️" : "🥋"} ${msg} — ${new Date().toString()} ===\n`);
+      if (allDone) appendFileSync(LOG_FILE, `all_tasks_done: true\n`);
       // merge any outstanding task worktree before finishing
       if (currentTaskWorktree && currentTaskBranch) {
         syncProgressBack();
@@ -910,6 +910,8 @@ async function main() {
   appendFileSync(LOG_FILE, `=== Completed ${maxIterations} iterations ===\n`);
   const remaining = extractCurrentTask();
   if (!remaining) {
+    const { total } = countTasksInContent(readPlan());
+    if (total > 0) appendFileSync(LOG_FILE, `all_tasks_done: true\n`);
     await runFinalPhases();
   } else {
     appendFileSync(LOG_FILE, `=== ⏭️  Skipping final phases — tasks still remain ===\n`);

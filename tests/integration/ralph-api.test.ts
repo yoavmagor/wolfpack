@@ -223,25 +223,36 @@ const routes: Record<
       return json(res, { error: "failed to acquire lock" }, 500);
     }
 
+    const removeLock = () => {
+      try { unlinkSync(lockPath); } catch (e: any) {
+        if (e?.code !== "ENOENT") { /* ignore */ }
+      }
+    };
+
     const iters = Math.max(1, Math.min(500, iterations ?? 5));
     const resolvedPlan = planFile || "PLAN.md";
     if (!isValidPlanFile(resolvedPlan)) {
+      removeLock();
       return json(res, { error: "invalid plan file name" }, 400);
     }
     if (cleanup != null && typeof cleanup !== "boolean") {
+      removeLock();
       return json(res, { error: "invalid cleanup flag" }, 400);
     }
     if (auditFix != null && typeof auditFix !== "boolean") {
+      removeLock();
       return json(res, { error: "invalid auditFix flag" }, 400);
     }
     const VALID_WORKTREE_MODES = [false, "false", "plan", "task"];
     if (worktree != null && !VALID_WORKTREE_MODES.includes(worktree as any)) {
+      removeLock();
       return json(res, { error: 'invalid worktree mode — must be false, "plan", or "task"' }, 400);
     }
     const worktreeMode = (worktree === "plan" || worktree === "task") ? worktree : "false";
     const cleanupEnabled = cleanup ?? true;
     const auditFixEnabled = auditFix ?? false;
     if (!existsSync(join(projectDir, resolvedPlan))) {
+      removeLock();
       return json(res, { error: `plan file '${resolvedPlan}' not found` }, 404);
     }
 
@@ -783,6 +794,86 @@ describe("POST /api/ralph/start", () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toContain("invalid worktree mode");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Lock cleanup on validation failure
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("lock cleanup on validation failure", () => {
+  afterEach(() => {
+    cleanupProject("lock-leak");
+  });
+
+  test("invalid plan file name cleans up lock", async () => {
+    const dir = setupProject("lock-leak", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "lock-leak",
+      planFile: "../../../etc/passwd",
+    });
+    expect(res.status).toBe(400);
+    expect(existsSync(join(dir, ".ralph.lock"))).toBe(false);
+  });
+
+  test("invalid cleanup flag cleans up lock", async () => {
+    const dir = setupProject("lock-leak", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "lock-leak",
+      cleanup: "false" as any,
+    });
+    expect(res.status).toBe(400);
+    expect(existsSync(join(dir, ".ralph.lock"))).toBe(false);
+  });
+
+  test("invalid worktree mode cleans up lock", async () => {
+    const dir = setupProject("lock-leak", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "lock-leak",
+      worktree: "invalid" as any,
+    });
+    expect(res.status).toBe(400);
+    expect(existsSync(join(dir, ".ralph.lock"))).toBe(false);
+  });
+
+  test("missing plan file cleans up lock", async () => {
+    const dir = setupProject("lock-leak", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    const res = await post("/api/ralph/start", {
+      project: "lock-leak",
+      planFile: "NONEXISTENT.md",
+    });
+    expect(res.status).toBe(404);
+    expect(existsSync(join(dir, ".ralph.lock"))).toBe(false);
+  });
+
+  test("subsequent start succeeds after validation failure cleaned lock", async () => {
+    setupProject("lock-leak", {
+      plan: { name: "PLAN.md", content: "- [ ] task\n" },
+    });
+
+    // First: fail validation (lock acquired then cleaned)
+    const r1 = await post("/api/ralph/start", {
+      project: "lock-leak",
+      cleanup: "bad" as any,
+    });
+    expect(r1.status).toBe(400);
+
+    // Second: should succeed (no orphaned lock)
+    const r2 = await post("/api/ralph/start", { project: "lock-leak" });
+    expect(r2.status).toBe(200);
+    expect((await r2.json()).ok).toBe(true);
   });
 });
 

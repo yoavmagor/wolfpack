@@ -173,7 +173,12 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
     );
     status.lastOutput = meaningful.slice(-5).join("\n");
 
-    // count tasks from plan file — prefer worktree copy if available
+    // completed: strict detection via explicit worker signal
+    if (!status.active && content.includes("all_tasks_done: true")) {
+      status.completed = true;
+    }
+
+    // count tasks from plan file — prefer worktree copy if available (for progress bar)
     if (status.planFile) {
       const workdirMatch = content.match(/^workdir:\s*(.+)/m);
       const workdirPath = workdirMatch ? workdirMatch[1].trim() : "";
@@ -183,14 +188,11 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
         : projectDir;
       const tasks = countPlanTasks(join(planBase, status.planFile));
       status.tasksTotal = tasks.total;
-      // done count comes from progress.txt DONE: lines, not plan markers
+      // done count comes from progress.txt DONE: lines (for progress bar display)
       const progressBase = workdirPath && workdirPath.startsWith(projectDir) && existsSync(join(workdirPath, status.progressFile))
         ? workdirPath
         : projectDir;
       status.tasksDone = countProgressDone(join(progressBase, status.progressFile));
-      if (status.tasksDone > 0 && status.tasksDone === status.tasksTotal && !status.active) {
-        status.completed = true;
-      }
     }
 
     return status;

@@ -12,7 +12,7 @@ Ralph is an iterative AI agent loop. It reads a plan file (PLAN.md), extracts ta
 |------|---------|-----------|
 | `PLAN.md` | Task definitions (headers + checkboxes). Only mutated to append subtasks. | Persists across runs |
 | `progress.txt` | Completion log. `DONE: checkbox: <text>` or `DONE: section: <header>` lines. Agent also appends freeform notes. | Deleted on cancel/dismiss |
-| `.ralph.log` | Iteration output, status detection, summary. Overwritten each run. | Deleted on dismiss |
+| `.ralph.log` | Iteration output, status detection, summary. Contains `all_tasks_done: true` when worker confirms completion. Overwritten each run. | Deleted on dismiss |
 | `.ralph.lock` | Empty file, presence = lock held. Prevents concurrent runs. | Deleted on cancel/dismiss/exit |
 | `.ralph_iter.tmp` | Last iteration's raw agent output. Cleaned up per iteration. | Transient |
 
@@ -204,11 +204,13 @@ Main worktree + per-section sub-worktrees:
 | PID alive + log contains `=== 🥋 Wax Inspect —` (no complete/failed) | `audit` |
 | PID alive + log contains `=== 🥋 Wax Off —` (no complete/failed) | `cleanup` |
 | PID alive | `running` |
-| PID dead + tasksDone === tasksTotal > 0 | `done` |
+| PID dead + log contains `all_tasks_done: true` | `done` |
 | PID dead + finished timestamp present | `limit` (hit iteration cap) |
 | Otherwise | `idle` |
 
-Task counts: `tasksTotal` from plan file, `tasksDone` from progress file `DONE:` line count.
+Completion detection is strict: the worker writes `all_tasks_done: true` to the log only when `extractCurrentTask()` returns null and the plan has tasks. No count-based heuristics — the extractor is the single source of truth.
+
+Task counts (for progress bar display): `tasksTotal` from plan file, `tasksDone` from progress file `DONE:` line count. These are display-only and not used for completion detection.
 
 ---
 

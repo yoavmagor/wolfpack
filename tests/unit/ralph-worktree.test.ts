@@ -14,6 +14,8 @@ function git(...args: string[]) {
 function initRepo() {
   repoDir = mkdtempSync(join(tmpdir(), "ralph-wt-test-"));
   git("init");
+  git("config", "user.name", "test");
+  git("config", "user.email", "test@test.com");
   git("checkout", "-b", "main");
   writeFileSync(join(repoDir, "README.md"), "# test\n");
   git("add", ".");
