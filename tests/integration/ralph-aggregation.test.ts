@@ -5,8 +5,9 @@ import type { AddressInfo } from "node:net";
 // Use dynamic import so WOLFPACK_TEST is set before server module evaluation.
 process.env.WOLFPACK_TEST = "1";
 
-const { server } = await import("../../src/server/index.ts");
+const { createServerInstance } = await import("../../src/server/index.ts");
 const { __setTestOverrides } = await import("../../src/test-hooks.ts");
+const { server } = createServerInstance();
 
 // ── Fake tmux list (no real tmux needed) ──
 

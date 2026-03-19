@@ -95,114 +95,122 @@ const globalRateLimiter = createPerIpRateLimiter(120);
 
 export { pollRateLimiter as __pollRateLimiter, globalRateLimiter as __globalRateLimiter };
 
-// ── Server ──
+// ── Server factory ──
 
-const wss = new WebSocketServer({ noServer: true });
+/** Create an isolated server + WebSocketServer pair. Used by tests for parallel isolation. */
+export function createServerInstance(): { server: ReturnType<typeof createServer>; wss: InstanceType<typeof WebSocketServer> } {
+  const wss = new WebSocketServer({ noServer: true });
 
-const server = createServer(async (req, res) => {
-  const origin = req.headers.origin;
-  if (origin) {
-    if (isAllowedOrigin(origin)) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-      res.setHeader("Vary", "Origin");
+  const server = createServer(async (req, res) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      if (isAllowedOrigin(origin)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        res.setHeader("Vary", "Origin");
+      } else {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "origin not allowed" }));
+        return;
+      }
+    }
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    const url = new URL(req.url ?? "/", "http://localhost");
+    if (shouldAuthenticateApiPath(url.pathname)) {
+      const auth = validateRequestJwt(req.headers, url, false);
+      if (!auth.ok) {
+        writeUnauthorized(res);
+        return;
+      }
+    }
+
+    // Rate limiting — per-IP, checked before route dispatch
+    const clientIp = req.socket.remoteAddress ?? "unknown";
+    if (!globalRateLimiter.allow(clientIp)) {
+      json(res, { error: "rate limit exceeded" }, 429);
+      return;
+    }
+    if (POLL_HEAVY_PATHS.has(url.pathname) && !pollRateLimiter.allow(clientIp)) {
+      json(res, { error: "rate limit exceeded" }, 429);
+      return;
+    }
+
+    const key = `${req.method ?? "GET"} ${url.pathname}`;
+    const handler = routes[key];
+    if (handler) {
+      try {
+        await handler(req, res);
+      } catch (err) {
+        log.error("route error", { error: String(err) });
+        if (!res.headersSent) json(res, { error: "internal error" }, 500);
+      }
     } else {
-      res.writeHead(403, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "origin not allowed" }));
-      return;
+      const safePath = url.pathname.replace(/^\/+/, "");
+      if (safePath && !safePath.includes("\0") && !safePath.includes("/")) {
+        serveFile(res, safePath);
+      } else {
+        res.writeHead(404);
+        res.end("Not Found");
+      }
     }
-  }
+  });
 
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
-  const url = new URL(req.url ?? "/", "http://localhost");
-  if (shouldAuthenticateApiPath(url.pathname)) {
-    const auth = validateRequestJwt(req.headers, url, false);
-    if (!auth.ok) {
-      writeUnauthorized(res);
-      return;
-    }
-  }
-
-  // Rate limiting — per-IP, checked before route dispatch
-  const clientIp = req.socket.remoteAddress ?? "unknown";
-  if (!globalRateLimiter.allow(clientIp)) {
-    json(res, { error: "rate limit exceeded" }, 429);
-    return;
-  }
-  if (POLL_HEAVY_PATHS.has(url.pathname) && !pollRateLimiter.allow(clientIp)) {
-    json(res, { error: "rate limit exceeded" }, 429);
-    return;
-  }
-
-  const key = `${req.method ?? "GET"} ${url.pathname}`;
-  const handler = routes[key];
-  if (handler) {
-    try {
-      await handler(req, res);
-    } catch (err) {
-      log.error("route error", { error: String(err) });
-      if (!res.headersSent) json(res, { error: "internal error" }, 500);
-    }
-  } else {
-    const safePath = url.pathname.replace(/^\/+/, "");
-    if (safePath && !safePath.includes("\0") && !safePath.includes("/")) {
-      serveFile(res, safePath);
-    } else {
-      res.writeHead(404);
-      res.end("Not Found");
-    }
-  }
-});
-
-server.on("upgrade", async (req, socket, head) => {
-  const origin = req.headers.origin;
-  if (origin && !isAllowedOrigin(origin)) {
-    socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-    socket.destroy();
-    return;
-  }
-  const url = new URL(req.url ?? "/", "http://localhost");
-  const isWsRoute =
-    url.pathname === "/ws/terminal" ||
-    url.pathname === "/ws/mobile" ||
-    url.pathname === "/ws/pty";
-  if (isWsRoute) {
-    const auth = validateRequestJwt(req.headers, url, true);
-    if (!auth.ok) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-  }
-
-  if (url.pathname === "/ws/terminal" || url.pathname === "/ws/mobile") {
-    const session = url.searchParams.get("session");
-    if (!session || !(await isAllowedSession(session))) {
+  server.on("upgrade", async (req, socket, head) => {
+    const origin = req.headers.origin;
+    if (origin && !isAllowedOrigin(origin)) {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => handleTerminalWs(ws, session));
-  } else if (url.pathname === "/ws/pty") {
-    const session = url.searchParams.get("session");
-    if (!session || !(await isAllowedSession(session))) {
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const isWsRoute =
+      url.pathname === "/ws/terminal" ||
+      url.pathname === "/ws/mobile" ||
+      url.pathname === "/ws/pty";
+    if (isWsRoute) {
+      const auth = validateRequestJwt(req.headers, url, true);
+      if (!auth.ok) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
     }
-    const reset = url.searchParams.get("reset") === "1";
-    wss.handleUpgrade(req, socket, head, (ws) => handlePtyWs(ws, session, reset));
-  } else {
-    socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-    socket.destroy();
-  }
-});
+
+    if (url.pathname === "/ws/terminal" || url.pathname === "/ws/mobile") {
+      const session = url.searchParams.get("session");
+      if (!session || !(await isAllowedSession(session))) {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => handleTerminalWs(ws, session));
+    } else if (url.pathname === "/ws/pty") {
+      const session = url.searchParams.get("session");
+      if (!session || !(await isAllowedSession(session))) {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      const reset = url.searchParams.get("reset") === "1";
+      wss.handleUpgrade(req, socket, head, (ws) => handlePtyWs(ws, session, reset));
+    } else {
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+    }
+  });
+
+  return { server, wss };
+}
+
+// Module-level singleton for production
+const { server, wss } = createServerInstance();
 
 export function startServer(port = PORT, host = "127.0.0.1"): void {
   cleanupOrphanPtySessions();

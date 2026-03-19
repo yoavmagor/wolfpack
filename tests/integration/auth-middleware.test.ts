@@ -11,9 +11,8 @@ process.env.WOLFPACK_JWT_AUDIENCE = "wolfpack-client";
 const { __resetJwtAuthConfig, __setTestOverrides } = await import("../../src/test-hooks.ts");
 __resetJwtAuthConfig();
 
-const { server } = await import("../../src/server/index.ts") as {
-  server: Server;
-};
+const { createServerInstance } = await import("../../src/server/index.ts");
+const { server } = createServerInstance();
 
 const AUTH_SECRET = "wolfpack-test-secret-long-enough-for-validation";
 const AUTH_AUDIENCE = "wolfpack-client";
