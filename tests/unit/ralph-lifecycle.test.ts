@@ -507,6 +507,27 @@ describe("countProgressDone", () => {
     writeProgress("");
     expect(countProgressDone(progressPath)).toBe(0);
   });
+
+  test("deduplicates identical DONE lines", () => {
+    writeProgress(
+      "DONE: section: ## 1. Task\n" +
+      "DONE: section: ## 1. Task\n" +
+      "DONE: section: ## 1. Task\n" +
+      "DONE: checkbox: Sub A\n" +
+      "DONE: checkbox: Sub A\n"
+    );
+    expect(countProgressDone(progressPath)).toBe(2);
+  });
+
+  test("counts unique keys when agent duplicates entries", () => {
+    // simulates real bug: agent writes DONE + worker writes DONE
+    writeProgress(
+      "## Task 1 notes\nDONE: section: ## 1. Setup\n" +
+      "## Task 1 repeat\nDONE: section: ## 1. Setup\n" +
+      "DONE: section: ## 2. Build\n"
+    );
+    expect(countProgressDone(progressPath)).toBe(2);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

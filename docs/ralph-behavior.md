@@ -11,7 +11,7 @@ Ralph is an iterative AI agent loop. It reads a plan file (PLAN.md), extracts ta
 | File | Purpose | Lifecycle |
 |------|---------|-----------|
 | `PLAN.md` | Task definitions (headers + checkboxes). Only mutated to append subtasks. | Persists across runs |
-| `progress.txt` | Completion log. `DONE: checkbox: <text>` or `DONE: section: <header>` lines. Agent also appends freeform notes. | Deleted on cancel/dismiss |
+| `progress.txt` | Completion log. `DONE: checkbox: <text>` or `DONE: section: <header>` lines. Only written by the worker — agent must NOT write to it. | Deleted on cancel/dismiss |
 | `.ralph.log` | Iteration output, status detection, summary. Contains `all_tasks_done: true` when worker confirms completion. Overwritten each run. | Deleted on dismiss |
 | `.ralph.lock` | Empty file, presence = lock held. Prevents concurrent runs. | Deleted on cancel/dismiss/exit |
 | `.ralph_iter.tmp` | Last iteration's raw agent output. Cleaned up per iteration. | Transient |

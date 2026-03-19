@@ -54,11 +54,15 @@ export function listDevProjects(): string[] {
   }
 }
 
-/** Count completed tasks from progress.txt by counting DONE: lines */
+/** Count unique completed tasks from progress.txt DONE: lines */
 export function countProgressDone(progressPath: string): number {
   try {
     const content = readFileSync(progressPath, "utf-8");
-    return (content.match(/^DONE: /gm) || []).length;
+    const keys = new Set<string>();
+    for (const line of content.split("\n")) {
+      if (line.startsWith("DONE: ")) keys.add(line.slice(6));
+    }
+    return keys.size;
   } catch { return 0; }
 }
 

@@ -285,8 +285,8 @@ INSTRUCTIONS:
 1. If the task is concrete enough, implement it directly.
 2. If it's too large or vague, break it into subtasks instead of implementing.
 3. Run any relevant tests and type checks for what you built.
-4. Update ${PROGRESS_FILE} with what was done (append, don't overwrite).
-5. Commit your changes with a descriptive message.
+4. Commit your changes with a descriptive message.
+5. Do NOT write to ${PROGRESS_FILE} — the task runner manages it automatically.
 
 OUTPUT (always include):
 <prereqs>
