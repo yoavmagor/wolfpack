@@ -141,7 +141,7 @@ async function mountGridController(gs, cell, idx) {
     cursorBlink: idx === state.gridFocusIndex,
     disableStdin: idx !== state.gridFocusIndex,
     resetPty: gs._resetPty,
-    skipInitialPrefill: true, // TODO: use prefillMode: "viewport" once two-phase prefill lands
+    skipInitialPrefill: true, // TODO: add prefillMode to client PTY socket and use "viewport" here
     shouldFocus: () => state.gridSessions[state.gridFocusIndex] === gs,
     shouldReconnect: () => state.gridSessions.includes(gs),
     canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && state.gridSessions[state.gridFocusIndex] === gs),

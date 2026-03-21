@@ -2948,10 +2948,8 @@ function toggleKbAccessory() {
 
   proxy.addEventListener("input", (e) => {
     if (_composing) return;
-    if (e.inputType === "deleteContentBackward") {
-      _sendTerminalInput(_textEncoder.encode("\x7f"));
-      return;
-    }
+    // Skip deleteContentBackward — keydown handler already sent \x7f
+    if (e.inputType === "deleteContentBackward") return;
     const text = e.data || proxy.value;
     if (text) _sendTerminalInput(_textEncoder.encode(text));
     proxy.value = "";

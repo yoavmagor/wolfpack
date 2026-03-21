@@ -399,8 +399,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
             ], { timeout: 3000 });
             if (stdout && entry.viewer && entry.viewer.readyState === 1) {
               const rawPrefill = Buffer.from(stdout);
-              let fullPrefill: Buffer;
-              if (rawPrefill.length > DESKTOP_PREFILL_MAX_BYTES) {
+              let fullPrefill: Buffer;              if (rawPrefill.length > DESKTOP_PREFILL_MAX_BYTES) {
                 let start = rawPrefill.length - DESKTOP_PREFILL_MAX_BYTES;
                 while (start < rawPrefill.length && rawPrefill[start] !== 0x0a) start++;
                 if (start < rawPrefill.length) start++;
@@ -418,6 +417,9 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
           } catch (e: unknown) {
             log.warn("PTY scrollback prefill capture failed", { session, error: errMsg(e) });
           }
+        } else if (entry.alive && entry.viewer && entry.viewer.readyState === 1) {
+          // Viewport-only mode: send prefill_done so client exits buffering state
+          entry.viewer.send(JSON.stringify({ type: "prefill_done" }));
         }
       }
 
