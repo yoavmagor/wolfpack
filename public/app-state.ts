@@ -65,7 +65,7 @@ export function getCharDimensions() {
 
 // ── Settings (persisted to localStorage) ──
 
-export const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:300, debugPanel:false, ralphEnabled:false};
+export const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:900, debugPanel:false, ralphEnabled:false};
 export const wpSettings = Object.assign({}, wpDefaults, loadStoredJson("wp-effects", {}));
 
 export const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
@@ -257,7 +257,7 @@ export function setState(patch) { Object.assign(state, patch); }
 // ── Constants ──
 
 export const SNAPSHOT_KEY_PREFIX = "wp-snap|";
-export const SNAPSHOT_MAX_BYTES = 8192;
+export const SNAPSHOT_MAX_BYTES = 16384;
 export const SNAPSHOT_SAVE_INTERVAL = 2000;
 export const DESKTOP_TERMINAL_SCROLLBACK = 2000;
 export const GRID_TERMINAL_SCROLLBACK = 1000;

@@ -1121,7 +1121,7 @@ function loadSnapshot(machine, session) {
     if (!raw) return null;
     const snap = JSON.parse(raw);
     const age = (Date.now() - snap.ts) / 1000;
-    if (age > (wpSettings.snapshotTtl || 300)) {
+    if (age > (wpSettings.snapshotTtl || 900)) {
       localStorage.removeItem(snapshotKey(machine, session));
       return null;
     }
@@ -1129,7 +1129,7 @@ function loadSnapshot(machine, session) {
   } catch { return null; }
 }
 function cleanStaleSnapshots() {
-  const ttl = (wpSettings.snapshotTtl || 300) * 1000;
+  const ttl = (wpSettings.snapshotTtl || 900) * 1000;
   const now = Date.now();
   const toRemove = [];
   for (let i = 0; i < localStorage.length; i++) {
@@ -1152,7 +1152,7 @@ function flushSnapshot() {
   if (!state.currentSession) { snapshotPending = null; return; }
   let text;
   if (state.terminalController?.term) {
-    text = serializeXtermTail(state.terminalController.term, 100);
+    text = serializeXtermTail(state.terminalController.term, 200);
   } else {
     text = snapshotPending;
   }
