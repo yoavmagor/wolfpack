@@ -246,8 +246,12 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
           haptic([10, 30, 10]);
         }).catch(() => {});
       }
-      // Keep overlay visible briefly then clear
-      setTimeout(clearSelection, 200);
+      // Keep overlay visible briefly then clear, re-focus proxy so input resumes
+      setTimeout(() => {
+        clearSelection();
+        const proxy = document.getElementById("mobile-kb-proxy");
+        if (proxy && proxy.style.display !== "none") proxy.focus({ preventScroll: true });
+      }, 200);
       return;
     }
 
@@ -2129,6 +2133,11 @@ async function initTerminal(cached) {
     onControlGranted: () => {
       removeDesktopConflictOverlay();
       if (state.terminalController) state.terminalController.focus();
+      // Re-focus mobile proxy so keyboard input resumes
+      if (_isMobile) {
+        const proxy = document.getElementById("mobile-kb-proxy");
+        if (proxy && proxy.style.display !== "none") proxy.focus({ preventScroll: true });
+      }
     },
     onDisconnected: (code, reason) => {
       removeDesktopConflictOverlay();
@@ -2193,11 +2202,25 @@ async function initTerminal(cached) {
     const termView = document.getElementById("terminal-view");
     const vvHandler = () => {
       const kbHeight = window.innerHeight - window.visualViewport.height;
-      if (kbHeight > 50) {
-        termView.style.transform = "translateY(-" + kbHeight + "px)";
-      } else {
-        termView.style.transform = "";
-      }
+      const kbOpen = kbHeight > 50;
+      // Shrink terminal-view from the bottom so the terminal refits to correct rows.
+      // translateY broke fresh sessions — content at the top got pushed above viewport.
+      termView.style.bottom = kbOpen ? kbHeight + "px" : "";
+      // Toggle visual state on keyboard button
+      const kbBtn = document.getElementById("kb-open-btn");
+      if (kbBtn) kbBtn.classList.toggle("active", kbOpen);
+      // Debounce terminal refit during keyboard animation
+      if (state.kbResizeTimer) clearTimeout(state.kbResizeTimer);
+      state.kbResizeTimer = setTimeout(() => {
+        state.kbResizeTimer = null;
+        if (state.terminalController) {
+          state.terminalController.resize();
+          // Keep cursor visible after refit
+          if (state.terminalController.term) {
+            try { state.terminalController.term.scrollToBottom(); } catch {}
+          }
+        }
+      }, 100);
     };
     window.visualViewport.addEventListener("resize", vvHandler);
     state.visualViewportHandler = vvHandler;
@@ -2237,9 +2260,10 @@ function destroyTerminal() {
     window.visualViewport.removeEventListener("resize", state.visualViewportHandler);
     state.visualViewportHandler = null;
   }
-  // Reset termView transform
+  // Reset termView positioning
   const termView = document.getElementById("terminal-view");
-  if (termView) termView.style.transform = "";
+  if (termView) { termView.style.transform = ""; termView.style.bottom = ""; }
+  if (state.kbResizeTimer) { clearTimeout(state.kbResizeTimer); state.kbResizeTimer = null; }
   // Blur and hide mobile-kb-proxy
   const kbProxy = document.getElementById("mobile-kb-proxy");
   if (kbProxy) { kbProxy.blur(); kbProxy.style.display = "none"; }
@@ -2961,19 +2985,30 @@ function toggleKbAccessory() {
     else if (e.key === "Escape") { e.preventDefault(); _sendTerminalInput(_textEncoder.encode("\x1b")); }
   });
 
-  // Only focus proxy on deliberate TAP (not scroll). Track touch movement.
-  let _proxyTouchMoved = false;
-  document.getElementById("desktop-terminal-container").addEventListener("touchstart", () => {
-    _proxyTouchMoved = false;
-  }, { passive: true });
-  document.getElementById("desktop-terminal-container").addEventListener("touchmove", () => {
-    _proxyTouchMoved = true;
-  }, { passive: true });
-  document.getElementById("desktop-terminal-container").addEventListener("touchend", () => {
-    if (!_proxyTouchMoved && proxy.style.display !== "none" && state.terminalController?.isConnected) {
-      setTimeout(() => proxy.focus({ preventScroll: true }), 50);
-    }
-  }, { passive: true });
+  // Keyboard toggle button — explicit open/close instead of tap-on-terminal
+  // (tap-to-focus was unreliable: scroll gestures triggered keyboard open)
+  const kbOpenBtn = document.getElementById("kb-open-btn");
+  if (kbOpenBtn) {
+    kbOpenBtn.addEventListener("mousedown", (e) => e.preventDefault());
+    kbOpenBtn.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      if (proxy.style.display === "none") return;
+      if (document.activeElement === proxy) {
+        proxy.blur();
+      } else {
+        proxy.focus({ preventScroll: true });
+      }
+      haptic([15]);
+    }, { passive: false });
+    kbOpenBtn.addEventListener("click", () => {
+      if (proxy.style.display === "none") return;
+      if (document.activeElement === proxy) {
+        proxy.blur();
+      } else {
+        proxy.focus({ preventScroll: true });
+      }
+    });
+  }
 })();
 
 // Global arrow keys → tmux when in terminal and textarea not focused
