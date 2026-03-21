@@ -3603,6 +3603,7 @@ initGridDeps({
     if (text) saveSnapshot(gs.machine || "", gs.session, text);
   },
   flushGridSnapshots,
+  loadSnapshot,
 });
 initRalphDeps({
   api, errorMessage, showView, getMachines, backToSessions,

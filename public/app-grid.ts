@@ -21,6 +21,7 @@ interface GridDeps {
   canUseDesktopTerminal?: () => boolean;
   saveGridCellSnapshot?: (gs: any) => void;
   flushGridSnapshots?: () => void;
+  loadSnapshot?: (machine: string, session: string) => string | null;
 }
 
 let deps: GridDeps;
@@ -129,6 +130,8 @@ function createGridCell(gs, idx) {
 
 async function mountGridController(gs, cell, idx) {
   if (gs.controller) return; // already mounted
+  const cached = deps.loadSnapshot ? deps.loadSnapshot(gs.machine || "", gs.session) : null;
+  if (cached) cell.classList.add("cached-visible");
   const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
   gs.controller = deps.createPtyTerminalController({
     session: gs.session,
@@ -138,7 +141,7 @@ async function mountGridController(gs, cell, idx) {
     cursorBlink: idx === state.gridFocusIndex,
     disableStdin: idx !== state.gridFocusIndex,
     resetPty: gs._resetPty,
-    skipInitialPrefill: true,
+    skipInitialPrefill: true, // TODO: use prefillMode: "viewport" once two-phase prefill lands
     shouldFocus: () => state.gridSessions[state.gridFocusIndex] === gs,
     shouldReconnect: () => state.gridSessions.includes(gs),
     canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && state.gridSessions[state.gridFocusIndex] === gs),
@@ -175,7 +178,7 @@ async function mountGridController(gs, cell, idx) {
     },
   });
   delete gs._resetPty;
-  await gs.controller.mount(cell);
+  await gs.controller.mount(cell, { cached });
   gs._needsConnect = true;
 }
 
