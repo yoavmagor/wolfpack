@@ -19,6 +19,8 @@ interface GridDeps {
   createPtyTerminalController: (opts: any) => any;
   createConflictOverlay: (message: string, buttonLabel: string, onClick: (e: any) => void) => HTMLElement;
   canUseDesktopTerminal?: () => boolean;
+  saveGridCellSnapshot?: (gs: any) => void;
+  flushGridSnapshots?: () => void;
 }
 
 let deps: GridDeps;
@@ -337,6 +339,7 @@ export function setGridFocus(idx) {
 }
 
 export function suspendGridMode() {
+  if (deps.flushGridSnapshots) deps.flushGridSnapshots();
   const preserved = WP.suspendGridState(state.gridSessions, state.gridFocusIndex);
   state.preservedGridSessions = preserved.sessions;
   state.preservedGridFocusIndex = preserved.focusIndex;
@@ -482,6 +485,8 @@ export function removeFromGrid(idx) {
   if (idx < 0 || idx >= state.gridSessions.length) return;
   state.sidebarResizeDone = false;
   const gs = state.gridSessions[idx];
+  // Save snapshot before disposing
+  if (deps.saveGridCellSnapshot) deps.saveGridCellSnapshot(gs);
   // Remove cell DOM immediately (avoids full rebuild flash)
   if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
   // Cleanup controller

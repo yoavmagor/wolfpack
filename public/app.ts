@@ -1164,9 +1164,17 @@ function flushSnapshot() {
   }
   snapshotPending = null;
   if (text) saveSnapshot(state.currentMachine, state.currentSession, text);
+  flushGridSnapshots();
 }
 function serializeXtermTail(term, maxLines) {
   return WP.serializeBufferTail(term.buffer.active, maxLines);
+}
+function flushGridSnapshots() {
+  for (const gs of state.gridSessions) {
+    if (!gs.controller?.term) continue;
+    const text = serializeXtermTail(gs.controller.term, 200);
+    if (text) saveSnapshot(gs.machine || "", gs.session, text);
+  }
 }
 
 // ── Machine registry ──
@@ -3589,6 +3597,12 @@ initGridDeps({
   backToSessions, renderSidebar,
   createPtyTerminalController, createConflictOverlay,
   canUseDesktopTerminal,
+  saveGridCellSnapshot: (gs) => {
+    if (!gs.controller?.term) return;
+    const text = serializeXtermTail(gs.controller.term, 200);
+    if (text) saveSnapshot(gs.machine || "", gs.session, text);
+  },
+  flushGridSnapshots,
 });
 initRalphDeps({
   api, errorMessage, showView, getMachines, backToSessions,
