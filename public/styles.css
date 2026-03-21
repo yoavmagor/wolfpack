@@ -1445,6 +1445,10 @@ body.ralph-hidden .sidebar-ralph-card { display: none !important; }
   opacity: 1;
   visibility: visible;
 }
+#desktop-terminal-container.cached-visible canvas {
+  opacity: 1;
+  visibility: visible;
+}
 /* Instant hide during resize/loading transitions (no 80ms fade-out) */
 #desktop-terminal-container.hydrating canvas,
 #desktop-terminal-container.transitioning canvas,
@@ -1532,6 +1536,10 @@ body.ralph-hidden .sidebar-ralph-card { display: none !important; }
   transition: opacity 80ms ease;
 }
 .grid-cell.hydrated:not(.grid-loading):not(.transitioning) canvas {
+  opacity: 1;
+  visibility: visible;
+}
+.grid-cell.cached-visible canvas {
   opacity: 1;
   visibility: visible;
 }
