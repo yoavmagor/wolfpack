@@ -846,8 +846,18 @@ function createPtySocketClient(opts) {
           if (msg.type === "attach_ack") {
             _awaitingAttachAck = false;
             if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+          } else if (msg.type === "prefill_viewport") {
+            // Phase 1 complete: viewport content already written as binary.
+            // Flush any buffered viewport chunks immediately for fast first paint.
+            const viewportChunks = _prefillChunks;
+            _prefillChunks = [];
+            if (opts.onBinaryData) {
+              for (const chunk of viewportChunks) opts.onBinaryData(chunk);
+            }
+            // Stay in prefill mode for phase 2 scrollback (if server sends it)
+            _awaitingPrefillDone = true;
           } else if (msg.type === "prefill_done") {
-            // Flush buffered prefill chunks to the terminal in one batch.
+            // Phase 2 complete (or single-phase legacy): flush remaining chunks.
             _awaitingPrefillDone = false;
             const chunks = _prefillChunks;
             _prefillChunks = [];

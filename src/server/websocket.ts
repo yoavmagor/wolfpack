@@ -328,22 +328,25 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
   activePtySessions.set(session, entry as any);
   let spawning = false;
   let latestRequestedSize: { cols: number; rows: number } | null = null;
-  let pendingSkipPrefill = false;
+  const VALID_PREFILL_MODES = ["full", "viewport", "none"] as const;
+  type PrefillMode = typeof VALID_PREFILL_MODES[number];
+  let pendingPrefillMode: PrefillMode = "full";
 
   async function spawnPty(
     cols: number,
     rows: number,
-    options?: { skipPrefill?: boolean },
+    options?: { prefillMode?: PrefillMode; skipPrefill?: boolean },
   ) {
-    if (options?.skipPrefill === true) pendingSkipPrefill = true;
+    if (options?.prefillMode) pendingPrefillMode = options.prefillMode;
+    else if (options?.skipPrefill === true) pendingPrefillMode = "none";
     latestRequestedSize = { cols, rows };
     if (entry.proc || spawning) return;
     spawning = true;
     if (process.env.WOLFPACK_TEST) {
       ptySpawnAttempts.set(session, (ptySpawnAttempts.get(session) || 0) + 1);
     }
-    const skipPrefill = pendingSkipPrefill;
-    pendingSkipPrefill = false;
+    const prefillMode = pendingPrefillMode;
+    pendingPrefillMode = "full";
     let prefill = Buffer.alloc(0);
     let pendingAttach = Buffer.alloc(0);
     let shouldDedupeInitialAttach = false;
@@ -368,34 +371,53 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
 
       if (!entry.alive || activePtySessions.get(session) !== entry || entry.viewer !== ws) return;
 
-      // Pre-fill viewer with tmux scrollback so terminal has content to scroll through.
-      // The attach path can replay part of the visible pane, so strip any overlap from
-      // the first PTY bytes only after the prefill has been delivered successfully.
-      if (!skipPrefill) {
+      // Two-phase prefill:
+      // Phase 1 (viewport): Send visible pane content for instant display.
+      // Phase 2 (full only): Send full scrollback history.
+      if (prefillMode !== "none") {
+        // Phase 1: Viewport-only capture (no -S flag = visible pane only)
         try {
-          const { stdout } = await exec(TMUX, [
-            "capture-pane", "-t", session, "-p", "-e", "-S", `-${DESKTOP_PREFILL_HISTORY_LINES}`,
+          const { stdout: viewportStdout } = await exec(TMUX, [
+            "capture-pane", "-t", session, "-p", "-e",
           ], { timeout: 3000 });
-          if (stdout && entry.viewer && entry.viewer.readyState === 1) {
-            const rawPrefill = Buffer.from(stdout);
-            if (rawPrefill.length > DESKTOP_PREFILL_MAX_BYTES) {
-              // Keep only the most recent chunk to avoid long first-frame paint stalls.
-              let start = rawPrefill.length - DESKTOP_PREFILL_MAX_BYTES;
-              while (start < rawPrefill.length && rawPrefill[start] !== 0x0a) start++;
-              if (start < rawPrefill.length) start++;
-              prefill = rawPrefill.subarray(start);
-            } else {
-              prefill = rawPrefill;
-            }
-            try {
-              await sendPrefillChunked(entry, prefill, session);
-              shouldDedupeInitialAttach = true;
-            } catch (e: unknown) {
-              log.error("PTY prefill send failed", { session, error: errMsg(e) });
-            }
+          if (viewportStdout && entry.viewer && entry.viewer.readyState === 1) {
+            const viewportBuf = Buffer.from(viewportStdout);
+            entry.viewer.send(viewportBuf);
+            entry.viewer.send(JSON.stringify({ type: "prefill_viewport" }));
+            prefill = viewportBuf;
+            shouldDedupeInitialAttach = true;
           }
         } catch (e: unknown) {
-          log.warn("PTY prefill capture failed", { session, error: errMsg(e) });
+          log.warn("PTY viewport prefill capture failed", { session, error: errMsg(e) });
+        }
+
+        // Phase 2: Full scrollback (only if prefillMode === "full")
+        if (prefillMode === "full" && entry.alive && entry.viewer && entry.viewer.readyState === 1) {
+          try {
+            const { stdout } = await exec(TMUX, [
+              "capture-pane", "-t", session, "-p", "-e", "-S", `-${DESKTOP_PREFILL_HISTORY_LINES}`,
+            ], { timeout: 3000 });
+            if (stdout && entry.viewer && entry.viewer.readyState === 1) {
+              const rawPrefill = Buffer.from(stdout);
+              let fullPrefill: Buffer;
+              if (rawPrefill.length > DESKTOP_PREFILL_MAX_BYTES) {
+                let start = rawPrefill.length - DESKTOP_PREFILL_MAX_BYTES;
+                while (start < rawPrefill.length && rawPrefill[start] !== 0x0a) start++;
+                if (start < rawPrefill.length) start++;
+                fullPrefill = rawPrefill.subarray(start);
+              } else {
+                fullPrefill = rawPrefill;
+              }
+              try {
+                await sendPrefillChunked(entry, fullPrefill, session);
+                prefill = fullPrefill;
+              } catch (e: unknown) {
+                log.error("PTY scrollback prefill send failed", { session, error: errMsg(e) });
+              }
+            }
+          } catch (e: unknown) {
+            log.warn("PTY scrollback prefill capture failed", { session, error: errMsg(e) });
+          }
         }
       }
 
@@ -479,8 +501,15 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
           // It spawns the PTY without forcing an extra tmux resize if dims are unchanged.
           latestRequestedSize = { cols: clampCols(msg.cols), rows: clampRows(msg.rows) };
           if (!entry.proc) {
+            // Parse prefillMode with backward compat for skipPrefill boolean
+            let prefillMode: PrefillMode = "full";
+            if (typeof msg.prefillMode === "string" && VALID_PREFILL_MODES.includes(msg.prefillMode)) {
+              prefillMode = msg.prefillMode as PrefillMode;
+            } else if (msg.skipPrefill === true) {
+              prefillMode = "none";
+            }
             spawnPty(latestRequestedSize.cols, latestRequestedSize.rows, {
-              skipPrefill: msg.skipPrefill === true,
+              prefillMode,
             });
           }
           if (entry.viewer && entry.viewer.readyState === 1) {
