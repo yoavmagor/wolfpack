@@ -73,6 +73,7 @@ describe("worktree lifecycle", () => {
     execFileSync("git", ["init", repoDir], { stdio: "pipe" });
     execFileSync("git", ["-C", repoDir, "config", "user.name", "test"], { stdio: "pipe" });
     execFileSync("git", ["-C", repoDir, "config", "user.email", "test@test.com"], { stdio: "pipe" });
+    execFileSync("git", ["-C", repoDir, "config", "commit.gpgsign", "false"], { stdio: "pipe" });
     execFileSync("git", ["-C", repoDir, "commit", "--allow-empty", "-m", "init"], {
       stdio: "pipe",
     });

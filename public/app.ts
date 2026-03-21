@@ -1,6 +1,6 @@
 import {
   esc, escAttr, loadStoredJson, isDesktop, formatSnapshotTtl,
-  getTerminalFontFamily, _charDimCache, getCharDimensions,
+  getTerminalFontFamily,
   wpDefaults, wpSettings, TERM_PRESETS, toggleSetting, applySetting,
   applyTermToXterm, initSettings, haptic, requestNotifications,
   QC_STORAGE_KEY, loadQuickCmds, RECENTS_STORAGE_KEY, MAX_RECENTS,
@@ -127,18 +127,12 @@ function renderCmdPalette() {
   el.classList.toggle("visible", state.kbAccessoryOpen);
 }
 
-async function sendQuickCmd(index) {
+function sendQuickCmd(index) {
   const cmd = state.quickCmds[index];
   if (!cmd || !state.currentSession) return;
   haptic([30]);
-  try {
-    await api("/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session: state.currentSession, text: cmd.cmd }),
-    }, state.currentMachine);
-    connectMobileTerminalWs();
-  } catch {
+  wpMetrics.sendCount++;
+  if (!_sendTerminalInput(_textEncoder.encode(cmd.cmd + "\r"))) {
     wpMetrics.sendFailCount++;
   }
 }
@@ -954,6 +948,27 @@ function createPtyTerminalController(opts) {
 
 var encodeTerminalBinary = WP.encodeTerminalBinary;
 
+const KEY_TO_ESCAPE = {
+  Enter: "\r", Tab: "\t", Escape: "\x1b",
+  Up: "\x1b[A", Down: "\x1b[B", Right: "\x1b[C", Left: "\x1b[D",
+  Home: "\x1b[H", End: "\x1b[F", PPage: "\x1b[5~", NPage: "\x1b[6~",
+  BTab: "\x1b[Z", BSpace: "\x7f", DC: "\x1b[3~",
+  y: "y", n: "n",
+  "C-a": "\x01", "C-b": "\x02", "C-c": "\x03", "C-d": "\x04",
+  "C-e": "\x05", "C-f": "\x06", "C-g": "\x07", "C-h": "\x08",
+  "C-k": "\x0b", "C-l": "\x0c", "C-n": "\x0e", "C-p": "\x10",
+  "C-r": "\x12", "C-u": "\x15", "C-w": "\x17", "C-z": "\x1a",
+};
+const _textEncoder = new TextEncoder();
+
+function _sendTerminalInput(bytes) {
+  if (state.terminalController?.isConnected) {
+    state.terminalController.send(bytes);
+    return true;
+  }
+  return false;
+}
+
 function createConflictOverlay(message, buttonLabel, onClick) {
   const overlay = document.createElement("div");
   overlay.className = "viewer-conflict-overlay";
@@ -1039,8 +1054,8 @@ function flushSnapshot() {
   state.snapshotTimer = null;
   if (!state.currentSession) { snapshotPending = null; return; }
   let text;
-  if (state.useDesktopTerminal && state.desktopController?.term) {
-    text = serializeXtermTail(state.desktopController.term, 100);
+  if (state.terminalController?.term) {
+    text = serializeXtermTail(state.terminalController.term, 100);
   } else {
     text = snapshotPending;
   }
@@ -1170,8 +1185,7 @@ function showView(name, skipAnimation) {
   // Prevents background WS from auto-reconnecting and stealing control from other instances
   if (prevView === "terminal" && effectiveName !== "terminal") {
     if (isGridActive()) { suspendGridMode(); }
-    else if (state.useDesktopTerminal) { destroyDesktopTerminal(); }
-    else { stopPolling(); }
+    else { destroyTerminal(); }
   }
 
   setState({ currentView: effectiveName });
@@ -1294,7 +1308,7 @@ function showView(name, skipAnimation) {
       state.sessionRefreshTimer = setInterval(loadSessions, 5000);
     } else if (name === "projects") {
       back.style.display = "block";
-      back.onclick = () => { stopPolling(); showView(state.viewBeforePicker); loadSessions(); };
+      back.onclick = () => { showView(state.viewBeforePicker); loadSessions(); };
       gear.style.display = "none";
       title.textContent = "select project";
 
@@ -1314,7 +1328,7 @@ function showView(name, skipAnimation) {
     } else if (name === "terminal") {
       back.style.display = "block";
       back.onclick = () => {
-        if (state.useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
+        destroyTerminal();
         closeSearch();
         state.useDesktopTerminal = false;
         setState({ currentSession: null, currentMachine: "" });
@@ -1549,7 +1563,7 @@ async function openSession(name, machineUrl) {
   if (isDesktop() && state.currentView === "terminal" && state.currentSession) {
     // If sidebar is auto-expanded (hover), instantly collapse it before
     // switching so the new terminal fits to full width. Without this,
-    // initDesktopTerminal() fits to the narrow width, triggering a PTY
+    // initTerminal() fits to the narrow width, triggering a PTY
     // resize that causes Claude Code's TUI to redraw with · fill dots.
     if (state.sidebarAutoExpanded) {
       const sb = document.getElementById("desktop-sidebar");
@@ -1570,46 +1584,17 @@ async function openSession(name, machineUrl) {
   setState({ currentSession: name, currentMachine: machineUrl || "" });
   recordRecent(state.currentMachine, name);
   state.lastRawPane = null;
-  state.useDesktopTerminal = isDesktop();
+  state.useDesktopTerminal = true;
   wpMetrics.reset();
   setFollowMode(true);
   restoreDraft();
   const cached = loadSnapshot(state.currentMachine, name);
   showView("terminal");
-  if (state.useDesktopTerminal) {
-    destroyDesktopTerminal();
-    initDesktopTerminal(cached);
-  } else {
-    const term = document.getElementById("terminal");
-    term.textContent = cached || "";
-    if (cached) term.scrollTop = term.scrollHeight;
-    await resizePane();
-    startPolling();
-  }
+  destroyTerminal();
+  initTerminal(cached);
   renderSidebar();
 }
 
-async function resizePane() {
-  if (!state.currentSession) return;
-  const term = document.getElementById("terminal");
-  const dims = getCharDimensions();
-  if (!dims.w || !dims.h) return false;
-  const cols = Math.floor(term.clientWidth / dims.w);
-  const rows = Math.floor(term.clientHeight / dims.h);
-  if (cols > 0 && rows > 0) {
-    try {
-      await api("/resize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session: state.currentSession, cols, rows }),
-      }, state.currentMachine);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
 
 // ── Project picker ──
 
@@ -1766,18 +1751,15 @@ async function createSessionWithAgent(cmd) {
     }, machine);
     if (data.session) {
       setState({ currentSession: data.session, currentMachine: machine });
-      state.useDesktopTerminal = isDesktop();
+      state.useDesktopTerminal = true;
       // Refresh session list in background so it doesn't block terminal init
       loadSessions().then(() => { loadSessionSwitcher(); renderSidebar(); });
-      if (state.useDesktopTerminal && isGridActive()) {
+      if (isGridActive()) {
         // Grid is active — add new session to grid instead of single-terminal
         addToGrid(data.session, machine);
-      } else if (state.useDesktopTerminal) {
-        destroyDesktopTerminal();
-        initDesktopTerminal();
       } else {
-        await resizePane();
-        startPolling();
+        destroyTerminal();
+        initTerminal();
       }
     } else {
       alert("Failed to create session: Server returned no session (is wolfpack up to date?)");
@@ -1794,18 +1776,18 @@ async function createSessionWithAgent(cmd) {
 // ── Desktop Terminal (ghostty-web + /ws/pty binary WS) ──
 
 function connectDesktopWs() {
-  if (!state.desktopController) return;
-  state.desktopController.connect();
+  if (!state.terminalController) return;
+  state.terminalController.connect();
 }
 
 function showDesktopConflictOverlay() {
   const container = document.getElementById("desktop-terminal-container");
   if (!container) return;
   // Force hydration complete so overlay is visible (container may be opacity:0)
-  if (state.desktopController && state.desktopController.hydration) state.desktopController.hydration.finish();
+  if (state.terminalController && state.terminalController.hydration) state.terminalController.hydration.finish();
   removeDesktopConflictOverlay();
   const overlay = createConflictOverlay("Session active on another device", "Take Control", () => {
-    if (state.desktopController) state.desktopController.sendTakeControl();
+    if (state.terminalController) state.terminalController.sendTakeControl();
     // Don't remove overlay here — wait for control_granted to confirm
   });
   overlay.id = "desktop-conflict-overlay";
@@ -1817,46 +1799,66 @@ function removeDesktopConflictOverlay() {
   if (el) el.remove();
 }
 
-async function initDesktopTerminal(cached) {
-  if (state.desktopController) return;
+async function initTerminal(cached) {
+  if (state.terminalController) return;
+  const _isMobile = !isDesktop();
   const container = document.getElementById("desktop-terminal-container");
+  const kbProxy = document.getElementById("mobile-kb-proxy");
   container.style.display = "block";
   container.innerHTML = "";
   container.classList.add("hydrating");
   container.classList.remove("hydrated");
   document.getElementById("terminal").style.display = "none";
   document.getElementById("kb-accessory").classList.remove("visible");
-  document.getElementById("kb-toggle")?.classList.remove("active");
   state.kbAccessoryOpen = false;
   document.getElementById("input-bar").style.display = "none";
   document.getElementById("cmd-palette").style.display = "none";
   document.getElementById("msg-preview").style.display = "none";
 
-  state.desktopController = createPtyTerminalController({
+  if (_isMobile) {
+    kbProxy.style.display = "block";
+    // Hide ghostty-web's textarea on mobile to prevent focus stealing
+    const style = document.createElement("style");
+    style.id = "mobile-no-ghost-focus";
+    style.textContent = "#desktop-terminal-container textarea { display: none !important; }";
+    document.head.appendChild(style);
+  } else {
+    kbProxy.style.display = "none";
+  }
+
+  state.terminalController = createPtyTerminalController({
     session: state.currentSession,
     machine: state.currentMachine || "",
     scrollback: DESKTOP_TERMINAL_SCROLLBACK,
+    disableStdin: _isMobile,
     getHydrationElement: () => document.getElementById("desktop-terminal-container"),
-    shouldFocus: () => true,
-    shouldReconnect: () => state.useDesktopTerminal && !!state.desktopController?.term,
+    shouldFocus: () => !_isMobile,
+    shouldReconnect: () => state.useDesktopTerminal && !!state.terminalController?.term,
     onOpen: (wasReconnect) => {
       if (wasReconnect) wpMetrics.reconnectCount++;
       setConnState("live");
     },
     onOutput: (data) => {
+      if (state.enterRetryTimer) { clearTimeout(state.enterRetryTimer); state.enterRetryTimer = null; }
       wpMetrics.wsMessagesReceived++;
       scheduleSnapshotSave(null);
     },
     onViewerConflict: () => showDesktopConflictOverlay(),
     onControlGranted: () => {
       removeDesktopConflictOverlay();
-      if (state.desktopController) state.desktopController.focus();
+      if (state.terminalController) state.terminalController.focus();
     },
     onDisconnected: (code, reason) => {
       removeDesktopConflictOverlay();
       var action = WP.classifyDisconnect(code, reason || "");
       if (action === "displaced") {
         setConnState("displaced");
+        setTimeout(() => {
+          if (state.terminalController && !state.terminalController.isConnected) {
+            state.terminalController.resetRetry();
+            connectDesktopWs();
+          }
+        }, 500);
         return;
       }
       if (action === "session-ended") {
@@ -1869,24 +1871,42 @@ async function initDesktopTerminal(cached) {
         setConnState("session-ended");
         return;
       }
-      state.desktopController.scheduleReconnect();
+      state.terminalController.scheduleReconnect();
     },
     onReconnecting: () => setConnState("reconnecting"),
     onReconnectExhausted: () => setConnState("offline"),
   });
 
-  await state.desktopController.mount(container, { cached });
-  if (!state.desktopController) return; // disposed while awaiting WASM init
+  await state.terminalController.mount(container, { cached });
+  if (!state.terminalController) return; // disposed while awaiting WASM init
 
+  let _lastContainerWidth = container.clientWidth;
   const onResize = () => {
     if (state.desktopResizeTimer) clearTimeout(state.desktopResizeTimer);
     state.desktopResizeTimer = setTimeout(() => {
       state.desktopResizeTimer = null;
-      if (state.desktopController) state.desktopController.resizeWithTransition();
+      const newWidth = container.clientWidth;
+      if (_isMobile && newWidth === _lastContainerWidth) return;
+      _lastContainerWidth = newWidth;
+      if (state.terminalController) state.terminalController.resize();
     }, 60);
   };
   window.addEventListener("resize", onResize);
   state.desktopResizeHandler = onResize;
+
+  if (window.visualViewport && _isMobile) {
+    const termView = document.getElementById("terminal-view");
+    const vvHandler = () => {
+      const kbHeight = window.innerHeight - window.visualViewport.height;
+      if (kbHeight > 50) {
+        termView.style.transform = "translateY(-" + kbHeight + "px)";
+      } else {
+        termView.style.transform = "";
+      }
+    };
+    window.visualViewport.addEventListener("resize", vvHandler);
+    state.visualViewportHandler = vvHandler;
+  }
 
   const onKeyDown = (e) => {
     if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
@@ -1905,14 +1925,29 @@ async function initDesktopTerminal(cached) {
   connectDesktopWs();
 }
 
-function destroyDesktopTerminal() {
+function destroyTerminal() {
   if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
   if (state.desktopResizeTimer) { clearTimeout(state.desktopResizeTimer); state.desktopResizeTimer = null; }
-  if (state.desktopController) { state.desktopController.dispose(); state.desktopController = null; }
+  if (state.terminalController) { state.terminalController.dispose(); state.terminalController = null; }
   if (state.desktopResizeHandler) {
     window.removeEventListener("resize", state.desktopResizeHandler);
     state.desktopResizeHandler = null;
   }
+  // Clean up visualViewport handler
+  if (state.visualViewportHandler && window.visualViewport) {
+    window.visualViewport.removeEventListener("resize", state.visualViewportHandler);
+    state.visualViewportHandler = null;
+  }
+  // Reset termView transform
+  const termView = document.getElementById("terminal-view");
+  if (termView) termView.style.transform = "";
+  // Blur and hide mobile-kb-proxy
+  const kbProxy = document.getElementById("mobile-kb-proxy");
+  if (kbProxy) { kbProxy.blur(); kbProxy.style.display = "none"; }
+  // Remove mobile-no-ghost-focus style element
+  const ghostStyle = document.getElementById("mobile-no-ghost-focus");
+  if (ghostStyle) ghostStyle.remove();
+
   const container = document.getElementById("desktop-terminal-container");
   if (container._onKeyDown) {
     document.removeEventListener("keydown", container._onKeyDown);
@@ -1935,7 +1970,7 @@ function terminalSessionKey() {
 function setConnState(connState) {
   const statusEl = document.getElementById("conn-status");
   if (!statusEl) return;
-  const active = state.useDesktopTerminal ? !!state.desktopController?.term : state.mobileStreamingActive;
+  const active = !!state.terminalController?.term;
   if (state.currentView !== "terminal" || !active || connState === "live") {
     statusEl.style.display = "none";
     statusEl.style.background = "#cc3333";
@@ -1968,29 +2003,6 @@ function setConnState(connState) {
   statusEl.textContent = "session ended \u2014 use \u2190 to go back";
 }
 
-function applyTerminalPane(pane) {
-  const renderStart = performance.now();
-  const term = document.getElementById("terminal");
-  const changed = pane !== state.lastRawPane;
-  state.lastRawPane = pane;
-  if (changed) {
-    // Clear Enter retry once output has advanced.
-    if (state.enterRetryTimer) {
-      clearTimeout(state.enterRetryTimer);
-      state.enterRetryTimer = null;
-    }
-    if (state.searchActive && state.searchTerm) {
-      applySearchHighlights();
-    } else {
-      term.textContent = pane;
-    }
-    wpMetrics.recordLatency(performance.now() - renderStart);
-    if (state.termFollowMode) term.scrollTop = term.scrollHeight;
-  }
-  if (changed && !state.useDesktopTerminal) {
-    scheduleSnapshotSave(pane);
-  }
-}
 
 function setFollowMode(on) {
   state.termFollowMode = on;
@@ -2039,125 +2051,13 @@ function jumpToLive() {
   }, { passive: true });
 })();
 
-function mobileTerminalWsUrl() {
-  if (state.currentMachine) {
-    const remote = new URL(state.currentMachine);
-    const proto = remote.protocol === "https:" ? "wss:" : "ws:";
-    return proto + "//" + remote.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
-  }
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  return proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
-}
-
-const mobileReconnector = createReconnector({
-  shouldReconnect: () => state.mobileStreamingActive && !state.useDesktopTerminal && !!state.currentSession && state.currentView === "terminal",
-  onReconnecting: () => setConnState("reconnecting"),
-  onExhausted: () => setConnState("offline"),
-});
-
-function connectMobileTerminalWs() {
-  if (!state.mobileStreamingActive || state.useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
-  if (mobileReconnector.isBlocked) return;
-  if (state.mobileWs && state.mobileWs.readyState <= WebSocket.OPEN) return;
-  const connectKey = terminalSessionKey();
-  const ws = new WebSocket(mobileTerminalWsUrl());
-  state.mobileWs = ws;
-
-  ws.onopen = async () => {
-    if (state.mobileWs !== ws) return;
-    if (!state.mobileStreamingActive || state.useDesktopTerminal || connectKey !== terminalSessionKey()) {
-      ws.close();
-      return;
-    }
-    if (mobileReconnector.connected()) wpMetrics.reconnectCount++;
-    setConnState("live");
-    await resizePane();
-  };
-
-  ws.onmessage = (ev) => {
-    if (state.mobileWs !== ws) return;
-    wpMetrics.wsMessagesReceived++;
-    let msg = null;
-    try { msg = JSON.parse(ev.data); } catch { return; }
-    if (msg?.type === "output" && typeof msg.data === "string") {
-      setConnState("live");
-      applyTerminalPane(msg.data);
-    }
-  };
-
-  ws.onclose = (ev) => {
-    if (state.mobileWs === ws) state.mobileWs = null;
-    if (!state.mobileStreamingActive || state.useDesktopTerminal || connectKey !== terminalSessionKey()) return;
-    if (ev.code === 4001 || (ev.code === 1000 && ev.reason === "session ended")) {
-      setConnState("session-ended");
-      return;
-    }
-    mobileReconnector.schedule(connectMobileTerminalWs);
-  };
-
-  ws.onerror = () => {};
-}
-
-function startPolling(resetBudget = true) {
-  state.mobileStreamingActive = true;
-  if (resetBudget) {
-    mobileReconnector.reset();
-  }
-  if (mobileReconnector.isBlocked && !resetBudget) {
-    setConnState("offline");
-    return;
-  }
-  mobileReconnector.cancel();
-  if (!state.mobileWs || state.mobileWs.readyState === WebSocket.CLOSED) {
-    setConnState("reconnecting");
-  }
-  connectMobileTerminalWs();
-}
-
-function stopPolling() {
-  if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
-  state.mobileStreamingActive = false;
-  mobileReconnector.reset();
-  mobileReconnector.cancel();
-  if (state.enterRetryTimer) {
-    clearTimeout(state.enterRetryTimer);
-    state.enterRetryTimer = null;
-  }
-  if (state.mobileWs) {
-    const ws = state.mobileWs;
-    state.mobileWs = null;
-    try { ws.close(1000, "viewer changed"); } catch {}
-  }
-  const statusEl = document.getElementById("conn-status");
-  if (statusEl) {
-    statusEl.style.display = "none";
-    statusEl.style.background = "#cc3333";
-  }
-}
-
-function retryTerminalConnection() {
-  if (state.useDesktopTerminal || !state.currentSession) return;
-  mobileReconnector.reset();
-  if (state.mobileWs) {
-    const ws = state.mobileWs;
-    state.mobileWs = null;
-    try { ws.close(1000, "manual retry"); } catch {}
-  }
-  startPolling(true);
-}
-
-function retryDesktopConnection() {
-  if (!state.useDesktopTerminal || !state.desktopController?.term) return;
+function retryConnection() {
+  if (!state.terminalController?.term) return;
   setConnState("reconnecting");
   connectDesktopWs();
 }
 
-function retryConnection() {
-  if (state.useDesktopTerminal) retryDesktopConnection();
-  else retryTerminalConnection();
-}
-
-async function sendMsg() {
+function sendMsg() {
   const input = document.getElementById("msg-input");
   const text = input.value.trim();
   if (!text || !state.currentSession) return;
@@ -2173,18 +2073,10 @@ async function sendMsg() {
   void btn.offsetWidth; // force reflow
   btn.classList.add("send-flash");
 
-  try {
-    wpMetrics.sendCount++;
-    await api("/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session: state.currentSession, text: text.replace(/\n/g, " ") }),
-    }, state.currentMachine);
-    connectMobileTerminalWs();
-
+  wpMetrics.sendCount++;
+  if (_sendTerminalInput(_textEncoder.encode(text.replace(/\n/g, " ") + "\r"))) {
     // Enter retry: if output hasn't changed within 800ms, Enter may have been dropped.
-    // Timer is cleared on any pane change, so this only fires if truly stuck.
-    // Scope to the session that was active at send time to prevent phantom Enter on other sessions.
+    // Timer is cleared on any output, so this only fires if truly stuck.
     if (state.enterRetryTimer) clearTimeout(state.enterRetryTimer);
     const retrySession = state.currentSession;
     const retryMachine = state.currentMachine;
@@ -2194,7 +2086,7 @@ async function sendMsg() {
       }
       state.enterRetryTimer = null;
     }, 800);
-  } catch {
+  } else {
     wpMetrics.sendFailCount++;
     input.value = saved;
     saveDraft();
@@ -2214,19 +2106,12 @@ function updatePreview() {
   }
 }
 
-async function sendKey(key) {
+function sendKey(key) {
   if (!state.currentSession) return;
-  try {
-    wpMetrics.sendCount++;
-    await api("/key", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session: state.currentSession, key }),
-    }, state.currentMachine);
-    connectMobileTerminalWs();
-  } catch {
-    wpMetrics.sendFailCount++;
-  }
+  wpMetrics.sendCount++;
+  const esc = KEY_TO_ESCAPE[key];
+  if (esc && _sendTerminalInput(_textEncoder.encode(esc))) return;
+  wpMetrics.sendFailCount++;
 }
 
 async function killSession(name, e, machineUrl) {
@@ -2244,7 +2129,7 @@ async function killSession(name, e, machineUrl) {
   }
   const wasCurrentSession = name === state.currentSession && (machineUrl || "") === state.currentMachine;
   if (wasCurrentSession && state.currentView === "terminal") {
-    if (state.useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
+    destroyTerminal();
     closeSearch();
     state.useDesktopTerminal = false;
     setState({ currentSession: null, currentMachine: "" });
@@ -2500,16 +2385,10 @@ async function switchSession(val) {
   }
   if (name === state.currentSession && machineUrl === state.currentMachine) {
     // Same session — reconnect or reinitialize if the terminal is not active.
-    if (state.useDesktopTerminal) {
-      if (state.desktopController) {
-        if (!state.desktopController.isConnected) connectDesktopWs();
-      } else if (state.currentView === "terminal") {
-        initDesktopTerminal();
-      }
-    } else if (!state.mobileStreamingActive && state.currentView === "terminal") {
-      document.getElementById("terminal").textContent = "";
-      await resizePane();
-      startPolling();
+    if (state.terminalController) {
+      if (!state.terminalController.isConnected) connectDesktopWs();
+    } else if (state.currentView === "terminal") {
+      initTerminal();
     }
     return;
   }
@@ -2517,11 +2396,7 @@ async function switchSession(val) {
   // Exit grid mode if active
   if (isGridActive()) exitGridMode();
   // Suspend current mode (cache terminal state)
-  if (state.useDesktopTerminal) {
-    destroyDesktopTerminal();
-  } else {
-    stopPolling();
-  }
+  destroyTerminal();
   setState({ currentSession: name, currentMachine: machineUrl });
   recordRecent(machineUrl, name);
   state.lastRawPane = null;
@@ -2536,14 +2411,8 @@ async function switchSession(val) {
     hml.textContent = mName;
     hml.style.display = "block";
   }
-  state.useDesktopTerminal = isDesktop();
-  if (state.useDesktopTerminal) {
-    initDesktopTerminal();
-  } else {
-    document.getElementById("terminal").textContent = "";
-    await resizePane();
-    startPolling();
-  }
+  state.useDesktopTerminal = true;
+  initTerminal();
   renderSidebar();
 }
 
@@ -2594,29 +2463,16 @@ document.addEventListener("visibilitychange", () => {
       state.sessionRefreshTimer = setInterval(loadSessions, 5000);
     }
     if (state.currentSession && state.currentView === "terminal") {
-      if (state.useDesktopTerminal) {
-        // Desktop: reset retry budget and reconnect current terminal context.
-        if (isGridActive()) {
-          for (const gs of state.gridSessions) {
-            if (!gs.controller || gs._displaced) continue;
-            gs.controller.resetRetry();
-            if (!gs.controller.isConnected) gs.controller.connect();
-          }
-        } else if (state.desktopController?.term) {
-          state.desktopController.resetRetry();
-          connectDesktopWs();
+      // Reset retry budget and reconnect current terminal context.
+      if (isGridActive()) {
+        for (const gs of state.gridSessions) {
+          if (!gs.controller || gs._displaced) continue;
+          gs.controller.resetRetry();
+          if (!gs.controller.isConnected) gs.controller.connect();
         }
-      } else {
-        // Mobile: kill stale WS and reconnect fresh.
-        // After backgrounding, the OS suspends the tab and the TCP connection
-        // dies silently — but the WS object may still report readyState=OPEN,
-        // blocking reconnection for 30-60s until the browser detects the dead socket.
-        if (state.mobileWs) {
-          const ws = state.mobileWs;
-          state.mobileWs = null;
-          try { ws.close(1000, "resume foreground"); } catch {}
-        }
-        startPolling(true);
+      } else if (state.terminalController?.term) {
+        state.terminalController.resetRetry();
+        connectDesktopWs();
       }
     }
   } else {
@@ -2749,36 +2605,18 @@ function toggleKbAccessory() {
 
 (function setupKbAccessory() {
   const acc = document.getElementById("kb-accessory");
-  const ta = document.getElementById("msg-input");
-  const tog = document.getElementById("kb-toggle");
-  if (!acc || !ta) return;
-
-  // Insert text at cursor position in textarea
-  function insertAtCursor(char) {
-    const start = ta.selectionStart;
-    const end = ta.selectionEnd;
-    ta.value = ta.value.substring(0, start) + char + ta.value.substring(end);
-    ta.selectionStart = ta.selectionEnd = start + char.length;
-    ta.dispatchEvent(new Event("input"));
-    ta.focus();
-  }
+  if (!acc) return;
 
   // Wire up all keys — prevent blur with mousedown/touchstart preventDefault
   acc.querySelectorAll(".kb-key").forEach((btn) => {
     const key = btn.dataset.key;
-    const insert = btn.dataset.insert;
     // Skip buttons with their own onclick (e.g. git button)
-    if (!key && !insert) return;
+    if (!key) return;
     let touchFired = false;
 
     function fire() {
-      if (key) {
-        haptic([15]);
-        sendKey(key);
-      } else if (insert) {
-        haptic([10]);
-        insertAtCursor(insert);
-      }
+      haptic([15]);
+      sendKey(key);
     }
 
     // Prevent focus steal (keeps keyboard open)
@@ -2795,6 +2633,42 @@ function toggleKbAccessory() {
       fire();
     });
   });
+})();
+
+(function setupMobileKbProxy() {
+  const proxy = document.getElementById("mobile-kb-proxy");
+  if (!proxy) return;
+  let _composing = false;
+
+  proxy.addEventListener("compositionstart", () => { _composing = true; });
+  proxy.addEventListener("compositionend", (e) => {
+    _composing = false;
+    if (e.data) _sendTerminalInput(_textEncoder.encode(e.data));
+    proxy.value = "";
+  });
+
+  proxy.addEventListener("input", (e) => {
+    if (_composing) return;
+    if (e.inputType === "deleteContentBackward") {
+      _sendTerminalInput(_textEncoder.encode("\x7f"));
+      return;
+    }
+    const text = e.data || proxy.value;
+    if (text) _sendTerminalInput(_textEncoder.encode(text));
+    proxy.value = "";
+  });
+
+  proxy.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); _sendTerminalInput(_textEncoder.encode("\r")); }
+    else if (e.key === "Backspace") { e.preventDefault(); _sendTerminalInput(_textEncoder.encode("\x7f")); }
+    else if (e.key === "Escape") { e.preventDefault(); _sendTerminalInput(_textEncoder.encode("\x1b")); }
+  });
+
+  document.getElementById("desktop-terminal-container").addEventListener("touchend", () => {
+    if (proxy.style.display !== "none") {
+      setTimeout(() => proxy.focus({ preventScroll: true }), 50);
+    }
+  }, { passive: true });
 })();
 
 // Global arrow keys → tmux when in terminal and textarea not focused
@@ -2875,8 +2749,8 @@ document.addEventListener("keydown", (e) => {
     if (isGridActive()) {
       const gs = state.gridSessions[state.gridFocusIndex];
       if (gs && gs.controller && gs.controller.term) gs.controller.term.clear();
-    } else if (state.desktopController?.term) {
-      state.desktopController.term.clear();
+    } else if (state.terminalController?.term) {
+      state.terminalController.term.clear();
     }
     return;
   }
@@ -3004,7 +2878,7 @@ function closeSearch() {
   document.getElementById("search-input").value = "";
   document.getElementById("search-count").textContent = "";
   if (state.useDesktopTerminal) {
-    if (state.desktopController) state.desktopController.focus();
+    if (state.terminalController) state.terminalController.focus();
   } else {
     const term = document.getElementById("terminal");
     if (state.lastRawPane) term.textContent = state.lastRawPane;
@@ -3431,8 +3305,8 @@ function initSidebar() {
       // Pin/unpin — resize PTY to fit new layout
       if (isGridActive()) {
         scheduleGridStabilizedFit();
-      } else if (state.desktopController) {
-        state.desktopController.resizeWithTransition();
+      } else if (state.terminalController) {
+        state.terminalController.resizeWithTransition();
       }
     }
     state.sidebarResizeDone = true;
@@ -3570,8 +3444,8 @@ function bindHtmlEventListeners(): void {
 bindHtmlEventListeners();
 
 initGridDeps({
-  showView, openSession, destroyDesktopTerminal, initDesktopTerminal,
-  backToSessions, startPolling, resizePane, renderSidebar,
+  showView, openSession, destroyTerminal, initTerminal,
+  backToSessions, renderSidebar,
   createPtyTerminalController, createConflictOverlay,
 });
 initRalphDeps({

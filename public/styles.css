@@ -1382,6 +1382,21 @@ body.ralph-hidden .sidebar-ralph-card { display: none !important; }
   background: var(--bg-base);
   overflow: hidden;
 }
+#mobile-kb-proxy {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  overflow: hidden;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: 16px;
+  caret-color: transparent;
+}
 #desktop-terminal-container.hydrating {
   background: var(--bg-base);
 }
@@ -2364,7 +2379,8 @@ body.ralph-hidden .sidebar-ralph-card { display: none !important; }
 
 /* ── Mobile-specific ── */
 @media (max-width: 768px) {
-  #kb-toggle { display: flex; }
+  #kb-toggle { display: none; }
+  #kb-accessory { display: flex; }
   .header-center .wolfpack-icon { display: none; }
 }
 

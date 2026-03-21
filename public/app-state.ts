@@ -107,11 +107,11 @@ export function applySetting(key, val) {
 export function applyTermToXterm() {
   const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
   const fontFamily = getTerminalFontFamily();
-  if (state.desktopController?.term) {
-    state.desktopController.term.options.fontSize = p.fontSize;
-    state.desktopController.term.options.lineHeight = p.lineHeight;
-    state.desktopController.term.options.fontFamily = fontFamily;
-    state.desktopController.resize();
+  if (state.terminalController?.term) {
+    state.terminalController.term.options.fontSize = p.fontSize;
+    state.terminalController.term.options.lineHeight = p.lineHeight;
+    state.terminalController.term.options.fontFamily = fontFamily;
+    state.terminalController.resize();
   }
   for (const gs of state.gridSessions) {
     if (!gs.controller?.term) continue;
@@ -215,7 +215,7 @@ export const state = {
   currentRalphWorktreeBranch: "",
   currentRalphAgent: "",
   // desktop/grid terminal state
-  desktopController: null,
+  terminalController: null,
   useDesktopTerminal: false,
   desktopResizeHandler: null,
   desktopResizeTimer: null,
@@ -232,9 +232,7 @@ export const state = {
   sidebarTransitionIsHover: false,
   sidebarResizeDone: false,
   sessionsExpanded: true,
-  // mobile/connection state
-  mobileWs: null,
-  mobileStreamingActive: false,
+  // connection state
   termFollowMode: true,
   sessionRefreshTimer: null,
   // UI interaction state

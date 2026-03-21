@@ -12,11 +12,9 @@ import {
 interface GridDeps {
   showView: (name: string, skipAnimation?: boolean) => void;
   openSession: (name: string, machineUrl?: string) => void;
-  destroyDesktopTerminal: () => void;
-  initDesktopTerminal: (cached?: any) => void;
+  destroyTerminal: () => void;
+  initTerminal: (cached?: any) => void;
   backToSessions: () => void;
-  startPolling: (resetBudget?: boolean) => void;
-  resizePane: () => Promise<void>;
   renderSidebar: () => void;
   createPtyTerminalController: (opts: any) => any;
   createConflictOverlay: (message: string, buttonLabel: string, onClick: (e: any) => void) => HTMLElement;
@@ -306,12 +304,8 @@ export function returnToTerminalView() {
   deps.showView("terminal");
   if (restorePreservedGrid()) return true;
   if (!state.currentSession) return false;
-  if (isDesktop()) {
-    state.useDesktopTerminal = true;
-    if (!state.desktopController) deps.initDesktopTerminal();
-  } else {
-    deps.resizePane().then(() => deps.startPolling());
-  }
+  state.useDesktopTerminal = true;
+  if (!state.terminalController) deps.initTerminal();
   return true;
 }
 
@@ -363,7 +357,7 @@ export function suspendGridMode() {
   const dtc = document.getElementById("desktop-terminal-container");
   dtc.style.display = "none";
   dtc.innerHTML = "";
-  state.desktopController = null;
+  state.terminalController = null;
   if (preserved.focusedSession) {
     setState({
       currentSession: preserved.focusedSession.session,
@@ -442,7 +436,7 @@ export function addToGrid(session, machine) {
   // Already in grid?
   if (state.gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
   // Track which session had a full-width PTY (needs reset on grid connect)
-  const singleTermSession = (state.desktopController?.term && state.currentSession) ? state.currentSession : null;
+  const singleTermSession = (state.terminalController?.term && state.currentSession) ? state.currentSession : null;
   const singleTermMachine = singleTermSession ? (state.currentMachine || "") : "";
   const gs = {
     session,
@@ -471,7 +465,7 @@ export function addToGrid(session, machine) {
   }
   if (isGridActive()) {
     // Destroy single-terminal mode
-    deps.destroyDesktopTerminal();
+    deps.destroyTerminal();
     state.gridFocusIndex = state.gridSessions.length - 1;
     renderGridCells();
     deps.renderSidebar();
@@ -520,7 +514,7 @@ export function removeFromGrid(idx) {
 }
 
 // skipRestore: when true, preserves session identity state but does NOT call
-// initDesktopTerminal(). Pass true when navigating AWAY from terminal view so
+// initTerminal(). Pass true when navigating AWAY from terminal view so
 // the caller controls when the terminal is next initialized.
 export function exitGridMode(skipRestore?) {
   cancelGridRelayoutTransition();
@@ -550,8 +544,8 @@ export function exitGridMode(skipRestore?) {
   const dtc = document.getElementById("desktop-terminal-container");
   dtc.style.display = "none";
   dtc.innerHTML = "";
-  // Clear state.desktopController reference in case it's stale
-  state.desktopController = null;
+  // Clear state.terminalController reference in case it's stale
+  state.terminalController = null;
   // Preserve which session to restore when returning to terminal view
   if (restoreSession) {
     setState({ currentSession: restoreSession, currentMachine: restoreMachine });
@@ -559,7 +553,7 @@ export function exitGridMode(skipRestore?) {
   // Restore single-terminal mode (skip when navigating away from terminal view)
   if (!skipRestore && restoreSession) {
     state.useDesktopTerminal = true;
-    deps.initDesktopTerminal();
+    deps.initTerminal();
     deps.renderSidebar();
   }
 }
