@@ -1910,8 +1910,13 @@ async function initTerminal(cached) {
   const kbProxy = document.getElementById("mobile-kb-proxy");
   container.style.display = "block";
   container.innerHTML = "";
-  container.classList.add("hydrating");
-  container.classList.remove("hydrated");
+  if (cached) {
+    container.classList.add("cached-visible");
+    container.classList.remove("hydrating", "hydrated");
+  } else {
+    container.classList.add("hydrating");
+    container.classList.remove("hydrated", "cached-visible");
+  }
   document.getElementById("terminal").style.display = "none";
   document.getElementById("kb-accessory").classList.remove("visible");
   state.kbAccessoryOpen = false;
@@ -1930,6 +1935,8 @@ async function initTerminal(cached) {
     kbProxy.style.display = "none";
   }
 
+  let _cachedPendingReset = !!cached;
+
   state.terminalController = createPtyTerminalController({
     session: state.currentSession,
     machine: state.currentMachine || "",
@@ -1943,6 +1950,11 @@ async function initTerminal(cached) {
       setConnState("live");
     },
     onOutput: (data) => {
+      if (_cachedPendingReset) {
+        _cachedPendingReset = false;
+        const el = document.getElementById("desktop-terminal-container");
+        if (el) el.classList.remove("cached-visible");
+      }
       if (state.enterRetryTimer) { clearTimeout(state.enterRetryTimer); state.enterRetryTimer = null; }
       wpMetrics.wsMessagesReceived++;
       scheduleSnapshotSave(null);
