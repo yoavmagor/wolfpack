@@ -18,6 +18,7 @@ interface GridDeps {
   renderSidebar: () => void;
   createPtyTerminalController: (opts: any) => any;
   createConflictOverlay: (message: string, buttonLabel: string, onClick: (e: any) => void) => HTMLElement;
+  canUseDesktopTerminal?: () => boolean;
 }
 
 let deps: GridDeps;
@@ -409,7 +410,7 @@ export function backFromSettings() {
 }
 
 export function addToGrid(session, machine) {
-  if (!isDesktop()) return;
+  if (!(deps.canUseDesktopTerminal ? deps.canUseDesktopTerminal() : isDesktop())) return;
   const targetMachine = machine || "";
   if (state.currentView !== "terminal" && hasPreservedGrid()) {
     const result = WP.addToGridState(

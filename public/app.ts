@@ -125,6 +125,12 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
   };
 }
 
+// ── WASM capability guard ──
+
+function canUseDesktopTerminal() {
+  return !(window as any).wasmFailed;
+}
+
 // ── Performance Metrics (UX-16) ──
 
 const wpMetrics = {
@@ -1898,6 +1904,7 @@ function removeDesktopConflictOverlay() {
 
 async function initTerminal(cached) {
   if (state.terminalController) return;
+  state.useDesktopTerminal = canUseDesktopTerminal();
   const _isMobile = !isDesktop();
   const container = document.getElementById("desktop-terminal-container");
   const kbProxy = document.getElementById("mobile-kb-proxy");
@@ -3569,6 +3576,7 @@ initGridDeps({
   showView, openSession, destroyTerminal, initTerminal,
   backToSessions, renderSidebar,
   createPtyTerminalController, createConflictOverlay,
+  canUseDesktopTerminal,
 });
 initRalphDeps({
   api, errorMessage, showView, getMachines, backToSessions,
