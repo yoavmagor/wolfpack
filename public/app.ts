@@ -28,6 +28,103 @@ import {
   scheduleGridStabilizedFit, isSessionInGrid, toggleGrid,
 } from "./app-grid";
 
+// ── Touch scroll handler for mobile terminal ──
+
+function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
+  let lastTouchY = 0;
+  let scrollAccum = 0;
+  let velocityY = 0;
+  let momentumId = null;
+  let tracking = false;
+  const SCROLL_THRESHOLD = 60;
+  const FRICTION = 0.95;
+  const MIN_VELOCITY = 0.5;
+  const MAX_LINES_PER_EVENT = 5;
+  const velocitySamples = [];
+  const MAX_SAMPLES = 5;
+  const encoder = new TextEncoder();
+
+  function sendScroll(deltaY) {
+    let hasMouse = false;
+    try { hasMouse = term.getMode(1000) || term.getMode(1002) || term.getMode(1003); } catch {}
+    scrollAccum += deltaY;
+    const lines = Math.trunc(scrollAccum / SCROLL_THRESHOLD);
+    if (lines === 0) return;
+    scrollAccum -= lines * SCROLL_THRESHOLD;
+    if (hasMouse) {
+      const btn = lines > 0 ? 65 : 64;
+      const seq = encoder.encode(`\x1b[<${btn};1;1M`);
+      const count = Math.min(Math.abs(lines), MAX_LINES_PER_EVENT);
+      for (let i = 0; i < count; i++) { if (canAcceptInput()) sendInput(seq); }
+    } else {
+      term.scrollLines(lines);
+    }
+  }
+
+  function cancelMomentum() { if (momentumId !== null) { cancelAnimationFrame(momentumId); momentumId = null; } }
+
+  function computeVelocity() {
+    if (velocitySamples.length < 2) return 0;
+    let totalV = 0, totalW = 0;
+    for (let i = 1; i < velocitySamples.length; i++) {
+      const dt = velocitySamples[i].t - velocitySamples[i - 1].t;
+      if (dt <= 0) continue;
+      const v = (velocitySamples[i].y - velocitySamples[i - 1].y) / dt;
+      const w = i;
+      totalV += v * w; totalW += w;
+    }
+    return totalW > 0 ? totalV / totalW : 0;
+  }
+
+  function momentumTick() {
+    velocityY *= FRICTION;
+    if (Math.abs(velocityY) < MIN_VELOCITY) { momentumId = null; return; }
+    sendScroll(velocityY * 16);
+    momentumId = requestAnimationFrame(momentumTick);
+  }
+
+  function onTouchStart(e) {
+    if (e.touches.length !== 1) return;
+    cancelMomentum();
+    tracking = true;
+    lastTouchY = e.touches[0].clientY;
+    scrollAccum = 0;
+    velocitySamples.length = 0;
+    velocitySamples.push({ y: e.touches[0].clientY, t: performance.now() });
+  }
+
+  function onTouchMove(e) {
+    if (e.touches.length !== 1 || !tracking) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    const deltaY = lastTouchY - touch.clientY;
+    lastTouchY = touch.clientY;
+    velocitySamples.push({ y: touch.clientY, t: performance.now() });
+    if (velocitySamples.length > MAX_SAMPLES) velocitySamples.shift();
+    sendScroll(deltaY);
+  }
+
+  function onTouchEnd() {
+    if (!tracking) return;
+    tracking = false;
+    velocityY = -computeVelocity();
+    if (Math.abs(velocityY) > MIN_VELOCITY) { momentumId = requestAnimationFrame(momentumTick); }
+  }
+
+  container.addEventListener("touchstart", onTouchStart, { passive: true });
+  container.addEventListener("touchmove", onTouchMove, { passive: false });
+  container.addEventListener("touchend", onTouchEnd, { passive: true });
+  container.addEventListener("touchcancel", onTouchEnd, { passive: true });
+
+  return function cleanup() {
+    cancelMomentum();
+    container.removeEventListener("touchstart", onTouchStart);
+    container.removeEventListener("touchmove", onTouchMove);
+    container.removeEventListener("touchend", onTouchEnd);
+    container.removeEventListener("touchcancel", onTouchEnd);
+  };
+}
+
 // ── Performance Metrics (UX-16) ──
 
 const wpMetrics = {
@@ -1880,6 +1977,19 @@ async function initTerminal(cached) {
   await state.terminalController.mount(container, { cached });
   if (!state.terminalController) return; // disposed while awaiting WASM init
 
+  // Mobile: attach touch scroll handler + blur any auto-focused element
+  if (_isMobile && state.terminalController.term) {
+    state._touchCleanup = setupTouchScrollHandler(
+      container, state.terminalController.term,
+      (data) => state.terminalController && state.terminalController.send(data),
+      () => !!(state.terminalController && state.terminalController.isConnected),
+    );
+    // Blur anything that auto-focused during mount (prevents keyboard auto-open)
+    if (document.activeElement && document.activeElement !== document.body) {
+      (document.activeElement as HTMLElement).blur();
+    }
+  }
+
   let _lastContainerWidth = container.clientWidth;
   const onResize = () => {
     if (state.desktopResizeTimer) clearTimeout(state.desktopResizeTimer);
@@ -1906,6 +2016,8 @@ async function initTerminal(cached) {
     };
     window.visualViewport.addEventListener("resize", vvHandler);
     state.visualViewportHandler = vvHandler;
+    // Fire once to catch keyboard already open from previous session
+    vvHandler();
   }
 
   const onKeyDown = (e) => {
@@ -1923,11 +2035,13 @@ async function initTerminal(cached) {
   container._onKeyDown = onKeyDown;
 
   connectDesktopWs();
+
 }
 
 function destroyTerminal() {
   if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
   if (state.desktopResizeTimer) { clearTimeout(state.desktopResizeTimer); state.desktopResizeTimer = null; }
+  if (state._touchCleanup) { state._touchCleanup(); state._touchCleanup = null; }
   if (state.terminalController) { state.terminalController.dispose(); state.terminalController = null; }
   if (state.desktopResizeHandler) {
     window.removeEventListener("resize", state.desktopResizeHandler);
@@ -2664,8 +2778,16 @@ function toggleKbAccessory() {
     else if (e.key === "Escape") { e.preventDefault(); _sendTerminalInput(_textEncoder.encode("\x1b")); }
   });
 
+  // Only focus proxy on deliberate TAP (not scroll). Track touch movement.
+  let _proxyTouchMoved = false;
+  document.getElementById("desktop-terminal-container").addEventListener("touchstart", () => {
+    _proxyTouchMoved = false;
+  }, { passive: true });
+  document.getElementById("desktop-terminal-container").addEventListener("touchmove", () => {
+    _proxyTouchMoved = true;
+  }, { passive: true });
   document.getElementById("desktop-terminal-container").addEventListener("touchend", () => {
-    if (proxy.style.display !== "none") {
+    if (!_proxyTouchMoved && proxy.style.display !== "none" && state.terminalController?.isConnected) {
       setTimeout(() => proxy.focus({ preventScroll: true }), 50);
     }
   }, { passive: true });
