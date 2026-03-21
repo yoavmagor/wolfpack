@@ -48,21 +48,6 @@ export function getTerminalFontFamily() {
     : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
 }
 
-export var _charDimCache = { key: "", w: 0, h: 0 };
-export function getCharDimensions() {
-  const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-  const key = tp.fontSize + "|" + tp.lineHeight + "|" + wpSettings.termFont;
-  if (_charDimCache.key === key && _charDimCache.w > 0) return _charDimCache;
-  const probe = document.createElement("span");
-  probe.style.cssText =
-    'position:absolute;visibility:hidden;white-space:pre;font-size:' + tp.fontSize + 'px;line-height:' + tp.lineHeight + ';font-family:inherit';
-  probe.textContent = "X";
-  document.body.appendChild(probe);
-  _charDimCache = { key, w: probe.offsetWidth, h: probe.offsetHeight };
-  document.body.removeChild(probe);
-  return _charDimCache;
-}
-
 // ── Settings (persisted to localStorage) ──
 
 export const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:900, debugPanel:false, ralphEnabled:false};
@@ -73,8 +58,6 @@ export const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fo
 export function toggleSetting(key, val) {
   wpSettings[key] = val;
   localStorage.setItem("wp-effects", JSON.stringify(wpSettings));
-  // Invalidate cached char dimensions on font changes
-  if (key === "termFontSize" || key === "termFont") _charDimCache = { key: "", w: 0, h: 0 };
   applySetting(key, val);
 }
 
