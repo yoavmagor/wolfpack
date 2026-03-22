@@ -9,11 +9,11 @@
  *
  * - wasReconnect: true when the same ptySocketClient auto-reconnects
  * - hydrationStarted: true after the controller's first connect()
- * - skipInitialPrefill: from opts — grid cells set this to skip prefill on fresh ptyClient
+ * - prefillDisabled: true when prefillMode is not "full" (e.g. "viewport" for grid cells, "none")
  *
  * Auto-reconnect always rehydrates (wasReconnect=true).
- * Manual retry (new ptyClient, hydrationStarted=true) rehydrates unless
- * prefill is disabled (prefillMode "none" for grid cells, "full" for desktop).
+ * Manual retry (new ptyClient, hydrationStarted=true) rehydrates only when
+ * prefill is "full" (desktop). Grid cells use "viewport" so prefillDisabled=true.
  */
 export function shouldRehydrate(
   wasReconnect: boolean,

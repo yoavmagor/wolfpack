@@ -601,7 +601,7 @@ function createTerminalInstance({ fontSize, scrollback, cursorBlink = true, disa
   // ghostty-web: true = "handled, stop", false = "not handled, continue"
   term.attachCustomKeyEventHandler((e) => {
     if (WP.shouldInterceptCopy(e, term.hasSelection())) {
-      navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+      navigator.clipboard.writeText(term.getSelection()).catch((e) => { console.debug("[clipboard] copy failed:", e); });
       return true;
     }
     return false;
@@ -869,7 +869,7 @@ function createPtySocketClient(opts) {
             _sawViewportPrefill = true;
             // Safety timeout: if WS drops between phase 1 and phase 2 (prefill_done
             // never arrives), we'd buffer live output indefinitely. Force-flush after
-            // 10s so the terminal isn't stuck blank. See PR #89 review.
+            // 5s so the terminal isn't stuck blank. See PR #89 review.
             if (_prefillDoneTimeout) clearTimeout(_prefillDoneTimeout);
             _prefillDoneTimeout = setTimeout(() => {
               _prefillDoneTimeout = null;
@@ -1151,7 +1151,7 @@ function createPtyTerminalController(opts) {
         if (!isCurrent()) return;
         // On reconnect, clear stale content and restart hydration —
         // server sends fresh prefill scrollback on the new connection.
-        const rehydrate = WP.shouldRehydrate(wasReconnect, _hydrationStarted, opts.prefillMode === "none");
+        const rehydrate = WP.shouldRehydrate(wasReconnect, _hydrationStarted, opts.prefillMode !== "full");
         if (rehydrate && _term) {
           _hydrationWritesInFlight = 0;
           if (wasReconnect) {
