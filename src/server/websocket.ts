@@ -80,15 +80,22 @@ export function __stripInitialPtyOverlap(
   return { awaitingMore: false, data: attachPrefix };
 }
 
-/** Send prefill buffer in 32KB chunks with short delays to avoid stalling mobile connections. */
+function sendPrefillDone(entry: { viewer: WebSocket | null; alive: boolean }): boolean {
+  if (!entry.alive || !entry.viewer || entry.viewer.readyState !== 1) return false;
+  entry.viewer.send(JSON.stringify({ type: "prefill_done" }));
+  return true;
+}
+
+/** Send prefill buffer in 32KB chunks with short delays to avoid stalling mobile connections.
+ *  Sends `prefill_done` message at the end so the client exits buffering state. */
 async function sendPrefillChunked(
   entry: { viewer: WebSocket | null; alive: boolean },
   prefill: Buffer,
   session: string,
-): Promise<void> {
+): Promise<boolean> {
   let offset = 0;
   while (offset < prefill.length) {
-    if (!entry.alive || !entry.viewer || entry.viewer.readyState !== 1) return;
+    if (!entry.alive || !entry.viewer || entry.viewer.readyState !== 1) return false;
     const end = Math.min(offset + PREFILL_CHUNK_SIZE, prefill.length);
     entry.viewer.send(prefill.subarray(offset, end));
     offset = end;
@@ -96,9 +103,7 @@ async function sendPrefillChunked(
       await new Promise(resolve => setTimeout(resolve, PREFILL_CHUNK_DELAY_MS));
     }
   }
-  if (entry.alive && entry.viewer && entry.viewer.readyState === 1) {
-    entry.viewer.send(JSON.stringify({ type: "prefill_done" }));
-  }
+  return sendPrefillDone(entry);
 }
 
 /** Test hook: expose PTY internal state for assertions */
@@ -393,13 +398,15 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
 
         // Phase 2: Full scrollback (only if prefillMode === "full")
         if (prefillMode === "full" && entry.alive && entry.viewer && entry.viewer.readyState === 1) {
+          let phase2Completed = false;
           try {
             const { stdout } = await exec(TMUX, [
               "capture-pane", "-t", session, "-p", "-e", "-S", `-${DESKTOP_PREFILL_HISTORY_LINES}`,
             ], { timeout: 3000 });
             if (stdout && entry.viewer && entry.viewer.readyState === 1) {
               const rawPrefill = Buffer.from(stdout);
-              let fullPrefill: Buffer;              if (rawPrefill.length > DESKTOP_PREFILL_MAX_BYTES) {
+              let fullPrefill: Buffer;
+              if (rawPrefill.length > DESKTOP_PREFILL_MAX_BYTES) {
                 let start = rawPrefill.length - DESKTOP_PREFILL_MAX_BYTES;
                 while (start < rawPrefill.length && rawPrefill[start] !== 0x0a) start++;
                 if (start < rawPrefill.length) start++;
@@ -408,7 +415,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
                 fullPrefill = rawPrefill;
               }
               try {
-                await sendPrefillChunked(entry, fullPrefill, session);
+                phase2Completed = await sendPrefillChunked(entry, fullPrefill, session);
                 prefill = fullPrefill;
               } catch (e: unknown) {
                 log.error("PTY scrollback prefill send failed", { session, error: errMsg(e) });
@@ -417,9 +424,11 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
           } catch (e: unknown) {
             log.warn("PTY scrollback prefill capture failed", { session, error: errMsg(e) });
           }
-        } else if (entry.alive && entry.viewer && entry.viewer.readyState === 1) {
-          // Viewport-only mode: send prefill_done so client exits buffering state
-          entry.viewer.send(JSON.stringify({ type: "prefill_done" }));
+          if (!phase2Completed) sendPrefillDone(entry);
+        } else if (prefillMode !== "full") {
+          // Viewport-only or WS died during phase 2 setup: send prefill_done
+          // so client exits buffering state (sendPrefillDone checks readyState)
+          sendPrefillDone(entry);
         }
       }
 

@@ -13,12 +13,12 @@
  *
  * Auto-reconnect always rehydrates (wasReconnect=true).
  * Manual retry (new ptyClient, hydrationStarted=true) rehydrates unless
- * skipInitialPrefill is set (grid cells skip, desktop doesn't).
+ * prefill is disabled (prefillMode "none" for grid cells, "full" for desktop).
  */
 export function shouldRehydrate(
   wasReconnect: boolean,
   hydrationStarted: boolean,
-  skipInitialPrefill: boolean,
+  prefillDisabled: boolean,
 ): boolean {
-  return wasReconnect || (hydrationStarted && !skipInitialPrefill);
+  return wasReconnect || (hydrationStarted && !prefillDisabled);
 }

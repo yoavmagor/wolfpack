@@ -71,13 +71,17 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
   function getSelectedText() {
     if (selAnchorRow < 0 || selEndRow < 0) return "";
     const buf = term.buffer.active;
+    const viewportY = typeof term.getViewportY === "function"
+      ? Math.max(0, Math.floor(term.getViewportY() || 0))
+      : 0;
     let r0 = selAnchorRow, c0 = selAnchorCol, r1 = selEndRow, c1 = selEndCol;
     if (r0 > r1 || (r0 === r1 && c0 > c1)) {
       [r0, c0, r1, c1] = [r1, c1, r0, c0];
     }
     const lines: string[] = [];
     for (let r = r0; r <= r1; r++) {
-      const line = buf.getLine(r + buf.baseY);
+      const lineIndex = Math.max(0, r + (buf.baseY || 0) - viewportY);
+      const line = buf.getLine(lineIndex);
       if (!line) continue;
       const start = r === r0 ? c0 : 0;
       const end = r === r1 ? c1 + 1 : term.cols;
@@ -740,13 +744,14 @@ function createInitialHydrationController(opts) {
  * @param {string} opts.session - tmux session name
  * @param {string} opts.machine - remote machine URL ("" for local)
  * @param {boolean} [opts.resetPty] - append &reset=1 on first connect
- * @param {boolean} [opts.skipInitialPrefill] - ask server to skip first attach prefill
+ * @param {string} [opts.prefillMode] - "full" (default), "viewport", or "none"
  * @param {() => {cols:number, rows:number}|null} opts.getTermDimensions
  * @param {() => void} opts.fitTerminal
  * @param {(Uint8Array) => void} opts.onBinaryData
  * @param {() => void} [opts.onOpen]
  * @param {() => void} [opts.onViewerConflict]
  * @param {() => void} [opts.onControlGranted]
+ * @param {() => void} [opts.onReplacePrefill]
  * @param {(number, string) => void} opts.onDisconnected
  * @param {() => void} [opts.onReconnecting]
  * @param {() => void} [opts.onReconnectExhausted]
@@ -761,11 +766,12 @@ function createPtySocketClient(opts) {
   });
   let hasConnected = false;
   let consumeReset = !!opts.resetPty;
-  let _skipInitialPrefill = !!opts.skipInitialPrefill;
+  let _initialPrefillMode = opts.prefillMode || "full";
   let _attachAckTimer = null;
   let _awaitingAttachAck = false;
   let _prefillChunks: Uint8Array[] = [];
   let _awaitingPrefillDone = false;
+  let _sawViewportPrefill = false;
 
   function buildUrl() {
     const resetSuffix = consumeReset ? "&reset=1" : "";
@@ -786,13 +792,14 @@ function createPtySocketClient(opts) {
     try { opts.fitTerminal(); } catch {}
     const dims = opts.getTermDimensions();
     if (!dims) return;
-    const skipPrefill = _skipInitialPrefill;
-    _skipInitialPrefill = false;
+    const prefillMode = _initialPrefillMode;
+    _initialPrefillMode = "full";
     _lastSentResize = dims.cols + "x" + dims.rows;
     _awaitingAttachAck = true;
     _prefillChunks = [];
-    _awaitingPrefillDone = !skipPrefill;
-    ws.send(JSON.stringify({ type: "attach", cols: dims.cols, rows: dims.rows, skipPrefill }));
+    _awaitingPrefillDone = prefillMode !== "none";
+    _sawViewportPrefill = false;
+    ws.send(JSON.stringify({ type: "attach", cols: dims.cols, rows: dims.rows, prefillMode }));
     if (_attachAckTimer) clearTimeout(_attachAckTimer);
     // Compatibility fallback: older servers don't implement attach_ack.
     _attachAckTimer = setTimeout(() => {
@@ -860,11 +867,16 @@ function createPtySocketClient(opts) {
             }
             // Stay in prefill mode for phase 2 scrollback (if server sends it)
             _awaitingPrefillDone = true;
+            _sawViewportPrefill = true;
           } else if (msg.type === "prefill_done") {
             // Phase 2 complete (or single-phase legacy): flush remaining chunks.
             _awaitingPrefillDone = false;
             const chunks = _prefillChunks;
             _prefillChunks = [];
+            if (_sawViewportPrefill && chunks.length && opts.onReplacePrefill) {
+              opts.onReplacePrefill();
+            }
+            _sawViewportPrefill = false;
             if (opts.onBinaryData) {
               for (const chunk of chunks) opts.onBinaryData(chunk);
             }
@@ -872,6 +884,7 @@ function createPtySocketClient(opts) {
             _awaitingAttachAck = false;
             _awaitingPrefillDone = false;
             _prefillChunks = [];
+            _sawViewportPrefill = false;
             if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
             if (opts.onViewerConflict) opts.onViewerConflict();
           } else if (msg.type === "control_granted") {
@@ -894,6 +907,7 @@ function createPtySocketClient(opts) {
       _awaitingAttachAck = false;
       _awaitingPrefillDone = false;
       _prefillChunks = [];
+      _sawViewportPrefill = false;
       if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
       if (opts.onDisconnected) opts.onDisconnected(ev.code, ev.reason);
     };
@@ -927,6 +941,9 @@ function createPtySocketClient(opts) {
     _rc.cancel();
     _rc.block();
     _awaitingAttachAck = false;
+    _awaitingPrefillDone = false;
+    _prefillChunks = [];
+    _sawViewportPrefill = false;
     if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
     if (ws) { ws.close(); ws = null; }
   }
@@ -965,7 +982,7 @@ function createPtySocketClient(opts) {
  * @param {number} [opts.hydrationTimeoutMs] - hydration reveal timeout
  * @param {() => HTMLElement|null} [opts.getHydrationElement] - element to show/hide for hydration (defaults to mount container)
  * @param {boolean} [opts.resetPty] - append &reset=1 on first connect
- * @param {boolean} [opts.skipInitialPrefill] - skip server prefill on first attach
+ * @param {string} [opts.prefillMode] - "full" (default), "viewport", or "none"
  * @param {() => boolean} [opts.shouldReconnect] - guard for reconnect attempts
  * @param {() => boolean} [opts.canAcceptInput] - override stdin guard (default: ptyClient.isOpen)
  * @param {() => boolean} [opts.canSendResize] - override resize guard (default: canAcceptInput)
@@ -973,6 +990,7 @@ function createPtySocketClient(opts) {
  * @param {(boolean) => void} [opts.onOpen] - WebSocket opened (wasReconnect)
  * @param {() => void} [opts.onViewerConflict]
  * @param {() => void} [opts.onControlGranted]
+ * @param {() => void} [opts.onReplacePrefill]
  * @param {(number, string) => void} [opts.onDisconnected]
  * @param {() => void} [opts.onReconnecting]
  * @param {() => void} [opts.onReconnectExhausted]
@@ -1090,7 +1108,7 @@ function createPtyTerminalController(opts) {
       session: opts.session,
       machine: opts.machine || "",
       resetPty: opts.resetPty,
-      skipInitialPrefill: opts.skipInitialPrefill,
+      prefillMode: opts.prefillMode,
       getTermDimensions: () => _term ? { cols: _term.cols, rows: _term.rows } : null,
       fitTerminal: fitTerminalPreserveScroll,
       shouldReconnect: opts.shouldReconnect,
@@ -1098,7 +1116,7 @@ function createPtyTerminalController(opts) {
         if (!isCurrent()) return;
         // On reconnect, clear stale content and restart hydration —
         // server sends fresh prefill scrollback on the new connection.
-        const rehydrate = WP.shouldRehydrate(wasReconnect, _hydrationStarted, opts.skipInitialPrefill);
+        const rehydrate = WP.shouldRehydrate(wasReconnect, _hydrationStarted, opts.prefillMode === "none");
         if (rehydrate && _term) {
           _hydrationWritesInFlight = 0;
           if (wasReconnect) {
@@ -1114,6 +1132,12 @@ function createPtyTerminalController(opts) {
           }
         }
         if (opts.onOpen) opts.onOpen(wasReconnect);
+      },
+      onReplacePrefill: () => {
+        if (!_term) return;
+        _reconnectPendingReset = false;
+        _hydrationWritesInFlight = 0;
+        _term.reset();
       },
       onBinaryData: (data) => {
         if (!_term) return;
@@ -1232,6 +1256,23 @@ function _sendTerminalInput(bytes) {
     return true;
   }
   return false;
+}
+
+function sendMobileProxyText(proxy, text) {
+  const pending = text || proxy.value;
+  if (!pending) return true;
+  if (_sendTerminalInput(_textEncoder.encode(pending))) {
+    proxy.value = "";
+    return true;
+  }
+  proxy.value = pending;
+  return false;
+}
+
+function flushMobileKbProxyPendingInput() {
+  const proxy = document.getElementById("mobile-kb-proxy");
+  if (!proxy) return false;
+  return sendMobileProxyText(proxy, proxy.value);
 }
 
 function createConflictOverlay(message, buttonLabel, onClick) {
@@ -1562,7 +1603,6 @@ function showView(name, skipAnimation) {
   const applyHeader = () => {
     // Always start with kb-accessory closed on view change
     document.getElementById("kb-accessory").classList.remove("visible");
-    document.getElementById("kb-toggle")?.classList.remove("active");
     state.kbAccessoryOpen = false;
     chip.style.display = "none";
     closeDrawer(true);
@@ -2118,6 +2158,7 @@ async function initTerminal(cached) {
     onOpen: (wasReconnect) => {
       if (wasReconnect) wpMetrics.reconnectCount++;
       setConnState("live");
+      flushMobileKbProxyPendingInput();
     },
     onOutput: (data) => {
       if (_cachedPendingReset) {
@@ -2138,6 +2179,7 @@ async function initTerminal(cached) {
         const proxy = document.getElementById("mobile-kb-proxy");
         if (proxy && proxy.style.display !== "none") proxy.focus({ preventScroll: true });
       }
+      flushMobileKbProxyPendingInput();
     },
     onDisconnected: (code, reason) => {
       removeDesktopConflictOverlay();
@@ -2170,6 +2212,11 @@ async function initTerminal(cached) {
 
   await state.terminalController.mount(container, { cached });
   if (!state.terminalController) return; // disposed while awaiting WASM init
+  if (!state.terminalController.term) {
+    // WASM init failed — show error instead of blank screen
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:13px;padding:20px;text-align:center">Terminal unavailable — WebAssembly not supported in this browser</div>';
+    return;
+  }
 
   // Mobile: attach touch scroll handler + blur any auto-focused element
   if (_isMobile && state.terminalController.term) {
@@ -2192,7 +2239,9 @@ async function initTerminal(cached) {
       const newWidth = container.clientWidth;
       if (_isMobile && newWidth === _lastContainerWidth) return;
       _lastContainerWidth = newWidth;
-      if (state.terminalController) state.terminalController.resize();
+      if (state.terminalController) {
+        _isMobile ? state.terminalController.resize() : state.terminalController.resizeWithTransition();
+      }
     }, 60);
   };
   window.addEventListener("resize", onResize);
@@ -2400,6 +2449,7 @@ function sendMsg() {
   if (_sendTerminalInput(_textEncoder.encode(text.replace(/\n/g, " ") + "\r"))) {
     // Enter retry: if output hasn't changed within 800ms, Enter may have been dropped.
     // Timer is cleared on any output, so this only fires if truly stuck.
+    // Session-scope guard prevents phantom Enter on other sessions if user switches mid-timer.
     if (state.enterRetryTimer) clearTimeout(state.enterRetryTimer);
     const retrySession = state.currentSession;
     const retryMachine = state.currentMachine;
@@ -2917,12 +2967,10 @@ msgInput.addEventListener("keydown", (e) => {
 function toggleKbAccessory() {
   const acc = document.getElementById("kb-accessory");
   const cmd = document.getElementById("cmd-palette");
-  const tog = document.getElementById("kb-toggle");
   if (!acc) return;
   state.kbAccessoryOpen = !state.kbAccessoryOpen;
   acc.classList.toggle("visible", state.kbAccessoryOpen);
   if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", state.kbAccessoryOpen);
-  if (tog) tog.classList.toggle("active", state.kbAccessoryOpen);
   haptic([10]);
 }
 
@@ -2962,27 +3010,35 @@ function toggleKbAccessory() {
   const proxy = document.getElementById("mobile-kb-proxy");
   if (!proxy) return;
   let _composing = false;
+  let _skipNextInput = false;
 
   proxy.addEventListener("compositionstart", () => { _composing = true; });
   proxy.addEventListener("compositionend", (e) => {
     _composing = false;
-    if (e.data) _sendTerminalInput(_textEncoder.encode(e.data));
-    proxy.value = "";
+    _skipNextInput = sendMobileProxyText(proxy, proxy.value || e.data || "");
   });
 
   proxy.addEventListener("input", (e) => {
     if (_composing) return;
+    if (_skipNextInput) {
+      _skipNextInput = false;
+      return;
+    }
     // Skip deleteContentBackward — keydown handler already sent \x7f
     if (e.inputType === "deleteContentBackward") return;
-    const text = e.data || proxy.value;
-    if (text) _sendTerminalInput(_textEncoder.encode(text));
-    proxy.value = "";
+    // Skip insertLineBreak/insertParagraph — keydown handler already sent \r
+    if (e.inputType === "insertLineBreak" || e.inputType === "insertParagraph") return;
+    sendMobileProxyText(proxy, proxy.value || e.data || "");
   });
 
   proxy.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); _sendTerminalInput(_textEncoder.encode("\r")); }
-    else if (e.key === "Backspace") { e.preventDefault(); _sendTerminalInput(_textEncoder.encode("\x7f")); }
-    else if (e.key === "Escape") { e.preventDefault(); _sendTerminalInput(_textEncoder.encode("\x1b")); }
+    if (e.key === "Enter") {
+      if (_sendTerminalInput(_textEncoder.encode("\r"))) e.preventDefault();
+    } else if (e.key === "Backspace") {
+      if (_sendTerminalInput(_textEncoder.encode("\x7f")) || !proxy.value) e.preventDefault();
+    } else if (e.key === "Escape") {
+      if (_sendTerminalInput(_textEncoder.encode("\x1b"))) e.preventDefault();
+    }
   });
 
   // Keyboard toggle button — explicit open/close instead of tap-on-terminal
@@ -3217,22 +3273,13 @@ function closeSearch() {
   document.getElementById("search-bar").classList.remove("visible");
   document.getElementById("search-input").value = "";
   document.getElementById("search-count").textContent = "";
-  if (state.useDesktopTerminal) {
-    if (state.terminalController) state.terminalController.focus();
-  } else {
-    const term = document.getElementById("terminal");
-    if (state.lastRawPane) term.textContent = state.lastRawPane;
-  }
+  if (state.terminalController) state.terminalController.focus();
 }
 
 function doSearch() {
   state.searchTerm = document.getElementById("search-input").value;
   if (!state.searchTerm) {
     document.getElementById("search-count").textContent = "";
-    if (!state.useDesktopTerminal) {
-      const term = document.getElementById("terminal");
-      if (state.lastRawPane) term.textContent = state.lastRawPane;
-    }
     state.searchMatches = [];
     state.searchIndex = -1;
     return;
@@ -3767,7 +3814,6 @@ function bindHtmlEventListeners(): void {
   const gitBtn = document.querySelector(".kb-key.kb-git");
   if (gitBtn) gitBtn.addEventListener("click", () => showGitStatus());
 
-  on("kb-toggle", "click", () => toggleKbAccessory());
 
   // Ralph detail
   on("ralph-detail-back-btn", "click", () => backFromRalph());
