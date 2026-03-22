@@ -71,9 +71,7 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
   function getSelectedText() {
     if (selAnchorRow < 0 || selEndRow < 0) return "";
     const buf = term.buffer.active;
-    const viewportY = typeof term.getViewportY === "function"
-      ? Math.max(0, Math.floor(term.getViewportY() || 0))
-      : 0;
+    const viewportY = Math.max(0, buf.viewportY || 0);
     let r0 = selAnchorRow, c0 = selAnchorCol, r1 = selEndRow, c1 = selEndCol;
     if (r0 > r1 || (r0 === r1 && c0 > c1)) {
       [r0, c0, r1, c1] = [r1, c1, r0, c0];
@@ -283,7 +281,7 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
 
 // ── WASM capability guard ──
 
-function canUseDesktopTerminal() {
+function canUseWasmTerminal() {
   return !(window as any).wasmFailed;
 }
 
@@ -1137,7 +1135,7 @@ function createPtyTerminalController(opts) {
         if (!_term) return;
         _reconnectPendingReset = false;
         _hydrationWritesInFlight = 0;
-        _term.reset();
+        _term.clear();
       },
       onBinaryData: (data) => {
         if (!_term) return;
@@ -1251,6 +1249,15 @@ const KEY_TO_ESCAPE = {
 const _textEncoder = new TextEncoder();
 
 function _sendTerminalInput(bytes) {
+  // In grid mode, route to the focused grid cell's controller
+  if (isGridActive()) {
+    const gs = state.gridSessions[state.gridFocusIndex];
+    if (gs?.controller?.isConnected) {
+      gs.controller.send(bytes);
+      return true;
+    }
+    return false;
+  }
   if (state.terminalController?.isConnected) {
     state.terminalController.send(bytes);
     return true;
@@ -1609,7 +1616,6 @@ function showView(name, skipAnimation) {
     title.style.display = "";
     title.style.cursor = "";
     title.onclick = null;
-    document.getElementById("search-btn").style.display = "none";
     document.getElementById("header-machine-label").style.display = "none";
     headerCenter.style.transform = "";
 
@@ -1642,8 +1648,6 @@ function showView(name, skipAnimation) {
       back.style.display = "block";
       back.onclick = () => {
         destroyTerminal();
-        closeSearch();
-        state.useDesktopTerminal = false;
         setState({ currentSession: null, currentMachine: "" });
         showView("sessions");
         loadSessions();
@@ -1653,7 +1657,6 @@ function showView(name, skipAnimation) {
       loadSessionSwitcher();
       chip.style.display = "flex";
       headerCenter.style.transform = "";
-      document.getElementById("search-btn").style.display = "";
       const hml = document.getElementById("header-machine-label");
       if (getMachines().length > 0) {
         const mName = state.currentMachine
@@ -1896,10 +1899,7 @@ async function openSession(name, machineUrl) {
   }
   setState({ currentSession: name, currentMachine: machineUrl || "" });
   recordRecent(state.currentMachine, name);
-  state.lastRawPane = null;
-  state.useDesktopTerminal = true;
   wpMetrics.reset();
-  setFollowMode(true);
   restoreDraft();
   const cached = loadSnapshot(state.currentMachine, name);
   showView("terminal");
@@ -1943,8 +1943,9 @@ async function showProjectPicker(machineUrl) {
 function showTerminalLoading(label) {
   clearPreservedGrid();
   showView("terminal");
-  const term = document.getElementById("terminal");
-  term.innerHTML = '<span class="loading-text">Starting session in ' + esc(label) + '\u2026</span>';
+  const dtc = document.getElementById("desktop-terminal-container");
+  dtc.style.display = "block";
+  dtc.innerHTML = '<span class="loading-text">Starting session in ' + esc(label) + '\u2026</span>';
 }
 
 function selectProject(project) {
@@ -2064,7 +2065,6 @@ async function createSessionWithAgent(cmd) {
     }, machine);
     if (data.session) {
       setState({ currentSession: data.session, currentMachine: machine });
-      state.useDesktopTerminal = true;
       // Refresh session list in background so it doesn't block terminal init
       loadSessions().then(() => { loadSessionSwitcher(); renderSidebar(); });
       if (isGridActive()) {
@@ -2114,8 +2114,7 @@ function removeDesktopConflictOverlay() {
 
 async function initTerminal(cached) {
   if (state.terminalController) return;
-  state.useDesktopTerminal = canUseDesktopTerminal();
-  const _isMobile = !isDesktop();
+  const isMobile = !isDesktop();
   const container = document.getElementById("desktop-terminal-container");
   const kbProxy = document.getElementById("mobile-kb-proxy");
   container.style.display = "block";
@@ -2127,34 +2126,35 @@ async function initTerminal(cached) {
     container.classList.add("hydrating");
     container.classList.remove("hydrated", "cached-visible");
   }
-  document.getElementById("terminal").style.display = "none";
   document.getElementById("kb-accessory").classList.remove("visible");
   state.kbAccessoryOpen = false;
   document.getElementById("input-bar").style.display = "none";
   document.getElementById("cmd-palette").style.display = "none";
   document.getElementById("msg-preview").style.display = "none";
 
-  if (_isMobile) {
+  if (isMobile) {
     kbProxy.style.display = "block";
     // Hide ghostty-web's textarea on mobile to prevent focus stealing
-    const style = document.createElement("style");
-    style.id = "mobile-no-ghost-focus";
-    style.textContent = "#desktop-terminal-container textarea { display: none !important; }";
-    document.head.appendChild(style);
+    document.body.classList.add("mobile-no-ghost-focus");
   } else {
     kbProxy.style.display = "none";
   }
 
   let _cachedPendingReset = !!cached;
+  let _cachedFallbackTimer = cached ? setTimeout(() => {
+    _cachedPendingReset = false;
+    const el = document.getElementById("desktop-terminal-container");
+    if (el) el.classList.remove("cached-visible");
+  }, 5000) : null;
 
   state.terminalController = createPtyTerminalController({
     session: state.currentSession,
     machine: state.currentMachine || "",
     scrollback: DESKTOP_TERMINAL_SCROLLBACK,
-    disableStdin: _isMobile,
+    disableStdin: isMobile,
     getHydrationElement: () => document.getElementById("desktop-terminal-container"),
-    shouldFocus: () => !_isMobile,
-    shouldReconnect: () => state.useDesktopTerminal && !!state.terminalController?.term,
+    shouldFocus: () => !isMobile,
+    shouldReconnect: () => !!state.terminalController?.term,
     onOpen: (wasReconnect) => {
       if (wasReconnect) wpMetrics.reconnectCount++;
       setConnState("live");
@@ -2163,6 +2163,7 @@ async function initTerminal(cached) {
     onOutput: (data) => {
       if (_cachedPendingReset) {
         _cachedPendingReset = false;
+        if (_cachedFallbackTimer) { clearTimeout(_cachedFallbackTimer); _cachedFallbackTimer = null; }
         const el = document.getElementById("desktop-terminal-container");
         if (el) el.classList.remove("cached-visible");
       }
@@ -2175,7 +2176,7 @@ async function initTerminal(cached) {
       removeDesktopConflictOverlay();
       if (state.terminalController) state.terminalController.focus();
       // Re-focus mobile proxy so keyboard input resumes
-      if (_isMobile) {
+      if (isMobile) {
         const proxy = document.getElementById("mobile-kb-proxy");
         if (proxy && proxy.style.display !== "none") proxy.focus({ preventScroll: true });
       }
@@ -2186,12 +2187,6 @@ async function initTerminal(cached) {
       var action = WP.classifyDisconnect(code, reason || "");
       if (action === "displaced") {
         setConnState("displaced");
-        setTimeout(() => {
-          if (state.terminalController && !state.terminalController.isConnected) {
-            state.terminalController.resetRetry();
-            connectDesktopWs();
-          }
-        }, 500);
         return;
       }
       if (action === "session-ended") {
@@ -2219,7 +2214,7 @@ async function initTerminal(cached) {
   }
 
   // Mobile: attach touch scroll handler + blur any auto-focused element
-  if (_isMobile && state.terminalController.term) {
+  if (isMobile && state.terminalController.term) {
     state._touchCleanup = setupTouchScrollHandler(
       container, state.terminalController.term,
       (data) => state.terminalController && state.terminalController.send(data),
@@ -2237,21 +2232,21 @@ async function initTerminal(cached) {
     state.desktopResizeTimer = setTimeout(() => {
       state.desktopResizeTimer = null;
       const newWidth = container.clientWidth;
-      if (_isMobile && newWidth === _lastContainerWidth) return;
+      if (isMobile && newWidth === _lastContainerWidth) return;
       _lastContainerWidth = newWidth;
       if (state.terminalController) {
-        _isMobile ? state.terminalController.resize() : state.terminalController.resizeWithTransition();
+        isMobile ? state.terminalController.resize() : state.terminalController.resizeWithTransition();
       }
     }, 60);
   };
   window.addEventListener("resize", onResize);
   state.desktopResizeHandler = onResize;
 
-  if (window.visualViewport && _isMobile) {
+  if (window.visualViewport && isMobile) {
     const termView = document.getElementById("terminal-view");
     const vvHandler = () => {
       const kbHeight = window.innerHeight - window.visualViewport.height;
-      const kbOpen = kbHeight > 50;
+      const kbOpen = kbHeight > 150;
       // Shrink terminal-view from the bottom so the terminal refits to correct rows.
       // translateY broke fresh sessions — content at the top got pushed above viewport.
       termView.style.bottom = kbOpen ? kbHeight + "px" : "";
@@ -2277,22 +2272,7 @@ async function initTerminal(cached) {
     vvHandler();
   }
 
-  const onKeyDown = (e) => {
-    if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
-      e.preventDefault();
-      if (!state.searchActive) toggleSearch();
-      return;
-    }
-    if (state.searchActive && e.key === "Escape") {
-      e.preventDefault();
-      closeSearch();
-    }
-  };
-  document.addEventListener("keydown", onKeyDown);
-  container._onKeyDown = onKeyDown;
-
   connectDesktopWs();
-
 }
 
 function destroyTerminal() {
@@ -2311,24 +2291,18 @@ function destroyTerminal() {
   }
   // Reset termView positioning
   const termView = document.getElementById("terminal-view");
-  if (termView) { termView.style.transform = ""; termView.style.bottom = ""; }
+  if (termView) { termView.style.bottom = ""; }
   if (state.kbResizeTimer) { clearTimeout(state.kbResizeTimer); state.kbResizeTimer = null; }
   // Blur and hide mobile-kb-proxy
   const kbProxy = document.getElementById("mobile-kb-proxy");
   if (kbProxy) { kbProxy.blur(); kbProxy.style.display = "none"; }
-  // Remove mobile-no-ghost-focus style element
-  const ghostStyle = document.getElementById("mobile-no-ghost-focus");
-  if (ghostStyle) ghostStyle.remove();
+  // Remove mobile ghost focus suppression
+  document.body.classList.remove("mobile-no-ghost-focus");
 
   const container = document.getElementById("desktop-terminal-container");
-  if (container._onKeyDown) {
-    document.removeEventListener("keydown", container._onKeyDown);
-    container._onKeyDown = null;
-  }
   container.style.display = "none";
   container.classList.remove("hydrating", "hydrated");
   container.innerHTML = "";
-  document.getElementById("terminal").style.display = "";
   document.getElementById("input-bar").style.display = "";
   document.getElementById("cmd-palette").style.display = "";
 }
@@ -2376,52 +2350,6 @@ function setConnState(connState) {
 }
 
 
-function setFollowMode(on) {
-  state.termFollowMode = on;
-  const btn = document.getElementById("jump-to-live");
-  if (btn) {
-    if (on) {
-      btn.classList.remove("visible");
-    } else {
-      btn.classList.add("visible");
-    }
-  }
-}
-
-function jumpToLive() {
-  const term = document.getElementById("terminal");
-  term.scrollTop = term.scrollHeight;
-  setFollowMode(true);
-  haptic([10]);
-}
-
-// Detect user scroll-up to pause follow mode
-(function() {
-  const term = document.getElementById("terminal");
-  let programmaticScroll = false;
-
-  // Patch scrollTop setter to distinguish programmatic scrolls
-  const origDesc = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
-  Object.defineProperty(term, "scrollTop", {
-    get() { return origDesc.get.call(this); },
-    set(v) {
-      programmaticScroll = true;
-      origDesc.set.call(this, v);
-      // Reset after microtask so the scroll event handler can read it
-      Promise.resolve().then(() => { programmaticScroll = false; });
-    }
-  });
-
-  term.addEventListener("scroll", () => {
-    if (programmaticScroll) return;
-    const atBottom = term.scrollHeight - origDesc.get.call(term) - term.clientHeight < 40;
-    if (atBottom) {
-      setFollowMode(true);
-    } else if (state.termFollowMode) {
-      setFollowMode(false);
-    }
-  }, { passive: true });
-})();
 
 function retryConnection() {
   if (!state.terminalController?.term) return;
@@ -2449,16 +2377,18 @@ function sendMsg() {
   if (_sendTerminalInput(_textEncoder.encode(text.replace(/\n/g, " ") + "\r"))) {
     // Enter retry: if output hasn't changed within 800ms, Enter may have been dropped.
     // Timer is cleared on any output, so this only fires if truly stuck.
-    // Session-scope guard prevents phantom Enter on other sessions if user switches mid-timer.
-    if (state.enterRetryTimer) clearTimeout(state.enterRetryTimer);
-    const retrySession = state.currentSession;
-    const retryMachine = state.currentMachine;
-    state.enterRetryTimer = setTimeout(() => {
-      if (state.currentSession === retrySession && state.currentMachine === retryMachine) {
-        sendKey("Enter");
-      }
-      state.enterRetryTimer = null;
-    }, 800);
+    // Skip in grid mode — grid cells have their own controllers and onOutput won't clear this timer.
+    if (!isGridActive()) {
+      if (state.enterRetryTimer) clearTimeout(state.enterRetryTimer);
+      const retrySession = state.currentSession;
+      const retryMachine = state.currentMachine;
+      state.enterRetryTimer = setTimeout(() => {
+        if (state.currentSession === retrySession && state.currentMachine === retryMachine) {
+          sendKey("Enter");
+        }
+        state.enterRetryTimer = null;
+      }, 800);
+    }
   } else {
     wpMetrics.sendFailCount++;
     input.value = saved;
@@ -2481,9 +2411,10 @@ function updatePreview() {
 
 function sendKey(key) {
   if (!state.currentSession) return;
-  wpMetrics.sendCount++;
   const esc = KEY_TO_ESCAPE[key];
-  if (esc && _sendTerminalInput(_textEncoder.encode(esc))) return;
+  if (!esc) return;
+  wpMetrics.sendCount++;
+  if (_sendTerminalInput(_textEncoder.encode(esc))) return;
   wpMetrics.sendFailCount++;
 }
 
@@ -2503,8 +2434,6 @@ async function killSession(name, e, machineUrl) {
   const wasCurrentSession = name === state.currentSession && (machineUrl || "") === state.currentMachine;
   if (wasCurrentSession && state.currentView === "terminal") {
     destroyTerminal();
-    closeSearch();
-    state.useDesktopTerminal = false;
     setState({ currentSession: null, currentMachine: "" });
     showView("sessions");
   }
@@ -2772,7 +2701,6 @@ async function switchSession(val) {
   destroyTerminal();
   setState({ currentSession: name, currentMachine: machineUrl });
   recordRecent(machineUrl, name);
-  state.lastRawPane = null;
   restoreDraft();
   loadSessionSwitcher();
   // Update machine label in header (showView sets it, but drawer bypasses showView)
@@ -2784,7 +2712,6 @@ async function switchSession(val) {
     hml.textContent = mName;
     hml.style.display = "block";
   }
-  state.useDesktopTerminal = true;
   initTerminal();
   renderSidebar();
 }
@@ -2862,7 +2789,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // Dismiss preview when tapping terminal area
-document.getElementById("terminal").addEventListener("click", () => {
+document.getElementById("desktop-terminal-container").addEventListener("click", () => {
   document.getElementById("msg-preview").style.display = "none";
 });
 
@@ -3067,16 +2994,6 @@ function toggleKbAccessory() {
   }
 })();
 
-// Global arrow keys → tmux when in terminal and textarea not focused
-document.addEventListener("keydown", (e) => {
-  if (state.currentView !== "terminal") return;
-  if (state.useDesktopTerminal) return; // desktop terminal has its own handler
-  const tag = document.activeElement && document.activeElement.tagName;
-  if (document.activeElement === msgInput || tag === "SELECT" || tag === "INPUT") return;
-  const keyMap = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Enter: "Enter", Escape: "Escape" };
-  const mapped = keyMap[e.key];
-  if (mapped) { e.preventDefault(); sendKey(mapped); }
-});
 
 // Navigate back to fully expanded sessions view (desktop: expand mode, mobile: just sessions)
 function backToSessions() {
@@ -3252,91 +3169,6 @@ async function discoverMachines() {
   }
 }
 
-// ── Search ──
-
-function toggleSearch() {
-  const bar = document.getElementById("search-bar");
-  if (state.searchActive) {
-    closeSearch();
-  } else {
-    state.searchActive = true;
-    bar.classList.add("visible");
-    document.getElementById("search-input").focus();
-  }
-}
-
-function closeSearch() {
-  state.searchActive = false;
-  state.searchTerm = "";
-  state.searchMatches = [];
-  state.searchIndex = -1;
-  document.getElementById("search-bar").classList.remove("visible");
-  document.getElementById("search-input").value = "";
-  document.getElementById("search-count").textContent = "";
-  if (state.terminalController) state.terminalController.focus();
-}
-
-function doSearch() {
-  state.searchTerm = document.getElementById("search-input").value;
-  if (!state.searchTerm) {
-    document.getElementById("search-count").textContent = "";
-    state.searchMatches = [];
-    state.searchIndex = -1;
-    return;
-  }
-  if (state.useDesktopTerminal) {
-    // ghostty-web doesn't have a search API yet — search is disabled for desktop terminal
-    document.getElementById("search-count").textContent = "n/a";
-    return;
-  }
-  state.searchIndex = 0;
-  applySearchHighlights();
-}
-
-function applySearchHighlights() {
-  if (state.useDesktopTerminal) return; // search not available with ghostty-web
-  const term = document.getElementById("terminal");
-  if (!state.searchTerm || !state.lastRawPane) return;
-  const escaped = state.lastRawPane.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const escapedTerm = state.searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(escapedTerm.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"), "gi");
-  let count = 0;
-  let current = state.searchIndex;
-  const html = escaped.replace(re, (m) => {
-    const cls = count === current ? "search-current" : "";
-    count++;
-    return `<mark class="${cls}">${m}</mark>`;
-  });
-  state.searchMatches = Array.from({ length: count });
-  if (count > 0 && state.searchIndex >= count) state.searchIndex = 0;
-  document.getElementById("search-count").textContent = count > 0 ? `${state.searchIndex + 1}/${count}` : "0/0";
-  term.innerHTML = html;
-  const cur = term.querySelector("mark.search-current");
-  if (cur) cur.scrollIntoView({ block: "center", behavior: "smooth" });
-}
-
-function nextMatch() {
-  if (state.useDesktopTerminal) return; // search not available with ghostty-web
-  if (state.searchMatches.length === 0) return;
-  state.searchIndex = (state.searchIndex + 1) % state.searchMatches.length;
-  applySearchHighlights();
-}
-
-function prevMatch() {
-  if (state.useDesktopTerminal) return; // search not available with ghostty-web
-  if (state.searchMatches.length === 0) return;
-  state.searchIndex = (state.searchIndex - 1 + state.searchMatches.length) % state.searchMatches.length;
-  applySearchHighlights();
-}
-
-document.getElementById("search-input").addEventListener("input", doSearch);
-document.getElementById("search-input").addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeSearch();
-  else if (e.key === "Enter") {
-    e.preventDefault();
-    if (e.shiftKey) prevMatch(); else nextMatch();
-  }
-});
 
 
 // ── Swipe Gesture Engine (mobile only) ──
@@ -3416,19 +3248,6 @@ if (!isDesktop()) {
         bgEl.style.zIndex = "0";
       } else {
         // forward: card drags independently, terminal peeks behind
-        // eager pre-load: fetch the swiped session's content into terminal
-        if (swipeCard && targetView === "terminal") {
-          const onclick = swipeCard.getAttribute("onclick") || "";
-          const m = onclick.match(/openSession\('([^']+)'(?:,\s*'([^']*)')?\)/);
-          if (m) {
-            const sName = m[1], sMachine = m[2] || "";
-            const base = sMachine ? sMachine + "/api" : "/api";
-            fetch(base + "/poll?session=" + encodeURIComponent(sName))
-              .then(r => r.ok ? r.json() : null)
-              .then(d => { if (d && d.pane != null) document.getElementById("terminal").textContent = d.pane; })
-              .catch(() => {});
-          }
-        }
         bgEl.style.transform = "translate3d(100%, 0, 0)";
         bgEl.classList.add("visible");
         bgEl.style.zIndex = "2";
@@ -3729,7 +3548,6 @@ function bindHtmlEventListeners(): void {
 
   // Header
   on("session-chip", "click", () => toggleDrawer());
-  on("search-btn", "click", () => toggleSearch());
   on("gear-btn", "click", () => showSettings());
 
   // Drawer / overlays
@@ -3798,17 +3616,7 @@ function bindHtmlEventListeners(): void {
   const debugResetBtn = document.querySelector(".debug-reset-btn");
   if (debugResetBtn) debugResetBtn.addEventListener("click", () => { wpMetrics.reset(); renderDebugPanel(); });
 
-  // Search bar
-  const searchBar = $("search-bar");
-  if (searchBar) {
-    const btns = searchBar.querySelectorAll("button");
-    if (btns[0]) btns[0].addEventListener("click", () => prevMatch());
-    if (btns[1]) btns[1].addEventListener("click", () => nextMatch());
-    if (btns[2]) btns[2].addEventListener("click", () => closeSearch());
-  }
-
   // Terminal view
-  on("jump-to-live", "click", () => jumpToLive());
 
   // Keyboard accessory
   const gitBtn = document.querySelector(".kb-key.kb-git");
@@ -3833,7 +3641,7 @@ initGridDeps({
   showView, openSession, destroyTerminal, initTerminal,
   backToSessions, renderSidebar,
   createPtyTerminalController, createConflictOverlay,
-  canUseDesktopTerminal,
+  canUseWasmTerminal,
   saveGridCellSnapshot: (gs) => {
     if (!gs.controller?.term) return;
     const text = serializeXtermTail(gs.controller.term, 200);

@@ -426,9 +426,10 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
           }
           if (!phase2Completed) sendPrefillDone(entry);
         } else if (prefillMode !== "full") {
-          // Viewport-only or WS died during phase 2 setup: send prefill_done
-          // so client exits buffering state (sendPrefillDone checks readyState)
-          sendPrefillDone(entry);
+          // Viewport-only: send prefill_done so client exits buffering state
+          if (!sendPrefillDone(entry)) {
+            log.debug("PTY viewport-only prefill_done not sent (WS closed)", { session });
+          }
         }
       }
 

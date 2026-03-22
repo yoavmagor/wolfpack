@@ -39,7 +39,6 @@
       </div>
       <div class="header-right">
         <div id="header-machine-label" class="machine-label"></div>
-        <button class="search-btn" id="search-btn">&#128269;</button>
         <button class="settings-gear" id="gear-btn">&#9881;</button>
       </div>
     </header>
@@ -216,21 +215,12 @@
 
     <!-- Terminal view -->
     <div id="terminal-view" class="view">
-      <div id="search-bar">
-        <input id="search-input" type="text" placeholder="Search..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
-        <span id="search-count"></span>
-        <button id="search-prev-btn">&#9650;</button>
-        <button id="search-next-btn">&#9660;</button>
-        <button id="search-close-btn">&#10005;</button>
-      </div>
       <div
         id="conn-status"
         class="conn-status"
       >
         Reconnecting...
       </div>
-      <div id="terminal"></div>
-      <button id="jump-to-live">&#9660; Live</button>
       <div id="desktop-terminal-container"></div>
       <input id="mobile-kb-proxy" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" aria-label="Terminal input" />
       <div id="desktop-grid-container"></div>
@@ -242,6 +232,8 @@
         <button class="kb-key" data-key="Down">&#9660;</button>
         <button class="kb-key" data-key="Left">&#9664;</button>
         <button class="kb-key" data-key="Right">&#9654;</button>
+        <button class="kb-key kb-danger" data-key="C-c">^C</button>
+        <button class="kb-key kb-git">git</button>
         <button class="kb-key kb-open" id="kb-open-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2.5"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg></button>
       </div>
       <div id="input-bar">

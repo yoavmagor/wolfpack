@@ -18,7 +18,7 @@ interface GridDeps {
   renderSidebar: () => void;
   createPtyTerminalController: (opts: any) => any;
   createConflictOverlay: (message: string, buttonLabel: string, onClick: (e: any) => void) => HTMLElement;
-  canUseDesktopTerminal?: () => boolean;
+  canUseWasmTerminal?: () => boolean;
   saveGridCellSnapshot?: (gs: any) => void;
   flushGridSnapshots?: () => void;
   loadSnapshot?: (machine: string, session: string) => string | null;
@@ -100,8 +100,6 @@ export function updateGridLayout() {
   container.style.display = "";
   // Ensure single-terminal container is hidden
   document.getElementById("desktop-terminal-container").style.display = "none";
-  // Hide mobile elements
-  document.getElementById("terminal").style.display = "none";
   document.getElementById("input-bar").style.display = "none";
   document.getElementById("cmd-palette").style.display = "none";
   document.getElementById("kb-accessory").classList.remove("visible");
@@ -310,7 +308,6 @@ export function returnToTerminalView() {
   deps.showView("terminal");
   if (restorePreservedGrid()) return true;
   if (!state.currentSession) return false;
-  state.useDesktopTerminal = true;
   if (!state.terminalController) deps.initTerminal();
   return true;
 }
@@ -387,7 +384,6 @@ export function restorePreservedGrid() {
   state.gridFocusIndex = restored.focusIndex;
   clearPreservedGrid();
   state.sidebarResizeDone = false;
-  state.useDesktopTerminal = true;
   setCurrentSessionFromGridFocus(state.gridSessions, state.gridFocusIndex);
   renderGridCells();
   deps.renderSidebar();
@@ -416,7 +412,7 @@ export function backFromSettings() {
 }
 
 export function addToGrid(session, machine) {
-  if (!(deps.canUseDesktopTerminal ? deps.canUseDesktopTerminal() : isDesktop())) return;
+  if (!(deps.canUseWasmTerminal ? deps.canUseWasmTerminal() : isDesktop())) return;
   const targetMachine = machine || "";
   if (state.currentView !== "terminal" && hasPreservedGrid()) {
     const result = WP.addToGridState(
@@ -561,8 +557,7 @@ export function exitGridMode(skipRestore?) {
   }
   // Restore single-terminal mode (skip when navigating away from terminal view)
   if (!skipRestore && restoreSession) {
-    state.useDesktopTerminal = true;
-    deps.initTerminal();
+      deps.initTerminal();
     deps.renderSidebar();
   }
 }
