@@ -78,6 +78,12 @@ function sendPrefillDone(entry: { viewer: WebSocket | null; alive: boolean }): b
   return true;
 }
 
+function sendPtyReady(entry: { viewer: WebSocket | null; alive: boolean }): boolean {
+  if (!entry.alive || !entry.viewer || entry.viewer.readyState !== 1) return false;
+  entry.viewer.send(JSON.stringify({ type: "pty_ready" }));
+  return true;
+}
+
 /** Send prefill buffer in 32KB chunks with short delays to avoid stalling mobile connections.
  *  Sends `prefill_done` message at the end so the client exits buffering state. */
 async function sendPrefillChunked(
@@ -372,6 +378,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
         }
       });
       activePtySessions.set(session, entry as any);
+      sendPtyReady(entry);
       setTimeout(async () => {
         if (!entry.alive || !entry.proc) return;
         const latestSize = latestRequestedSize || initialSize;
@@ -420,6 +427,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
           }
           if (entry.viewer && entry.viewer.readyState === 1) {
             try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch (e: unknown) { log.debug(`attach_ack send failed`, { session, error: errMsg(e) }); }
+            if (entry.proc) sendPtyReady(entry);
           }
         } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           const cols = clampCols(msg.cols);

@@ -107,6 +107,29 @@ describe("desktop terminal: open (attach handshake)", () => {
     await wait(100);
   });
 
+  test("attach to an existing proc sends pty_ready after attach_ack", async () => {
+    const ws = await connectPty("desktop-test");
+    await wait(10);
+    const entry = ctx.activePtySessions.get("desktop-test") as any;
+    entry.proc = {
+      terminal: {
+        write() {},
+        resize() {},
+        close() {},
+      },
+      kill() {},
+    };
+
+    const msgs = collectJsonMessages(ws);
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
+    await wait(100);
+
+    expect(msgs.map(m => m.type)).toEqual(["attach_ack", "pty_ready"]);
+
+    await closeWs(ws);
+    await wait(100);
+  });
+
   test("duplicate attach messages don't spawn multiple PTYs", async () => {
     const ws = await connectPty("desktop-test");
     ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));

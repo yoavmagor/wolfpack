@@ -78,7 +78,7 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
     }
     const lines: string[] = [];
     for (let r = r0; r <= r1; r++) {
-      const lineIndex = Math.max(0, r + (buf.baseY || 0) - viewportY);
+      const lineIndex = Math.max(0, viewportY + r);
       const line = buf.getLine(lineIndex);
       if (!line) continue;
       const start = r === r0 ? c0 : 0;
@@ -747,6 +747,7 @@ function createInitialHydrationController(opts) {
  * @param {() => void} opts.fitTerminal
  * @param {(Uint8Array) => void} opts.onBinaryData
  * @param {() => void} [opts.onOpen]
+ * @param {() => void} [opts.onPtyReady]
  * @param {() => void} [opts.onViewerConflict]
  * @param {() => void} [opts.onControlGranted]
  * @param {() => void} [opts.onReplacePrefill]
@@ -856,6 +857,8 @@ function createPtySocketClient(opts) {
           if (msg.type === "attach_ack") {
             _awaitingAttachAck = false;
             if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+          } else if (msg.type === "pty_ready") {
+            if (opts.onPtyReady) opts.onPtyReady();
           } else if (msg.type === "prefill_viewport") {
             // Phase 1 complete: viewport content already written as binary.
             // Flush any buffered viewport chunks immediately for fast first paint.
@@ -1023,6 +1026,7 @@ function createPtySocketClient(opts) {
  * @param {() => boolean} [opts.canSendResize] - override resize guard (default: canAcceptInput)
  * @param {(Uint8Array) => void} [opts.onOutput] - called after data written to term
  * @param {(boolean) => void} [opts.onOpen] - WebSocket opened (wasReconnect)
+ * @param {() => void} [opts.onPtyReady]
  * @param {() => void} [opts.onViewerConflict]
  * @param {() => void} [opts.onControlGranted]
  * @param {() => void} [opts.onReplacePrefill]
@@ -1168,11 +1172,12 @@ function createPtyTerminalController(opts) {
         }
         if (opts.onOpen) opts.onOpen(wasReconnect);
       },
+      onPtyReady: () => { if (isCurrent() && opts.onPtyReady) opts.onPtyReady(); },
       onReplacePrefill: () => {
         if (!_term) return;
         _reconnectPendingReset = false;
         _hydrationWritesInFlight = 0;
-        _term.clear();
+        _term.reset();
       },
       onBinaryData: (data) => {
         if (!_term) return;
@@ -2202,8 +2207,8 @@ async function initTerminal(cached) {
     onOpen: (wasReconnect) => {
       if (wasReconnect) wpMetrics.reconnectCount++;
       setConnState("live");
-      flushMobileKbProxyPendingInput();
     },
+    onPtyReady: () => { flushMobileKbProxyPendingInput(); },
     onOutput: (data) => {
       if (_cachedPendingReset) {
         _cachedPendingReset = false;
@@ -2224,7 +2229,6 @@ async function initTerminal(cached) {
         const proxy = document.getElementById("mobile-kb-proxy");
         if (proxy && proxy.style.display !== "none") proxy.focus({ preventScroll: true });
       }
-      flushMobileKbProxyPendingInput();
     },
     onDisconnected: (code, reason) => {
       removeDesktopConflictOverlay();
