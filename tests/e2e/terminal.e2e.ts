@@ -1,9 +1,8 @@
 /**
  * Terminal connect flow — navigate to session, verify WS, send input, receive output.
  *
- * All clients (mobile + desktop) now use the unified /ws/pty path with ghostty-web
- * WASM rendering. The legacy /ws/terminal capture-pane polling path still exists
- * server-side but is no longer used by any client code.
+ * All clients (mobile + desktop) use the unified /ws/pty path with ghostty-web
+ * WASM rendering.
  */
 import { test, expect } from "@playwright/test";
 import { startTestServer, type TestServer } from "./helpers.ts";

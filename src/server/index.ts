@@ -26,7 +26,7 @@ import {
   cachedPeers,
   createPerIpRateLimiter,
 } from "./http.js";
-import { handleTerminalWs, handlePtyWs } from "./websocket.js";
+import { handlePtyWs } from "./websocket.js";
 import { createLogger } from "../log.js";
 
 const log = createLogger("server");
@@ -170,40 +170,27 @@ export function createServerInstance(): { server: ReturnType<typeof createServer
       return;
     }
     const url = new URL(req.url ?? "/", "http://localhost");
-    const isWsRoute =
-      url.pathname === "/ws/terminal" ||
-      url.pathname === "/ws/mobile" ||
-      url.pathname === "/ws/pty";
-    if (isWsRoute) {
-      const auth = validateRequestJwt(req.headers, url, true);
-      if (!auth.ok) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-    }
-
-    if (url.pathname === "/ws/terminal" || url.pathname === "/ws/mobile") {
-      const session = url.searchParams.get("session");
-      if (!session || !(await isAllowedSession(session))) {
-        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-      wss.handleUpgrade(req, socket, head, (ws) => handleTerminalWs(ws, session));
-    } else if (url.pathname === "/ws/pty") {
-      const session = url.searchParams.get("session");
-      if (!session || !(await isAllowedSession(session))) {
-        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-      const reset = url.searchParams.get("reset") === "1";
-      wss.handleUpgrade(req, socket, head, (ws) => handlePtyWs(ws, session, reset));
-    } else {
+    if (url.pathname !== "/ws/pty") {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
+      return;
     }
+
+    const auth = validateRequestJwt(req.headers, url, true);
+    if (!auth.ok) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    const session = url.searchParams.get("session");
+    if (!session || !(await isAllowedSession(session))) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    const reset = url.searchParams.get("reset") === "1";
+    wss.handleUpgrade(req, socket, head, (ws) => handlePtyWs(ws, session, reset));
   });
 
   return { server, wss };

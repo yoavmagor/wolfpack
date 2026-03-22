@@ -2,7 +2,7 @@
  * Reconnect visual feedback — simulate WS disconnect, verify reconnecting
  * UI state (orange banner), verify recovery (banner hidden).
  *
- * Mobile-only: tests the /ws/terminal capture-pane polling path.
+ * Mobile-only: tests the /ws/pty unified terminal path.
  *
  * Strategy: Use page.routeWebSocket() to intercept the WS connection,
  * proxy it to the real server, then close the page-facing side to simulate
@@ -63,7 +63,7 @@ test("WS disconnect shows reconnecting banner then recovers", async ({
 }, testInfo) => {
   test.skip(
     testInfo.project.name === "desktop",
-    "mobile-only /ws/terminal flow",
+    "mobile-only viewport tests",
   );
 
   const proxy = setupWsProxy(page);
@@ -107,7 +107,7 @@ test("WS disconnect during active session preserves terminal content", async ({
 }, testInfo) => {
   test.skip(
     testInfo.project.name === "desktop",
-    "mobile-only /ws/terminal flow",
+    "mobile-only viewport tests",
   );
 
   const proxy = setupWsProxy(page);

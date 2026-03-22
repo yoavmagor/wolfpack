@@ -196,7 +196,7 @@ describe("JWT auth middleware", () => {
   });
 
   test("rejects websocket upgrade without token", async () => {
-    const { status, ws } = await rawUpgrade("/ws/terminal?session=auth-session");
+    const { status, ws } = await rawUpgrade("/ws/pty?session=auth-session");
     expect(status).not.toBe(101);
     if (ws) await closeWs(ws);
   });
@@ -204,36 +204,11 @@ describe("JWT auth middleware", () => {
   test("accepts websocket upgrade with valid query JWT", async () => {
     const token = createValidToken();
     const { status, ws } = await rawUpgrade(
-      `/ws/terminal?session=auth-session&token=${encodeURIComponent(token)}`,
+      `/ws/pty?session=auth-session&token=${encodeURIComponent(token)}`,
     );
     expect(status).toBe(101);
     expect(ws).toBeDefined();
     await closeWs(ws!);
-  });
-
-  test("applies JWT auth to /ws/mobile and /ws/pty routes", async () => {
-    const noTokenMobile = await rawUpgrade("/ws/mobile?session=auth-session");
-    expect(noTokenMobile.status).not.toBe(101);
-    if (noTokenMobile.ws) await closeWs(noTokenMobile.ws);
-
-    const noTokenPty = await rawUpgrade("/ws/pty?session=auth-session");
-    expect(noTokenPty.status).not.toBe(101);
-    if (noTokenPty.ws) await closeWs(noTokenPty.ws);
-
-    const token = createValidToken();
-    const authedMobile = await rawUpgrade(
-      `/ws/mobile?session=auth-session&token=${encodeURIComponent(token)}`,
-    );
-    expect(authedMobile.status).toBe(101);
-    expect(authedMobile.ws).toBeDefined();
-    await closeWs(authedMobile.ws!);
-
-    const authedPty = await rawUpgrade(
-      `/ws/pty?session=auth-session&token=${encodeURIComponent(token)}`,
-    );
-    expect(authedPty.status).toBe(101);
-    expect(authedPty.ws).toBeDefined();
-    await closeWs(authedPty.ws!);
   });
 
   test("rejects JWT signed with wrong secret", async () => {
@@ -411,7 +386,7 @@ describe("JWT auth middleware", () => {
   test("rejects websocket with expired query token", async () => {
     const token = createExpiredToken();
     const { status, ws } = await rawUpgrade(
-      `/ws/terminal?session=auth-session&token=${encodeURIComponent(token)}`,
+      `/ws/pty?session=auth-session&token=${encodeURIComponent(token)}`,
     );
     expect(status).not.toBe(101);
     if (ws) await closeWs(ws);
@@ -424,7 +399,7 @@ describe("JWT auth middleware", () => {
       { secret: "wrong-secret" },
     );
     const { status, ws } = await rawUpgrade(
-      `/ws/terminal?session=auth-session&token=${encodeURIComponent(token)}`,
+      `/ws/pty?session=auth-session&token=${encodeURIComponent(token)}`,
     );
     expect(status).not.toBe(101);
     if (ws) await closeWs(ws);

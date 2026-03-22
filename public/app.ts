@@ -246,7 +246,7 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
       if (text && navigator.clipboard) {
         navigator.clipboard.writeText(text).then(() => {
           haptic([10, 30, 10]);
-        }).catch(() => {});
+        }).catch((e) => { console.debug("[clipboard] copy failed:", e); });
       }
       // Keep overlay visible briefly then clear, re-focus proxy so input resumes
       setTimeout(() => {
@@ -882,7 +882,7 @@ function createPtySocketClient(opts) {
               if (opts.onBinaryData) {
                 for (const chunk of chunks) opts.onBinaryData(chunk);
               }
-            }, 10000);
+            }, 5000);
           } else if (msg.type === "prefill_done") {
             // Phase 2 complete (or single-phase legacy): flush remaining chunks.
             _awaitingPrefillDone = false;
