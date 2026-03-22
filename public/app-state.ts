@@ -199,7 +199,6 @@ export const state = {
   currentRalphAgent: "",
   // desktop/grid terminal state
   terminalController: null,
-  useDesktopTerminal: false,
   desktopResizeHandler: null,
   desktopResizeTimer: null,
   _touchCleanup: null,
@@ -219,7 +218,6 @@ export const state = {
   sidebarResizeDone: false,
   sessionsExpanded: true,
   // connection state
-  termFollowMode: true,
   sessionRefreshTimer: null,
   // UI interaction state
   snapshotTimer: null,
@@ -231,11 +229,6 @@ export const state = {
   drawerOpen: false,
   notificationsEnabled: ("Notification" in window && Notification.permission === "granted"),
   kbAccessoryOpen: false,
-  searchActive: false,
-  searchTerm: "",
-  searchMatches: [],
-  searchIndex: -1,
-  lastRawPane: null,
 };
 
 export function setState(patch) { Object.assign(state, patch); }

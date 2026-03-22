@@ -196,8 +196,6 @@ test("re-adding the remaining preserved session from Ralph reinitializes termina
     // @ts-ignore
     state.currentMachine = "";
     // @ts-ignore
-    state.useDesktopTerminal = true;
-    // @ts-ignore
     showView("ralph-detail");
   });
 
