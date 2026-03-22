@@ -92,6 +92,35 @@ describe("PTY prefill chunked delivery", () => {
     expect(done.type).toBe("prefill_done");
   });
 
+  test("returns false when entry dies mid-delivery (dedup must use viewport prefill)", async () => {
+    const ws = mockWs();
+    const entry = { viewer: ws as any, alive: true };
+    const size = PREFILL_CHUNK_SIZE * 5;
+    const prefill = Buffer.alloc(size, 0x43);
+
+    const origSend = ws.send.bind(ws);
+    let sendCount = 0;
+    ws.send = (data: Buffer | string) => {
+      origSend(data);
+      sendCount++;
+      if (sendCount >= 2) entry.alive = false;
+    };
+
+    // sendPrefillChunked must return false so the caller knows the full
+    // scrollback was NOT delivered — dedup reference must stay as viewport
+    // prefill, not full scrollback. See PR #89 review fix #5.
+    const completed = await sendPrefillChunked(entry, prefill, "test-session");
+    expect(completed).toBe(false);
+  });
+
+  test("returns true on successful full delivery", async () => {
+    const ws = mockWs();
+    const entry = { viewer: ws as any, alive: true };
+    const prefill = Buffer.alloc(1024, 0x41);
+    const completed = await sendPrefillChunked(entry, prefill, "test-session");
+    expect(completed).toBe(true);
+  });
+
   test("exactly 32KB prefill is sent as single chunk + prefill_done", async () => {
     const ws = mockWs();
     const entry = { viewer: ws as any, alive: true };

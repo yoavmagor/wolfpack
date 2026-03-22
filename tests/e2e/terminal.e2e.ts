@@ -1,8 +1,9 @@
 /**
  * Terminal connect flow — navigate to session, verify WS, send input, receive output.
  *
- * Uses mobile viewport (iphone-se / iphone-14) which routes through /ws/terminal
- * capture-pane polling. Desktop uses /ws/pty (separate handler, not tested here).
+ * All clients (mobile + desktop) now use the unified /ws/pty path with ghostty-web
+ * WASM rendering. The legacy /ws/terminal capture-pane polling path still exists
+ * server-side but is no longer used by any client code.
  */
 import { test, expect } from "@playwright/test";
 import { startTestServer, type TestServer } from "./helpers.ts";
@@ -18,7 +19,7 @@ test.afterAll(async () => {
 });
 
 test("clicking a session navigates to terminal view", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === "desktop", "mobile-only /ws/terminal flow");
+  test.skip(testInfo.project.name === "desktop", "mobile viewport tests");
   await page.goto(srv.baseUrl);
   // Wait for session cards to render
   await page.waitForSelector(".card", { timeout: 5000 });
@@ -34,7 +35,7 @@ test("clicking a session navigates to terminal view", async ({ page }, testInfo)
 });
 
 test("terminal receives output via WebSocket", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === "desktop", "mobile-only /ws/terminal flow");
+  test.skip(testInfo.project.name === "desktop", "mobile viewport tests");
   await page.goto(srv.baseUrl);
   await page.waitForSelector(".card", { timeout: 5000 });
 
@@ -48,7 +49,7 @@ test("terminal receives output via WebSocket", async ({ page }, testInfo) => {
 });
 
 test("sending input updates terminal output", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === "desktop", "mobile-only /ws/terminal flow");
+  test.skip(testInfo.project.name === "desktop", "mobile viewport tests");
   await page.goto(srv.baseUrl);
   await page.waitForSelector(".card", { timeout: 5000 });
 

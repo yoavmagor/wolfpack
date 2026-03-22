@@ -1,5 +1,7 @@
 /**
- * WebSocket handlers — terminal (capture-pane polling) and PTY (ghostty-web direct).
+ * WebSocket handlers — PTY (ghostty-web WASM, used by all clients) and legacy
+ * terminal (capture-pane polling, still wired server-side but no longer used by
+ * any client since the unified PTY migration in PR #89).
  */
 import type { WebSocket } from "ws";
 import {
@@ -117,7 +119,7 @@ export function __getTestState(): {
   return { activePtySessions, ptySpawnAttempts, sendPrefillChunked, PREFILL_CHUNK_SIZE };
 }
 
-// ── Terminal WS handler (mobile — capture-pane polling) ──
+// ── Terminal WS handler (legacy capture-pane polling — no longer used by clients) ──
 
 export function handleTerminalWs(ws: WebSocket, session: string): void {
   let prev = "";
@@ -416,7 +418,10 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
               }
               try {
                 phase2Completed = await sendPrefillChunked(entry, fullPrefill, session);
-                prefill = fullPrefill;
+                // Only update dedup reference when the full scrollback was actually
+                // sent — partial sends leave the client with viewport-only data, so
+                // dedup must match what was actually delivered. See PR #89 review.
+                if (phase2Completed) prefill = fullPrefill;
               } catch (e: unknown) {
                 log.error("PTY scrollback prefill send failed", { session, error: errMsg(e) });
               }

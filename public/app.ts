@@ -770,6 +770,7 @@ function createPtySocketClient(opts) {
   let _prefillChunks: Uint8Array[] = [];
   let _awaitingPrefillDone = false;
   let _sawViewportPrefill = false;
+  let _prefillDoneTimeout = null;
 
   function buildUrl() {
     const resetSuffix = consumeReset ? "&reset=1" : "";
@@ -866,9 +867,26 @@ function createPtySocketClient(opts) {
             // Stay in prefill mode for phase 2 scrollback (if server sends it)
             _awaitingPrefillDone = true;
             _sawViewportPrefill = true;
+            // Safety timeout: if WS drops between phase 1 and phase 2 (prefill_done
+            // never arrives), we'd buffer live output indefinitely. Force-flush after
+            // 10s so the terminal isn't stuck blank. See PR #89 review.
+            if (_prefillDoneTimeout) clearTimeout(_prefillDoneTimeout);
+            _prefillDoneTimeout = setTimeout(() => {
+              _prefillDoneTimeout = null;
+              if (!_awaitingPrefillDone) return;
+              console.warn("[pty-ws] prefill_done timeout — force-flushing buffered output");
+              _awaitingPrefillDone = false;
+              const chunks = _prefillChunks;
+              _prefillChunks = [];
+              _sawViewportPrefill = false;
+              if (opts.onBinaryData) {
+                for (const chunk of chunks) opts.onBinaryData(chunk);
+              }
+            }, 10000);
           } else if (msg.type === "prefill_done") {
             // Phase 2 complete (or single-phase legacy): flush remaining chunks.
             _awaitingPrefillDone = false;
+            if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
             const chunks = _prefillChunks;
             _prefillChunks = [];
             if (_sawViewportPrefill && chunks.length && opts.onReplacePrefill) {
@@ -883,6 +901,7 @@ function createPtySocketClient(opts) {
             _awaitingPrefillDone = false;
             _prefillChunks = [];
             _sawViewportPrefill = false;
+            if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
             if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
             if (opts.onViewerConflict) opts.onViewerConflict();
           } else if (msg.type === "control_granted") {
@@ -890,7 +909,7 @@ function createPtySocketClient(opts) {
             sendAttachHandshake();
             if (opts.onControlGranted) opts.onControlGranted();
           }
-        } catch {}
+        } catch (e) { console.warn("[pty-ws] failed to parse control message:", e); }
         return;
       }
       if (_awaitingPrefillDone) {
@@ -906,6 +925,7 @@ function createPtySocketClient(opts) {
       _awaitingPrefillDone = false;
       _prefillChunks = [];
       _sawViewportPrefill = false;
+      if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
       if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
       if (opts.onDisconnected) opts.onDisconnected(ev.code, ev.reason);
     };
@@ -942,6 +962,7 @@ function createPtySocketClient(opts) {
     _awaitingPrefillDone = false;
     _prefillChunks = [];
     _sawViewportPrefill = false;
+    if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
     if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
     if (ws) { ws.close(); ws = null; }
   }
@@ -950,8 +971,24 @@ function createPtySocketClient(opts) {
     _rc.reset();
   }
 
+  // Force-close a potentially zombie socket and reconnect. iOS/Android background
+  // tabs kill TCP silently while readyState still reports OPEN — connect() guards
+  // against this and bails. reconnect() bypasses that guard. See PR #89 review / df4180c.
+  function reconnect() {
+    _rc.cancel();
+    _awaitingAttachAck = false;
+    _awaitingPrefillDone = false;
+    _prefillChunks = [];
+    _sawViewportPrefill = false;
+    if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
+    if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+    if (ws) { try { ws.close(); } catch {} ws = null; }
+    connect();
+  }
+
   return {
     connect,
+    reconnect,
     scheduleReconnect,
     sendFitResize,
     sendResize,
@@ -1222,6 +1259,7 @@ function createPtyTerminalController(opts) {
     sendFitResize: () => { if (_ptyClient) _ptyClient.sendFitResize(); },
     send: (data) => { if (_ptyClient) _ptyClient.send(data); },
     resetRetry: () => { if (_ptyClient) _ptyClient.resetRetry(); },
+    reconnect: () => { if (_ptyClient) _ptyClient.reconnect(); },
     // Accessors
     get term() { return _term; },
     get fitAddon() { return _fitAddon; },
@@ -1268,11 +1306,14 @@ function _sendTerminalInput(bytes) {
 function sendMobileProxyText(proxy, text) {
   const pending = text || proxy.value;
   if (!pending) return true;
+  // Preserve original field content so we don't silently lose buffered chars
+  // when an explicit `text` arg is passed and the send fails (PR #89 review).
+  const savedField = proxy.value;
   if (_sendTerminalInput(_textEncoder.encode(pending))) {
     proxy.value = "";
     return true;
   }
-  proxy.value = pending;
+  proxy.value = savedField || pending;
   return false;
 }
 
@@ -2141,8 +2182,11 @@ async function initTerminal(cached) {
   }
 
   let _cachedPendingReset = !!cached;
-  let _cachedFallbackTimer = cached ? setTimeout(() => {
+  // Timer stored on state so destroyTerminal() can cancel it — prevents cross-session
+  // side effects if user switches sessions before first output arrives (see PR #89 review).
+  state._cachedFallbackTimer = cached ? setTimeout(() => {
     _cachedPendingReset = false;
+    state._cachedFallbackTimer = null;
     const el = document.getElementById("desktop-terminal-container");
     if (el) el.classList.remove("cached-visible");
   }, 5000) : null;
@@ -2163,7 +2207,7 @@ async function initTerminal(cached) {
     onOutput: (data) => {
       if (_cachedPendingReset) {
         _cachedPendingReset = false;
-        if (_cachedFallbackTimer) { clearTimeout(_cachedFallbackTimer); _cachedFallbackTimer = null; }
+        if (state._cachedFallbackTimer) { clearTimeout(state._cachedFallbackTimer); state._cachedFallbackTimer = null; }
         const el = document.getElementById("desktop-terminal-container");
         if (el) el.classList.remove("cached-visible");
       }
@@ -2276,6 +2320,7 @@ async function initTerminal(cached) {
 }
 
 function destroyTerminal() {
+  if (state._cachedFallbackTimer) { clearTimeout(state._cachedFallbackTimer); state._cachedFallbackTimer = null; }
   if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
   if (state.desktopResizeTimer) { clearTimeout(state.desktopResizeTimer); state.desktopResizeTimer = null; }
   if (state._touchCleanup) { state._touchCleanup(); state._touchCleanup = null; }
@@ -2763,16 +2808,18 @@ document.addEventListener("visibilitychange", () => {
       state.sessionRefreshTimer = setInterval(loadSessions, 5000);
     }
     if (state.currentSession && state.currentView === "terminal") {
-      // Reset retry budget and reconnect current terminal context.
+      // Force-reconnect to handle zombie sockets: iOS/Android background tabs kill
+      // TCP silently while readyState still reports OPEN. Using reconnect() instead
+      // of connect() ensures the stale socket is closed first. See df4180c / PR #89.
       if (isGridActive()) {
         for (const gs of state.gridSessions) {
           if (!gs.controller || gs._displaced) continue;
           gs.controller.resetRetry();
-          if (!gs.controller.isConnected) gs.controller.connect();
+          gs.controller.reconnect();
         }
       } else if (state.terminalController?.term) {
         state.terminalController.resetRetry();
-        connectDesktopWs();
+        state.terminalController.reconnect();
       }
     }
   } else {

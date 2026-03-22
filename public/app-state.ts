@@ -229,6 +229,7 @@ export const state = {
   drawerOpen: false,
   notificationsEnabled: ("Notification" in window && Notification.permission === "granted"),
   kbAccessoryOpen: false,
+  _cachedFallbackTimer: null,
 };
 
 export function setState(patch) { Object.assign(state, patch); }

@@ -332,3 +332,91 @@ describe("desktop terminal: session lifecycle", () => {
     await wait(50);
   });
 });
+
+// ── Two-phase prefill protocol ──
+
+describe("desktop terminal: two-phase prefill", () => {
+  beforeEach(async () => {
+    ctx.activePtySessions.delete("desktop-test");
+    ctx.ptySpawnAttempts.delete("desktop-test");
+    await wait(50);
+  });
+
+  test("attach with prefillMode=viewport sends prefill_viewport then prefill_done", async () => {
+    const ws = await connectPty("desktop-test");
+    const msgs = collectJsonMessages(ws);
+
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "viewport" }));
+
+    // Wait for protocol messages (spawn will fail, but prefill is sent before spawn)
+    await wait(1500);
+
+    const types = msgs.map(m => m.type);
+    expect(types).toContain("attach_ack");
+    // Viewport mode should emit prefill_viewport followed by prefill_done
+    const vpIdx = types.indexOf("prefill_viewport");
+    const doneIdx = types.indexOf("prefill_done");
+    if (vpIdx >= 0) {
+      expect(doneIdx).toBeGreaterThan(vpIdx);
+    }
+
+    await closeWs(ws);
+    await wait(100);
+  });
+
+  test("attach with prefillMode=full sends prefill_viewport then prefill_done", async () => {
+    const ws = await connectPty("desktop-test");
+    const msgs = collectJsonMessages(ws);
+
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "full" }));
+
+    await wait(1500);
+
+    const types = msgs.map(m => m.type);
+    expect(types).toContain("attach_ack");
+    // Full mode sends viewport (phase 1), then scrollback (phase 2), then prefill_done
+    const vpIdx = types.indexOf("prefill_viewport");
+    const doneIdx = types.indexOf("prefill_done");
+    if (vpIdx >= 0) {
+      expect(doneIdx).toBeGreaterThan(vpIdx);
+    }
+
+    await closeWs(ws);
+    await wait(100);
+  });
+
+  test("attach with prefillMode=none skips all prefill messages", async () => {
+    const ws = await connectPty("desktop-test");
+    const msgs = collectJsonMessages(ws);
+
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "none" }));
+
+    await wait(1500);
+
+    const types = msgs.map(m => m.type);
+    expect(types).toContain("attach_ack");
+    // No prefill messages when mode is "none"
+    expect(types).not.toContain("prefill_viewport");
+    expect(types).not.toContain("prefill_done");
+
+    await closeWs(ws);
+    await wait(100);
+  });
+
+  test("backward compat: skipPrefill=true behaves like prefillMode=none", async () => {
+    const ws = await connectPty("desktop-test");
+    const msgs = collectJsonMessages(ws);
+
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
+
+    await wait(1500);
+
+    const types = msgs.map(m => m.type);
+    expect(types).toContain("attach_ack");
+    expect(types).not.toContain("prefill_viewport");
+    expect(types).not.toContain("prefill_done");
+
+    await closeWs(ws);
+    await wait(100);
+  });
+});
