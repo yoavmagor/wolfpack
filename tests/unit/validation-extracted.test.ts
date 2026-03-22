@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  WS_ALLOWED_KEYS,
   CMD_REGEX,
   BRANCH_REGEX,
   PLAN_FILE_REGEX,
@@ -11,48 +10,6 @@ import {
   isValidPort,
   shellEscape,
 } from "../../src/validation.ts";
-
-// ── WS_ALLOWED_KEYS ──
-
-describe("WS_ALLOWED_KEYS", () => {
-  const ALL_EXPECTED = [
-    "Enter", "Tab", "Escape", "Up", "Down", "Left", "Right",
-    "BTab", "BSpace", "DC", "Home", "End", "PPage", "NPage",
-    "y", "n",
-    "C-a", "C-b", "C-c", "C-d", "C-e", "C-f", "C-g", "C-h",
-    "C-k", "C-l", "C-n", "C-p", "C-r", "C-u", "C-w", "C-z",
-  ];
-
-  test("contains all 32 expected keys", () => {
-    expect(WS_ALLOWED_KEYS.size).toBe(32);
-    for (const key of ALL_EXPECTED) {
-      expect(WS_ALLOWED_KEYS.has(key)).toBe(true);
-    }
-  });
-
-  test("rejects random strings", () => {
-    expect(WS_ALLOWED_KEYS.has("Delete")).toBe(false);
-    expect(WS_ALLOWED_KEYS.has("F1")).toBe(false);
-    expect(WS_ALLOWED_KEYS.has("Space")).toBe(false);
-    expect(WS_ALLOWED_KEYS.has("Backspace")).toBe(false);
-  });
-
-  test("rejects injection strings", () => {
-    expect(WS_ALLOWED_KEYS.has('"; rm -rf /')).toBe(false);
-    expect(WS_ALLOWED_KEYS.has("$(whoami)")).toBe(false);
-    expect(WS_ALLOWED_KEYS.has("`cat /etc/passwd`")).toBe(false);
-  });
-
-  test("rejects empty string", () => {
-    expect(WS_ALLOWED_KEYS.has("")).toBe(false);
-  });
-
-  test("is case-sensitive", () => {
-    expect(WS_ALLOWED_KEYS.has("enter")).toBe(false);
-    expect(WS_ALLOWED_KEYS.has("ENTER")).toBe(false);
-    expect(WS_ALLOWED_KEYS.has("c-c")).toBe(false);
-  });
-});
 
 // ── clampCols ──
 

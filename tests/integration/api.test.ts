@@ -16,12 +16,6 @@ const capturePane = mock(
   async (session: string): Promise<string> =>
     `captured output for ${session}\n`,
 );
-const tmuxSend = mock(
-  async (_s: string, _t: string, _noEnter?: boolean): Promise<void> => {},
-);
-const tmuxSendKey = mock(
-  async (_s: string, _key: string): Promise<void> => {},
-);
 const tmuxResize = mock(
   async (_s: string, _c: number, _r: number): Promise<void> => {},
 );

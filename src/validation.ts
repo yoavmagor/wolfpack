@@ -3,16 +3,6 @@
  * Extracted from serve.ts and cli.ts for testability — zero side effects.
  */
 
-// ── Key allowlist for WS terminal handler ──
-
-export const WS_ALLOWED_KEYS = new Set([
-  "Enter", "Tab", "Escape", "Up", "Down", "Left", "Right",
-  "BTab", "BSpace", "DC", "Home", "End", "PPage", "NPage",
-  "y", "n",
-  "C-a", "C-b", "C-c", "C-d", "C-e", "C-f", "C-g", "C-h",
-  "C-k", "C-l", "C-n", "C-p", "C-r", "C-u", "C-w", "C-z",
-]);
-
 // ── Regex patterns ──
 
 export const CMD_REGEX = /^[a-zA-Z0-9 \-._/=]+$/;

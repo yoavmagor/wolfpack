@@ -16,13 +16,8 @@ let baseUrl: string;
 let baseWsUrl: string;
 
 const FAKE_SESSIONS = ["prompt-sess", "reconnect-sess"];
-// Mock tmux send/key to avoid requiring real tmux sessions
-const sendLog: { session: string; text: string; noEnter?: boolean }[] = [];
-const keyLog: { session: string; key: string }[] = [];
 __setTestOverrides({
   tmuxList: async () => [...FAKE_SESSIONS],
-  tmuxSend: async (session, text, noEnter) => { sendLog.push({ session, text, noEnter }); },
-  tmuxSendKey: async (session, key) => { keyLog.push({ session, key }); },
 });
 
 const _realConsoleError = console.error;

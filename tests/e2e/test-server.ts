@@ -22,7 +22,6 @@ const fakeSessions = [
   "error-project",
 ];
 
-// Stateful pane content — updates when tmuxSend is called
 const paneContent: Record<string, string> = {
   "test-project": "$ mock-terminal-ready\n",
   "another-project": "$ idle\n",
@@ -32,11 +31,6 @@ const paneContent: Record<string, string> = {
 
 __setTestOverrides({
   tmuxList: async () => [...fakeSessions],
-  tmuxSend: async (session, text) => {
-    // Simulate command echo + output
-    paneContent[session] = (paneContent[session] || "") + `$ ${text}\ncommand-output\n`;
-  },
-  tmuxSendKey: async () => {},
   tmuxResize: async () => {},
   capturePane: async (session) => paneContent[session] || "",
 });
