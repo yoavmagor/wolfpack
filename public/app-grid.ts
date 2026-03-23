@@ -412,7 +412,10 @@ export function backFromSettings() {
 }
 
 export function addToGrid(session, machine) {
-  if (!(deps.canUseWasmTerminal ? deps.canUseWasmTerminal() : isDesktop())) return;
+  if (!(deps.canUseWasmTerminal ? deps.canUseWasmTerminal() : isDesktop())) {
+    console.warn("[grid] WebAssembly unavailable — cannot open grid terminal");
+    return;
+  }
   const targetMachine = machine || "";
   if (state.currentView !== "terminal" && hasPreservedGrid()) {
     const result = WP.addToGridState(

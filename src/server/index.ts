@@ -170,15 +170,16 @@ export function createServerInstance(): { server: ReturnType<typeof createServer
       return;
     }
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (url.pathname !== "/ws/pty") {
-      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-      socket.destroy();
-      return;
-    }
 
     const auth = validateRequestJwt(req.headers, url, true);
     if (!auth.ok) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    if (url.pathname !== "/ws/pty") {
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
       return;
     }

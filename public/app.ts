@@ -872,7 +872,7 @@ function createPtySocketClient(opts) {
             _sawViewportPrefill = true;
             // Safety timeout: if WS drops between phase 1 and phase 2 (prefill_done
             // never arrives), we'd buffer live output indefinitely. Force-flush after
-            // 5s so the terminal isn't stuck blank. See PR #89 review.
+            // 2s so the terminal isn't stuck blank on flaky mobile connections.
             if (_prefillDoneTimeout) clearTimeout(_prefillDoneTimeout);
             _prefillDoneTimeout = setTimeout(() => {
               _prefillDoneTimeout = null;
@@ -885,7 +885,7 @@ function createPtySocketClient(opts) {
               if (opts.onBinaryData) {
                 for (const chunk of chunks) opts.onBinaryData(chunk);
               }
-            }, 5000);
+            }, 2000);
           } else if (msg.type === "prefill_done") {
             // Phase 2 complete (or single-phase legacy): flush remaining chunks.
             _awaitingPrefillDone = false;
