@@ -2318,6 +2318,23 @@ async function initTerminal(cached) {
       (data) => state.terminalController && state.terminalController.send(data),
       () => !!(state.terminalController && state.terminalController.isConnected),
     );
+    // ghostty-web sets contentEditable + role=textbox on the container, which
+    // causes mobile browsers to show the keyboard on any touch. Adding
+    // inputmode=none suppresses the keyboard while preserving ghostty's internals.
+    function neutralizeGhostFocus() {
+      if (container.getAttribute("contenteditable")) {
+        container.setAttribute("inputmode", "none");
+      }
+      container.querySelectorAll("textarea, input").forEach((el: HTMLElement) => {
+        el.setAttribute("tabindex", "-1");
+        el.setAttribute("inputmode", "none");
+        el.setAttribute("readonly", "");
+      });
+    }
+    neutralizeGhostFocus();
+    // ghostty-web may re-apply attributes on reconnect or resize
+    state._ghostInputObserver = new MutationObserver(neutralizeGhostFocus);
+    state._ghostInputObserver.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["contenteditable", "inputmode"] });
     // Blur anything that auto-focused during mount (prevents keyboard auto-open)
     if (document.activeElement && document.activeElement !== document.body) {
       (document.activeElement as HTMLElement).blur();
@@ -2384,6 +2401,7 @@ async function initTerminal(cached) {
 }
 
 function destroyTerminal() {
+  if (state._ghostInputObserver) { state._ghostInputObserver.disconnect(); state._ghostInputObserver = null; }
   if (state._cachedFallbackTimer) { clearTimeout(state._cachedFallbackTimer); state._cachedFallbackTimer = null; }
   if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
   if (state.desktopResizeTimer) { clearTimeout(state.desktopResizeTimer); state.desktopResizeTimer = null; }
