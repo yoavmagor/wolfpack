@@ -265,6 +265,43 @@ export function getGridCellElement(gs) {
   return document.querySelector('#desktop-grid-container .grid-cell[data-grid-index="' + idx + '"]');
 }
 
+/** Reclaim control of a single grid cell. */
+function takeControlOfCell(gs) {
+  if (!gs.controller) return;
+  var clickAction = WP.handleTakeControlClick(gs.controller.isConnected);
+  if (clickAction === "send-take-control") {
+    gs.controller.sendTakeControl();
+    // Safety net: if control_granted doesn't arrive within 3s, the
+    // take_control message may have been lost (zombie socket on mobile).
+    // Force-reconnect with auto-take-control to retry.
+    if (gs._takeControlTimer) clearTimeout(gs._takeControlTimer);
+    gs._takeControlTimer = setTimeout(() => {
+      gs._takeControlTimer = null;
+      if (!gs.controller || gs.controller.isConnected === false) return;
+      const cell = getGridCellElement(gs);
+      if (!cell || !cell.querySelector(".viewer-conflict-overlay")) return;
+      var ns = WP.prepareAutoTakeControl({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
+      gs._displaced = ns.displaced;
+      gs._autoTakeControl = ns.autoTakeControl;
+      gs.controller.reconnect();
+    }, 3000);
+  } else {
+    var ns = WP.prepareAutoTakeControl({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
+    gs._displaced = ns.displaced;
+    gs._autoTakeControl = ns.autoTakeControl;
+    gs.controller.connect();
+  }
+}
+
+/** Take control of ALL displaced grid cells at once. */
+function takeControlOfAllDisplacedCells() {
+  for (const gs of state.gridSessions) {
+    const cell = getGridCellElement(gs);
+    if (!cell || !cell.querySelector(".viewer-conflict-overlay")) continue;
+    takeControlOfCell(gs);
+  }
+}
+
 function showGridCellConflictOverlay(gs) {
   const cell = getGridCellElement(gs);
   if (!cell) return;
@@ -273,31 +310,8 @@ function showGridCellConflictOverlay(gs) {
   removeGridCellConflictOverlay(gs);
   const overlay = deps.createConflictOverlay("Active on another device", "Take Control", (e) => {
     e.stopPropagation();
-    if (!gs.controller) return;
-    var clickAction = WP.handleTakeControlClick(gs.controller.isConnected);
-    if (clickAction === "send-take-control") {
-      gs.controller.sendTakeControl();
-      // Safety net: if control_granted doesn't arrive within 3s, the
-      // take_control message may have been lost (zombie socket on mobile).
-      // Force-reconnect with auto-take-control to retry.
-      if (gs._takeControlTimer) clearTimeout(gs._takeControlTimer);
-      gs._takeControlTimer = setTimeout(() => {
-        gs._takeControlTimer = null;
-        if (!gs.controller || gs.controller.isConnected === false) return;
-        // Still showing overlay = control_granted never arrived
-        const cell = getGridCellElement(gs);
-        if (!cell || !cell.querySelector(".viewer-conflict-overlay")) return;
-        var ns = WP.prepareAutoTakeControl({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
-        gs._displaced = ns.displaced;
-        gs._autoTakeControl = ns.autoTakeControl;
-        gs.controller.reconnect();
-      }, 3000);
-    } else {
-      var ns = WP.prepareAutoTakeControl({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
-      gs._displaced = ns.displaced;
-      gs._autoTakeControl = ns.autoTakeControl;
-      gs.controller.connect();
-    }
+    // Reclaim ALL displaced cells — not just this one
+    takeControlOfAllDisplacedCells();
   });
   overlay.dataset.conflictType = "conflict";
   cell.appendChild(overlay);
