@@ -2249,7 +2249,31 @@ body.mobile-no-ghost-focus #desktop-terminal-container textarea {
 
 /* ── Mobile-specific ── */
 @media (max-width: 768px) {
-  #kb-accessory { display: flex; }
+  #kb-accessory {
+    display: flex;
+    padding: 5px 6px 3px;
+    gap: 4px;
+  }
+  #kb-accessory .kb-key {
+    flex-shrink: 1;
+    min-width: 0;
+    padding: 6px 8px;
+    min-height: 34px;
+    font-size: 12px;
+  }
+  #kb-accessory .kb-enter {
+    min-width: 0;
+    padding: 6px 10px;
+    font-size: 16px;
+  }
+  #kb-accessory .kb-open {
+    min-width: 0;
+    padding: 5px 8px !important;
+  }
+  #kb-accessory .kb-open svg {
+    width: 18px;
+    height: 18px;
+  }
   .header-center .wolfpack-icon { display: none; }
   #terminal-view {
     padding-top: env(safe-area-inset-top);

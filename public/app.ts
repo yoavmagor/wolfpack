@@ -93,6 +93,8 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
     return lines.join("\n");
   }
 
+  let selCopyBtn: HTMLButtonElement | null = null;
+
   function showSelectionOverlay() {
     if (!selOverlay) {
       selOverlay = document.createElement("div");
@@ -124,10 +126,43 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
     }
   }
 
+  function showCopyButton() {
+    if (selCopyBtn) selCopyBtn.remove();
+    const canvas = container.querySelector("canvas");
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const cRect = container.getBoundingClientRect();
+    const cellH = rect.height / term.rows;
+    const r0 = Math.min(selAnchorRow, selEndRow);
+    const oy = rect.top - cRect.top;
+
+    selCopyBtn = document.createElement("button");
+    selCopyBtn.textContent = "Copy";
+    selCopyBtn.className = "sel-copy-btn";
+    // Position above the selection
+    const btnTop = oy + r0 * cellH - 32;
+    selCopyBtn.style.cssText = "position:absolute;z-index:11;left:50%;transform:translateX(-50%);top:" + Math.max(0, btnTop) + "px;background:var(--accent);color:var(--bg-base);border:none;border-radius:6px;padding:4px 14px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;pointer-events:auto;box-shadow:0 2px 8px rgba(0,0,0,0.5);";
+    selCopyBtn.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const text = getSelectedText();
+      if (text && navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(() => {
+          haptic([10, 30, 10]);
+          if (selCopyBtn) selCopyBtn.textContent = "Copied!";
+          setTimeout(() => clearSelection(), 600);
+        }).catch(() => { clearSelection(); });
+      }
+    }, { passive: false });
+    selCopyBtn.addEventListener("click", (e) => { e.stopPropagation(); });
+    container.appendChild(selCopyBtn);
+  }
+
   function clearSelection() {
     selecting = false;
     selAnchorRow = selAnchorCol = selEndRow = selEndCol = -1;
     if (selOverlay) { selOverlay.remove(); selOverlay = null; }
+    if (selCopyBtn) { selCopyBtn.remove(); selCopyBtn = null; }
   }
 
   function cancelLongPress() {
@@ -242,14 +277,10 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
     cancelLongPress();
 
     if (selecting) {
-      const text = getSelectedText();
-      if (text && navigator.clipboard) {
-        navigator.clipboard.writeText(text).then(() => {
-          haptic([10, 30, 10]);
-        }).catch((e) => { console.debug("[clipboard] copy failed:", e); });
-      }
-      // Keep overlay visible briefly then clear
-      setTimeout(() => { clearSelection(); }, 200);
+      // Keep selection visible — show copy button for explicit user action.
+      // Selection is dismissed on next touchstart (scroll or new selection).
+      showCopyButton();
+      selecting = false;  // stop extending selection, but keep overlay visible
       return;
     }
 
