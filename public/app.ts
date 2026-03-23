@@ -2226,8 +2226,9 @@ async function initTerminal(cached) {
 
   if (isMobile) {
     kbProxy.style.display = "block";
-    // Start with proxy readonly so touches don't open the keyboard.
-    // kb-open-btn removes readonly when user explicitly wants to type.
+    // Start with inputmode=none so the browser never shows a virtual keyboard
+    // on focus. kb-open-btn switches to inputmode=text when user wants to type.
+    kbProxy.setAttribute("inputmode", "none");
     kbProxy.setAttribute("readonly", "");
     // Hide ghostty-web's textarea on mobile to prevent focus stealing
     document.body.classList.add("mobile-no-ghost-focus");
@@ -2357,7 +2358,7 @@ async function initTerminal(cached) {
         // When keyboard closes (e.g. phone's native dismiss), re-lock proxy
         if (!kbOpen) {
           const p = document.getElementById("mobile-kb-proxy");
-          if (p) p.setAttribute("readonly", "");
+          if (p) { p.setAttribute("readonly", ""); p.setAttribute("inputmode", "none"); }
         }
       }
       // Debounce terminal refit during keyboard animation
@@ -3087,10 +3088,12 @@ function toggleKbAccessory() {
       const opening = document.activeElement !== proxy;
       if (opening) {
         proxy.removeAttribute("readonly");
+        proxy.setAttribute("inputmode", "text");
         proxy.focus({ preventScroll: true });
       } else {
         proxy.blur();
         proxy.setAttribute("readonly", "");
+        proxy.setAttribute("inputmode", "none");
       }
       // Sync kbAccessoryOpen so cmd-palette visibility tracks keyboard state
       state.kbAccessoryOpen = opening;
