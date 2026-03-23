@@ -783,6 +783,8 @@ function createPtySocketClient(opts) {
   }
 
   /** Send one attach handshake to bootstrap PTY spawn on fresh WS open. */
+  let _takeControlOnAttach = !!opts.takeControlOnAttach;
+
   function sendAttachHandshake() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     try { opts.fitTerminal(); } catch {}
@@ -795,7 +797,9 @@ function createPtySocketClient(opts) {
     _prefillChunks = [];
     _awaitingPrefillDone = prefillMode !== "none";
     _sawViewportPrefill = false;
-    ws.send(JSON.stringify({ type: "attach", cols: dims.cols, rows: dims.rows, prefillMode }));
+    const msg: any = { type: "attach", cols: dims.cols, rows: dims.rows, prefillMode };
+    if (_takeControlOnAttach) { msg.takeControl = true; _takeControlOnAttach = false; }
+    ws.send(JSON.stringify(msg));
     if (_attachAckTimer) clearTimeout(_attachAckTimer);
     // Compatibility fallback: older servers don't implement attach_ack.
     _attachAckTimer = setTimeout(() => {
@@ -1127,7 +1131,7 @@ function createPtyTerminalController(opts) {
    * connect() — start hydration (first time only), create PTY WebSocket
    * client, and open the connection.
    */
-  function connect() {
+  function connect(connectOpts?: { takeControl?: boolean }) {
     if (_ptyClient && _ptyClient.isOpen) return;
     if (_ptyClient) _ptyClient.close();
 
@@ -1149,6 +1153,7 @@ function createPtyTerminalController(opts) {
     const isCurrent = () => _ptyClient === thisClient;
 
     thisClient = _ptyClient = createPtySocketClient({
+      takeControlOnAttach: !!(connectOpts && connectOpts.takeControl),
       session: opts.session,
       machine: opts.machine || "",
       resetPty: opts.resetPty,

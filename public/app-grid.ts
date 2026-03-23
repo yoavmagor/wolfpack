@@ -268,28 +268,26 @@ export function getGridCellElement(gs) {
 /** Reclaim control of a single grid cell. */
 function takeControlOfCell(gs) {
   if (!gs.controller) return;
-  var clickAction = WP.handleTakeControlClick(gs.controller.isConnected);
-  if (clickAction === "send-take-control") {
+  if (gs.controller.isConnected) {
+    // Socket still open (viewer_conflict path) — send take_control directly
     gs.controller.sendTakeControl();
-    // Safety net: if control_granted doesn't arrive within 3s, the
-    // take_control message may have been lost (zombie socket on mobile).
-    // Force-reconnect with auto-take-control to retry.
+    // Safety net: if control_granted doesn't arrive within 3s, force-reconnect
     if (gs._takeControlTimer) clearTimeout(gs._takeControlTimer);
     gs._takeControlTimer = setTimeout(() => {
       gs._takeControlTimer = null;
       if (!gs.controller || gs.controller.isConnected === false) return;
       const cell = getGridCellElement(gs);
       if (!cell || !cell.querySelector(".viewer-conflict-overlay")) return;
-      var ns = WP.prepareAutoTakeControl({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
-      gs._displaced = ns.displaced;
-      gs._autoTakeControl = ns.autoTakeControl;
-      gs.controller.reconnect();
+      gs.controller.connect({ takeControl: true });
     }, 3000);
   } else {
-    var ns = WP.prepareAutoTakeControl({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
-    gs._displaced = ns.displaced;
-    gs._autoTakeControl = ns.autoTakeControl;
-    gs.controller.connect();
+    // Socket closed (displaced) — reconnect with takeControl flag in attach.
+    // Server sees takeControl=true and does immediate takeover, no extra
+    // viewer_conflict → take_control round trip needed.
+    // Set autoTakeControl so the viewer_conflict callback (which still fires
+    // before control_granted) doesn't flash the conflict overlay.
+    gs._autoTakeControl = true;
+    gs.controller.connect({ takeControl: true });
   }
 }
 

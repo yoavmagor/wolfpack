@@ -149,6 +149,32 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
 
   if (maybeExisting && maybeExisting.alive) {
     const existing = maybeExisting; // const binding for closure narrowing
+
+    // ── Fast path: immediate takeover ──
+    // When a reconnecting client already knows it wants control (e.g. grid
+    // cell reclaiming after displacement), it sets takeControl=true in the
+    // attach. We skip the viewer_conflict → take_control handshake entirely.
+    function performImmediateTakeover(dims: { cols: number; rows: number; prefillMode?: string } | null) {
+      const oldViewer = existing.viewer;
+      existing.viewer = null;
+      if (oldViewer) {
+        try { oldViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`takeover: oldViewer close failed`, { session, error: errMsg(e) }); }
+      }
+      const oldProc = existing.proc;
+      existing.alive = false;
+      activePtySessions.delete(session);
+      if (oldProc) {
+        try { oldProc.terminal!.close(); } catch (e: unknown) { log.debug(`takeover: terminal close failed`, { session, error: errMsg(e) }); }
+        try { oldProc.kill(); } catch (e: unknown) { log.debug(`takeover: proc kill failed`, { session, error: errMsg(e) }); }
+      }
+      if (existing.pendingViewer) {
+        try { existing.pendingViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`displaced pendingViewer close failed`, { session, error: errMsg(e) }); }
+        existing.pendingViewer = null;
+      }
+      setupNewPtyEntry(ws, session, dims);
+      try { ws.send(JSON.stringify({ type: "control_granted" })); } catch (e: unknown) { log.warn("control_granted send failed", { session, error: errMsg(e) }); }
+    }
+
     // Session occupied — send conflict, hold connection open as pending
     ws.send(JSON.stringify({ type: "viewer_conflict" }));
 
@@ -167,44 +193,33 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
     // immediately on take_control without waiting for a second attach.
     let pendingAttachDims: { cols: number; rows: number; prefillMode?: string } | null = null;
 
+    function cleanupPending() {
+      clearInterval(pingTimer);
+      ws.removeListener("message", pendingMessage);
+      ws.removeListener("close", cleanup);
+      ws.removeListener("error", cleanup);
+      existing.pendingViewer = null;
+    }
+
     function pendingMessage(raw: Buffer | string) {
       try {
         const str = String(raw);
         const msg = JSON.parse(str);
         if (msg.type === "attach" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           pendingAttachDims = { cols: msg.cols, rows: msg.rows, prefillMode: msg.prefillMode };
+          // Immediate takeover: client already knows it wants control
+          if (msg.takeControl) {
+            cleanupPending();
+            performImmediateTakeover(pendingAttachDims);
+            return;
+          }
           // Ack so client doesn't hit the fallback timer
           try { ws.send(JSON.stringify({ type: "attach_ack" })); } catch (e: unknown) { log.debug(`pending attach_ack send failed`, { session, error: errMsg(e) }); }
           return;
         }
         if (msg.type === "take_control") {
-          // Null out viewer BEFORE closing — prevents old detach handler
-          // from calling teardownPty() which would destroy the NEW entry
-          const oldViewer = existing.viewer;
-          existing.viewer = null;
-          if (oldViewer) {
-            try { oldViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`takeover: oldViewer close failed`, { session, error: errMsg(e) }); }
-          }
-          // Tear down old PTY proc (no tmux session to clean up anymore)
-          const oldProc = existing.proc;
-          existing.alive = false;
-          activePtySessions.delete(session);
-          if (oldProc) {
-            try { oldProc.terminal!.close(); } catch (e: unknown) { log.debug(`takeover: terminal close failed`, { session, error: errMsg(e) }); }
-            try { oldProc.kill(); } catch (e: unknown) { log.debug(`takeover: proc kill failed`, { session, error: errMsg(e) }); }
-          }
-
-          // Remove pending handlers before promoting — prevents duplicate handlers
-          clearInterval(pingTimer);
-          ws.removeListener("message", pendingMessage);
-          ws.removeListener("close", cleanup);
-          ws.removeListener("error", cleanup);
-          existing.pendingViewer = null;
-
-          // Promote this viewer and spawn PTY immediately using stored dims
-          setupNewPtyEntry(ws, session, pendingAttachDims);
-          // Tell client takeover succeeded so it re-sends resize
-          try { ws.send(JSON.stringify({ type: "control_granted" })); } catch (e: unknown) { log.warn("control_granted send failed", { session, error: errMsg(e) }); }
+          cleanupPending();
+          performImmediateTakeover(pendingAttachDims);
         }
       } catch (e: unknown) {
         if (!(e instanceof SyntaxError)) log.warn("pendingMessage handler failed", { session, error: errMsg(e) });
