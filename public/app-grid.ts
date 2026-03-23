@@ -101,7 +101,7 @@ export function updateGridLayout() {
   // Ensure single-terminal container is hidden
   document.getElementById("desktop-terminal-container").style.display = "none";
   document.getElementById("input-bar").style.display = "none";
-  document.getElementById("cmd-palette").style.display = "none";
+  document.getElementById("cmd-palette").classList.remove("visible");
   document.getElementById("kb-accessory").classList.remove("visible");
 }
 
@@ -130,6 +130,7 @@ async function mountGridController(gs, cell, idx) {
   if (gs.controller) return; // already mounted
   const cached = deps.loadSnapshot ? deps.loadSnapshot(gs.machine || "", gs.session) : null;
   if (cached) cell.classList.add("cached-visible");
+  let _gridCachedPending = !!cached;
   const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
   gs.controller = deps.createPtyTerminalController({
     session: gs.session,
@@ -144,6 +145,12 @@ async function mountGridController(gs, cell, idx) {
     shouldReconnect: () => state.gridSessions.includes(gs),
     canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && state.gridSessions[state.gridFocusIndex] === gs),
     canSendResize: () => !!(gs.controller && gs.controller.isConnected),
+    onOutput: () => {
+      if (_gridCachedPending) {
+        _gridCachedPending = false;
+        cell.classList.remove("cached-visible");
+      }
+    },
     onViewerConflict: () => {
       var r = WP.handleViewerConflict({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
       gs._displaced = r.newState.displaced;
@@ -270,6 +277,21 @@ function showGridCellConflictOverlay(gs) {
     var clickAction = WP.handleTakeControlClick(gs.controller.isConnected);
     if (clickAction === "send-take-control") {
       gs.controller.sendTakeControl();
+      // Safety net: if control_granted doesn't arrive within 3s, the
+      // take_control message may have been lost (zombie socket on mobile).
+      // Force-reconnect with auto-take-control to retry.
+      if (gs._takeControlTimer) clearTimeout(gs._takeControlTimer);
+      gs._takeControlTimer = setTimeout(() => {
+        gs._takeControlTimer = null;
+        if (!gs.controller || gs.controller.isConnected === false) return;
+        // Still showing overlay = control_granted never arrived
+        const cell = getGridCellElement(gs);
+        if (!cell || !cell.querySelector(".viewer-conflict-overlay")) return;
+        var ns = WP.prepareAutoTakeControl({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
+        gs._displaced = ns.displaced;
+        gs._autoTakeControl = ns.autoTakeControl;
+        gs.controller.reconnect();
+      }, 3000);
     } else {
       var ns = WP.prepareAutoTakeControl({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
       gs._displaced = ns.displaced;
@@ -282,6 +304,7 @@ function showGridCellConflictOverlay(gs) {
 }
 
 function removeGridCellConflictOverlay(gs) {
+  if (gs._takeControlTimer) { clearTimeout(gs._takeControlTimer); gs._takeControlTimer = null; }
   const cell = getGridCellElement(gs);
   if (!cell) return;
   cell.querySelectorAll(".viewer-conflict-overlay").forEach(el => el.remove());

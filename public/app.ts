@@ -248,12 +248,8 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
           haptic([10, 30, 10]);
         }).catch((e) => { console.debug("[clipboard] copy failed:", e); });
       }
-      // Keep overlay visible briefly then clear, re-focus proxy so input resumes
-      setTimeout(() => {
-        clearSelection();
-        const proxy = document.getElementById("mobile-kb-proxy");
-        if (proxy && proxy.style.display !== "none") proxy.focus({ preventScroll: true });
-      }, 200);
+      // Keep overlay visible briefly then clear
+      setTimeout(() => { clearSelection(); }, 200);
       return;
     }
 
@@ -1045,6 +1041,7 @@ function createPtyTerminalController(opts) {
   let _hydrationWritesInFlight = 0;
   let _reconnectPendingReset = false;
   let _mounting = false;
+  let _cachedLoaded = false;
 
   const _canAcceptInput = opts.canAcceptInput || (() => !!(_ptyClient && _ptyClient.isOpen));
   const _canSendResize = opts.canSendResize || _canAcceptInput;
@@ -1118,6 +1115,7 @@ function createPtyTerminalController(opts) {
 
     fitTerminalPreserveScroll();
     if (mountOpts && mountOpts.cached) {
+      _cachedLoaded = true;
       _term.write(mountOpts.cached, () => {
         try { _term.scrollToBottom(); } catch {}
       });
@@ -1137,6 +1135,13 @@ function createPtyTerminalController(opts) {
     if (!_hydrationStarted && _hydration) {
       _hydration.start();
       _hydrationStarted = true;
+    }
+
+    // If cached snapshot was written during mount() and we're using viewport
+    // prefill, replace the cached buffer with live data on first output.
+    if (_cachedLoaded && opts.prefillMode === "viewport") {
+      _reconnectPendingReset = true;
+      _cachedLoaded = false;
     }
 
     // Capture reference to detect stale callbacks from replaced ptyClients
@@ -1246,6 +1251,7 @@ function createPtyTerminalController(opts) {
     _hydrationWritesInFlight = 0;
     _reconnectPendingReset = false;
     _mounting = false;
+    _cachedLoaded = false;
     if (_term) { try { _term.dispose(); } catch {} _term = null; }
     _fitAddon = null;
     _container = null;
@@ -2175,7 +2181,7 @@ async function initTerminal(cached) {
   document.getElementById("kb-accessory").classList.remove("visible");
   state.kbAccessoryOpen = false;
   document.getElementById("input-bar").style.display = "none";
-  document.getElementById("cmd-palette").style.display = "none";
+  document.getElementById("cmd-palette").classList.remove("visible");
   document.getElementById("msg-preview").style.display = "none";
 
   if (isMobile) {
@@ -2353,7 +2359,7 @@ function destroyTerminal() {
   container.classList.remove("hydrating", "hydrated");
   container.innerHTML = "";
   document.getElementById("input-bar").style.display = "";
-  document.getElementById("cmd-palette").style.display = "";
+  renderCmdPalette();
 }
 
 // ── Terminal ──
@@ -3023,24 +3029,22 @@ function toggleKbAccessory() {
   // (tap-to-focus was unreliable: scroll gestures triggered keyboard open)
   const kbOpenBtn = document.getElementById("kb-open-btn");
   if (kbOpenBtn) {
+    function toggleMobileKeyboard() {
+      if (proxy.style.display === "none") return;
+      if (document.activeElement === proxy) {
+        proxy.blur();
+      } else {
+        proxy.focus({ preventScroll: true });
+      }
+    }
     kbOpenBtn.addEventListener("mousedown", (e) => e.preventDefault());
     kbOpenBtn.addEventListener("touchstart", (e) => {
       e.preventDefault();
-      if (proxy.style.display === "none") return;
-      if (document.activeElement === proxy) {
-        proxy.blur();
-      } else {
-        proxy.focus({ preventScroll: true });
-      }
+      toggleMobileKeyboard();
       haptic([15]);
     }, { passive: false });
     kbOpenBtn.addEventListener("click", () => {
-      if (proxy.style.display === "none") return;
-      if (document.activeElement === proxy) {
-        proxy.blur();
-      } else {
-        proxy.focus({ preventScroll: true });
-      }
+      toggleMobileKeyboard();
     });
   }
 })();
