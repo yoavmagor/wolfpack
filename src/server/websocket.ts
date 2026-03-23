@@ -163,10 +163,20 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
       else clearInterval(pingTimer);
     }, PING_INTERVAL_MS);
 
+    // Capture the initial attach dimensions so we can spawn the PTY
+    // immediately on take_control without waiting for a second attach.
+    let pendingAttachDims: { cols: number; rows: number; prefillMode?: string } | null = null;
+
     function pendingMessage(raw: Buffer | string) {
       try {
         const str = String(raw);
         const msg = JSON.parse(str);
+        if (msg.type === "attach" && typeof msg.cols === "number" && typeof msg.rows === "number") {
+          pendingAttachDims = { cols: msg.cols, rows: msg.rows, prefillMode: msg.prefillMode };
+          // Ack so client doesn't hit the fallback timer
+          try { ws.send(JSON.stringify({ type: "attach_ack" })); } catch (e: unknown) { log.debug(`pending attach_ack send failed`, { session, error: errMsg(e) }); }
+          return;
+        }
         if (msg.type === "take_control") {
           // Null out viewer BEFORE closing — prevents old detach handler
           // from calling teardownPty() which would destroy the NEW entry
@@ -191,8 +201,8 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
           ws.removeListener("error", cleanup);
           existing.pendingViewer = null;
 
-          // Promote this viewer — spawn fresh PTY on first resize
-          setupNewPtyEntry(ws, session);
+          // Promote this viewer and spawn PTY immediately using stored dims
+          setupNewPtyEntry(ws, session, pendingAttachDims);
           // Tell client takeover succeeded so it re-sends resize
           try { ws.send(JSON.stringify({ type: "control_granted" })); } catch (e: unknown) { log.warn("control_granted send failed", { session, error: errMsg(e) }); }
         }
@@ -220,7 +230,11 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
   setupNewPtyEntry(ws, session);
 }
 
-function setupNewPtyEntry(ws: WebSocket, session: string): void {
+function setupNewPtyEntry(
+  ws: WebSocket,
+  session: string,
+  initialDims?: { cols: number; rows: number; prefillMode?: string } | null,
+): void {
   const entry = {
     viewer: ws as WebSocket | null,
     pendingViewer: null as WebSocket | null,
@@ -475,4 +489,18 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
   }
   ws.on("close", detach);
   ws.on("error", detach);
+
+  // If initial dims were captured (e.g. from a pending viewer's attach before
+  // take_control), spawn PTY immediately — saves a full round trip.
+  if (initialDims && typeof initialDims.cols === "number" && typeof initialDims.rows === "number") {
+    let prefillMode: PrefillMode = "full";
+    if (typeof initialDims.prefillMode === "string" && VALID_PREFILL_MODES.includes(initialDims.prefillMode as PrefillMode)) {
+      prefillMode = initialDims.prefillMode as PrefillMode;
+    }
+    latestRequestedSize = { cols: clampCols(initialDims.cols), rows: clampRows(initialDims.rows) };
+    spawnPty(latestRequestedSize.cols, latestRequestedSize.rows, { prefillMode });
+    if (entry.viewer && entry.viewer.readyState === 1) {
+      try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch (e: unknown) { log.debug(`immediate attach_ack send failed`, { session, error: errMsg(e) }); }
+    }
+  }
 }
