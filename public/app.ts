@@ -210,6 +210,10 @@ function setupTouchScrollHandler(container, term, sendInput, canAcceptInput) {
 
   function onTouchStart(e) {
     if (e.touches.length !== 1) return;
+    // Blur proxy on any terminal touch — keyboard only opens via kb-open-btn.
+    // This prevents scroll/long-press gestures from triggering keyboard open.
+    const proxy = document.getElementById("mobile-kb-proxy");
+    if (proxy && document.activeElement === proxy) proxy.blur();
     cancelMomentum();
     clearSelection();
     tracking = true;
