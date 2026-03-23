@@ -2322,19 +2322,21 @@ async function initTerminal(cached) {
     // causes mobile browsers to show the keyboard on any touch. Adding
     // inputmode=none suppresses the keyboard while preserving ghostty's internals.
     function neutralizeGhostFocus() {
-      if (container.getAttribute("contenteditable")) {
+      if (container.getAttribute("contenteditable") && !container.getAttribute("inputmode")) {
         container.setAttribute("inputmode", "none");
       }
       container.querySelectorAll("textarea, input").forEach((el: HTMLElement) => {
-        el.setAttribute("tabindex", "-1");
-        el.setAttribute("inputmode", "none");
-        el.setAttribute("readonly", "");
+        if (!el.hasAttribute("readonly")) {
+          el.setAttribute("tabindex", "-1");
+          el.setAttribute("inputmode", "none");
+          el.setAttribute("readonly", "");
+        }
       });
     }
     neutralizeGhostFocus();
-    // ghostty-web may re-apply attributes on reconnect or resize
+    // ghostty-web may re-apply attributes or add new elements on reconnect
     state._ghostInputObserver = new MutationObserver(neutralizeGhostFocus);
-    state._ghostInputObserver.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["contenteditable", "inputmode"] });
+    state._ghostInputObserver.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["contenteditable"] });
     // Blur anything that auto-focused during mount (prevents keyboard auto-open)
     if (document.activeElement && document.activeElement !== document.body) {
       (document.activeElement as HTMLElement).blur();
