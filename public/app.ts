@@ -2309,9 +2309,14 @@ async function initTerminal(cached) {
       // Shrink terminal-view from the bottom so the terminal refits to correct rows.
       // translateY broke fresh sessions — content at the top got pushed above viewport.
       termView.style.bottom = kbOpen ? kbHeight + "px" : "";
-      // Toggle visual state on keyboard button
+      // Toggle visual state on keyboard button + sync accessory state
       const kbBtn = document.getElementById("kb-open-btn");
       if (kbBtn) kbBtn.classList.toggle("active", kbOpen);
+      if (state.kbAccessoryOpen !== kbOpen) {
+        state.kbAccessoryOpen = kbOpen;
+        const cmd = document.getElementById("cmd-palette");
+        if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", kbOpen);
+      }
       // Debounce terminal refit during keyboard animation
       if (state.kbResizeTimer) clearTimeout(state.kbResizeTimer);
       state.kbResizeTimer = setTimeout(() => {
@@ -3036,11 +3041,16 @@ function toggleKbAccessory() {
   if (kbOpenBtn) {
     function toggleMobileKeyboard() {
       if (proxy.style.display === "none") return;
-      if (document.activeElement === proxy) {
-        proxy.blur();
-      } else {
+      const opening = document.activeElement !== proxy;
+      if (opening) {
         proxy.focus({ preventScroll: true });
+      } else {
+        proxy.blur();
       }
+      // Sync kbAccessoryOpen so cmd-palette visibility tracks keyboard state
+      state.kbAccessoryOpen = opening;
+      const cmd = document.getElementById("cmd-palette");
+      if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", opening);
     }
     kbOpenBtn.addEventListener("mousedown", (e) => e.preventDefault());
     kbOpenBtn.addEventListener("touchstart", (e) => {

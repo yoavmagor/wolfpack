@@ -33,6 +33,23 @@ __setTestOverrides({
   tmuxList: async () => [...fakeSessions],
   tmuxResize: async () => {},
   capturePane: async (session) => paneContent[session] || "",
+  // Stub exec so handlePtyWs doesn't call real tmux
+  exec: (async (cmd: string, args?: readonly string[]) => {
+    const a = args || [];
+    if (a[0] === "has-session") {
+      const session = String(a[2] || "");
+      if (!fakeSessions.includes(session)) throw new Error("session not found");
+      return { stdout: "", stderr: "" };
+    }
+    if (a[0] === "set-option" || a[0] === "resize-window") {
+      return { stdout: "", stderr: "" };
+    }
+    if (a[0] === "capture-pane") {
+      const session = String(a[2] || "");
+      return { stdout: paneContent[session] || "", stderr: "" };
+    }
+    return { stdout: "", stderr: "" };
+  }) as any,
 });
 
 // Suppress expected tmux noise

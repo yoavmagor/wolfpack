@@ -11,7 +11,10 @@ import { createLogger, errMsg } from "../log.js";
 
 const log = createLogger("tmux");
 
-const exec = promisify(execFile);
+const _realExec = promisify(execFile);
+let _execOverride: typeof _realExec | null = null;
+const exec: typeof _realExec = (...args: Parameters<typeof _realExec>) =>
+  (_execOverride || _realExec)(...args);
 
 export const TMUX = "tmux";
 export const MOBILE_CAPTURE_HISTORY_LINES = 2000;
@@ -136,6 +139,7 @@ export function __setTestOverrides(overrides: Partial<{
   capturePane: (session: string) => Promise<string>;
   listSessionsRaw: () => Promise<string>;
   showEnvironment: (session: string) => Promise<string>;
+  exec: typeof _realExec;
 }>): void {
   assertTestMode("__setTestOverrides");
   if (overrides.tmuxList) _tmuxListFn = overrides.tmuxList;
@@ -143,6 +147,7 @@ export function __setTestOverrides(overrides: Partial<{
   if (overrides.capturePane) _capturePane = overrides.capturePane;
   if (overrides.listSessionsRaw) _listSessionsRaw = overrides.listSessionsRaw;
   if (overrides.showEnvironment) _showEnvironment = overrides.showEnvironment;
+  if (overrides.exec) _execOverride = overrides.exec;
 }
 
 /** Test hook: clear backfill cache for isolation between tests */
