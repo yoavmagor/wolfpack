@@ -275,10 +275,15 @@ function takeControlOfCell(gs) {
     if (gs._takeControlTimer) clearTimeout(gs._takeControlTimer);
     gs._takeControlTimer = setTimeout(() => {
       gs._takeControlTimer = null;
-      if (!gs.controller || gs.controller.isConnected === false) return;
+      if (!gs.controller) return;
       const cell = getGridCellElement(gs);
       if (!cell || !cell.querySelector(".viewer-conflict-overlay")) return;
-      gs.controller.connect({ takeControl: true });
+      gs._autoTakeControl = true;
+      if (gs.controller.isConnected) {
+        gs.controller.reconnect({ takeControl: true });
+      } else {
+        gs.controller.connect({ takeControl: true });
+      }
     }, 3000);
   } else {
     // Socket closed (displaced) — reconnect with takeControl flag in attach.

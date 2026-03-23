@@ -958,7 +958,9 @@ function createPtySocketClient(opts) {
     };
 
     sock.onclose = (ev) => {
-      if (ws === sock) ws = null;
+      // Ignore stale close events from sockets replaced by reconnect().
+      if (ws !== sock) return;
+      ws = null;
       _awaitingAttachAck = false;
       _awaitingPrefillDone = false;
       _prefillChunks = [];
@@ -1012,7 +1014,7 @@ function createPtySocketClient(opts) {
   // Force-close a potentially zombie socket and reconnect. iOS/Android background
   // tabs kill TCP silently while readyState still reports OPEN — connect() guards
   // against this and bails. reconnect() bypasses that guard. See PR #89 review / df4180c.
-  function reconnect() {
+  function reconnect(reconnectOpts?: { takeControl?: boolean }) {
     _rc.cancel();
     _awaitingAttachAck = false;
     _awaitingPrefillDone = false;
@@ -1020,6 +1022,7 @@ function createPtySocketClient(opts) {
     _sawViewportPrefill = false;
     if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
     if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+    _takeControlOnAttach = !!(reconnectOpts && reconnectOpts.takeControl);
     if (ws) { try { ws.close(); } catch {} ws = null; }
     connect();
   }
@@ -1079,12 +1082,28 @@ function createPtyTerminalController(opts) {
   let _hydrationStarted = false;
   let _hydrationWritesInFlight = 0;
   let _reconnectPendingReset = false;
+  let _postResetBuffer: Uint8Array[] | null = null;
   let _mounting = false;
   let _cachedLoaded = false;
 
   const _canAcceptInput = opts.canAcceptInput || (() => !!(_ptyClient && _ptyClient.isOpen));
   const _canSendResize = opts.canSendResize || _canAcceptInput;
   const _getHydrationElement = opts.getHydrationElement || (() => _container);
+
+  function _writeTermData(data: Uint8Array) {
+    if (!_term) return;
+    if (_hydration && _hydration.pending) {
+      _hydrationWritesInFlight++;
+      _term.write(data, () => {
+        _hydrationWritesInFlight = Math.max(0, _hydrationWritesInFlight - 1);
+        if (_hydration) _hydration.scheduleFinish();
+        if (opts.onOutput) opts.onOutput(data);
+      });
+    } else {
+      _term.write(data);
+      if (opts.onOutput) opts.onOutput(data);
+    }
+  }
 
   function fitTerminalPreserveScroll() {
     if (!_fitAddon || !_term) return;
@@ -1221,26 +1240,32 @@ function createPtyTerminalController(opts) {
       onReplacePrefill: () => {
         if (!_term) return;
         _reconnectPendingReset = false;
+        _postResetBuffer = null;
         _hydrationWritesInFlight = 0;
         _term.reset();
       },
       onBinaryData: (data) => {
         if (!_term) return;
+        // Buffer writes while WASM settles after reset — ghostty-web crashes
+        // with "memory access out of bounds" if write() follows reset() in the
+        // same tick (common on tab-return reconnect prefill flush).
+        if (_postResetBuffer) {
+          _postResetBuffer.push(data);
+          return;
+        }
         if (_reconnectPendingReset) {
           _reconnectPendingReset = false;
           _term.reset();
-        }
-        if (_hydration && _hydration.pending) {
-          _hydrationWritesInFlight++;
-          _term.write(data, () => {
-            _hydrationWritesInFlight = Math.max(0, _hydrationWritesInFlight - 1);
-            if (_hydration) _hydration.scheduleFinish();
-            if (opts.onOutput) opts.onOutput(data);
+          _postResetBuffer = [data];
+          requestAnimationFrame(() => {
+            if (!_term || !_postResetBuffer) return;
+            const buf = _postResetBuffer;
+            _postResetBuffer = null;
+            for (const chunk of buf) _writeTermData(chunk);
           });
-        } else {
-          _term.write(data);
-          if (opts.onOutput) opts.onOutput(data);
+          return;
         }
+        _writeTermData(data);
       },
       onViewerConflict: () => { if (isCurrent() && opts.onViewerConflict) opts.onViewerConflict(); },
       onControlGranted: () => { if (isCurrent() && opts.onControlGranted) opts.onControlGranted(); },
@@ -1290,6 +1315,7 @@ function createPtyTerminalController(opts) {
     _hydrationStarted = false;
     _hydrationWritesInFlight = 0;
     _reconnectPendingReset = false;
+    _postResetBuffer = null;
     _mounting = false;
     _cachedLoaded = false;
     if (_term) { try { _term.dispose(); } catch {} _term = null; }
@@ -1310,7 +1336,7 @@ function createPtyTerminalController(opts) {
     sendFitResize: () => { if (_ptyClient) _ptyClient.sendFitResize(); },
     send: (data) => { if (_ptyClient) _ptyClient.send(data); },
     resetRetry: () => { if (_ptyClient) _ptyClient.resetRetry(); },
-    reconnect: () => { if (_ptyClient) _ptyClient.reconnect(); },
+    reconnect: (reconnectOpts?: { takeControl?: boolean }) => { if (_ptyClient) _ptyClient.reconnect(reconnectOpts); },
     // Accessors
     get term() { return _term; },
     get fitAddon() { return _fitAddon; },
@@ -2460,9 +2486,9 @@ function setConnState(connState) {
   if (connState === "displaced") {
     statusEl.style.display = "block";
     statusEl.style.background = "#8a5a00";
-    statusEl.innerHTML = '<img src="/wolfpack-icon.svg" class="conn-icon">taken over by another viewer \u2014 <button type="button" id="conn-retry-btn" class="conn-retry-btn">Reconnect</button>';
+    statusEl.innerHTML = '<img src="/wolfpack-icon.svg" class="conn-icon">taken over by another viewer \u2014 <button type="button" id="conn-retry-btn" class="conn-retry-btn">Take Control</button>';
     const retryBtn = document.getElementById("conn-retry-btn");
-    if (retryBtn) retryBtn.onclick = retryConnection;
+    if (retryBtn) retryBtn.onclick = takeBackControl;
     return;
   }
   if (connState === "offline") {
@@ -2484,6 +2510,12 @@ function retryConnection() {
   if (!state.terminalController?.term) return;
   setConnState("reconnecting");
   connectDesktopWs();
+}
+
+function takeBackControl() {
+  if (!state.terminalController?.term) return;
+  setConnState("reconnecting");
+  state.terminalController.reconnect({ takeControl: true });
 }
 
 function sendMsg() {
@@ -3121,11 +3153,9 @@ function toggleKbAccessory() {
       if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", opening);
     }
     kbOpenBtn.addEventListener("mousedown", (e) => e.preventDefault());
-    kbOpenBtn.addEventListener("touchstart", (e) => {
-      e.preventDefault();
-      toggleMobileKeyboard();
+    kbOpenBtn.addEventListener("touchstart", () => {
       haptic([15]);
-    }, { passive: false });
+    }, { passive: true });
     kbOpenBtn.addEventListener("click", () => {
       toggleMobileKeyboard();
     });
