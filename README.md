@@ -154,10 +154,15 @@ On first run, `wolfpack` walks you through:
   - `Cmd/Ctrl + K` — clear terminal
 
 ### Mobile
-- **Capture-pane polling** — real-time terminal view optimized for mobile
-- **Swipe gestures** — swipe between sessions and views
-- **Haptic feedback** — vibration on key actions
+- **Two terminal modes** — choose in Settings:
+  - **Classic** (default) — lightweight capture-pane polling. No WASM, works on all devices. Best for quick monitoring and input.
+  - **Ghostty (WASM)** — full terminal emulator via [ghostty-web](https://github.com/ghostty-org/ghostty). Richer output (colors, cursor, scrollback) but heavier on battery. Keyboard is suppressed by default — tap the keyboard button to open it.
+- **Keyboard accessory** — quick-action bar with Enter, Esc, arrow keys, Ctrl combos, and git status
+- **Touch scrolling** — momentum physics, long-press to select text and copy
+- **Haptic feedback** — vibration on key actions (toggleable)
 - **PWA** — install as a standalone app on your phone's home screen
+
+All settings (terminal mode, font size, haptics, etc.) persist in localStorage across sessions.
 
 ### Multi-Machine
 - One phone connects to multiple Wolfpack servers
