@@ -10,7 +10,7 @@ export function setupTouchScrollHandler(container, term, sendInput, canAcceptInp
   let velocityY = 0;
   let momentumId = null;
   let tracking = false;
-  const SCROLL_THRESHOLD = 60;
+  const SCROLL_THRESHOLD = 28;
   const FRICTION = 0.95;
   const MIN_VELOCITY = 0.5;
   const MAX_LINES_PER_EVENT = 5;

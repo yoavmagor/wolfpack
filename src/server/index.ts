@@ -26,7 +26,7 @@ import {
   cachedPeers,
   createPerIpRateLimiter,
 } from "./http.js";
-import { handlePtyWs } from "./websocket.js";
+import { handlePtyWs, handleTerminalWs } from "./websocket.js";
 import { createLogger } from "../log.js";
 
 const log = createLogger("server");
@@ -178,7 +178,7 @@ export function createServerInstance(): { server: ReturnType<typeof createServer
       return;
     }
 
-    if (url.pathname !== "/ws/pty") {
+    if (url.pathname !== "/ws/pty" && url.pathname !== "/ws/terminal") {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
       return;
@@ -190,8 +190,13 @@ export function createServerInstance(): { server: ReturnType<typeof createServer
       socket.destroy();
       return;
     }
-    const reset = url.searchParams.get("reset") === "1";
-    wss.handleUpgrade(req, socket, head, (ws) => handlePtyWs(ws, session, reset));
+
+    if (url.pathname === "/ws/terminal") {
+      wss.handleUpgrade(req, socket, head, (ws) => handleTerminalWs(ws, session));
+    } else {
+      const reset = url.searchParams.get("reset") === "1";
+      wss.handleUpgrade(req, socket, head, (ws) => handlePtyWs(ws, session, reset));
+    }
   });
 
   return { server, wss };

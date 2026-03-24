@@ -48,9 +48,26 @@ export function getTerminalFontFamily() {
     : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
 }
 
+// ── Classic mobile terminal char-dimension probing ──
+
+export var _charDimCache = { key: "", w: 0, h: 0 };
+export function getCharDimensions() {
+  const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
+  const key = tp.fontSize + "|" + tp.lineHeight + "|" + wpSettings.termFont;
+  if (_charDimCache.key === key && _charDimCache.w > 0) return _charDimCache;
+  const probe = document.createElement("span");
+  probe.style.cssText =
+    'position:absolute;visibility:hidden;white-space:pre;font-size:' + tp.fontSize + 'px;line-height:' + tp.lineHeight + ';font-family:inherit';
+  probe.textContent = "X";
+  document.body.appendChild(probe);
+  _charDimCache = { key, w: probe.offsetWidth, h: probe.offsetHeight };
+  document.body.removeChild(probe);
+  return _charDimCache;
+}
+
 // ── Settings (persisted to localStorage) ──
 
-export const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:900, debugPanel:false, ralphEnabled:false};
+export const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:900, debugPanel:false, ralphEnabled:false, mobileTerminal:"classic"};
 export const wpSettings = Object.assign({}, wpDefaults, loadStoredJson("wp-effects", {}));
 
 export const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
@@ -68,6 +85,7 @@ export function applySetting(key, val) {
     const el = document.getElementById("msg-input");
     if (el) el.placeholder = val ? "$ (Enter to send)" : "$ (⚡ to send)";
   }
+  if (key === "termFontSize" || key === "termFont") _charDimCache = { key: "", w: 0, h: 0 };
   if (key === "termFontSize") {
     document.body.classList.remove("term-size-small", "term-size-medium", "term-size-large");
     document.body.classList.add("term-size-" + val);
@@ -115,6 +133,10 @@ export function initSettings() {
   });
   const ttlLabel = document.getElementById("snapshot-ttl-val");
   if (ttlLabel) ttlLabel.textContent = formatSnapshotTtl(wpSettings.snapshotTtl);
+  // Set active state on mobile terminal mode buttons
+  document.querySelectorAll(".term-mobile-btn").forEach(b =>
+    b.classList.toggle("active", (b as any).dataset.mode === wpSettings.mobileTerminal)
+  );
 }
 
 export function haptic(pattern) {
@@ -230,6 +252,14 @@ export const state = {
   notificationsEnabled: ("Notification" in window && Notification.permission === "granted"),
   kbAccessoryOpen: false,
   _cachedFallbackTimer: null,
+  _ghostInputObserver: null,
+  // classic mobile terminal state
+  mobileWs: null,
+  mobileStreamingActive: false,
+  termFollowMode: true,
+  lastRawPane: "",
+  searchActive: false,
+  searchTerm: "",
 };
 
 export function setState(patch) { Object.assign(state, patch); }

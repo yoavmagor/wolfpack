@@ -156,6 +156,7 @@ async function mountGridController(gs, cell, idx) {
       if (_gridCachedPending) {
         _gridCachedPending = false;
         cell.classList.remove("cached-visible");
+        cell.classList.add("hydrated");
       }
     },
     onViewerConflict: () => {

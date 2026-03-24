@@ -1,6 +1,6 @@
 import {
   esc, escAttr, loadStoredJson, isDesktop, formatSnapshotTtl,
-  getTerminalFontFamily,
+  getTerminalFontFamily, getCharDimensions,
   wpDefaults, wpSettings, TERM_PRESETS, toggleSetting, applySetting,
   applyTermToXterm, initSettings, haptic, requestNotifications,
   QC_STORAGE_KEY, loadQuickCmds, RECENTS_STORAGE_KEY, MAX_RECENTS,
@@ -8,6 +8,10 @@ import {
   SNAPSHOT_KEY_PREFIX, SNAPSHOT_MAX_BYTES, SNAPSHOT_SAVE_INTERVAL,
   DESKTOP_TERMINAL_SCROLLBACK, GRID_TERMINAL_SCROLLBACK,
 } from "./app-state";
+
+function useClassicMobile(): boolean {
+  return !isDesktop() && wpSettings.mobileTerminal === "classic";
+}
 
 import {
   initRalphDeps,
@@ -637,6 +641,8 @@ function createPtySocketClient(opts) {
               _awaitingPrefillDone = false;
               const chunks = _prefillChunks;
               _prefillChunks = [];
+              // Mark viewport prefill as consumed so a late prefill_done
+              // doesn't trigger onReplacePrefill (which would clear+reflash).
               _sawViewportPrefill = false;
               if (opts.onBinaryData) {
                 for (const chunk of chunks) opts.onBinaryData(chunk);
@@ -644,6 +650,8 @@ function createPtySocketClient(opts) {
             }, 2000);
           } else if (msg.type === "prefill_done") {
             // Phase 2 complete (or single-phase legacy): flush remaining chunks.
+            // If the 2s timeout already force-flushed (_sawViewportPrefill was
+            // cleared), skip onReplacePrefill to avoid a needless clear+flash.
             _awaitingPrefillDone = false;
             if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
             const chunks = _prefillChunks;
@@ -813,6 +821,22 @@ function createPtyTerminalController(opts) {
   const _canSendResize = opts.canSendResize || _canAcceptInput;
   const _getHydrationElement = opts.getHydrationElement || (() => _container);
 
+  /** Clear scrollback and flush buffered writes next frame.
+   *  Uses clear() instead of reset() to avoid a 1-frame blank flash —
+   *  clear() preserves the visible viewport while wiping scrollback.
+   *  Buffers writes because ghostty-web WASM crashes with "memory access
+   *  out of bounds" if write() follows clear() in the same tick. */
+  function _scheduleBufferedClear() {
+    if (!_postResetBuffer) _postResetBuffer = [];
+    _term.clear();
+    requestAnimationFrame(() => {
+      if (!_term || !_postResetBuffer) return;
+      const buf = _postResetBuffer;
+      _postResetBuffer = null;
+      for (const chunk of buf) _writeTermData(chunk);
+    });
+  }
+
   function _writeTermData(data: Uint8Array) {
     if (!_term) return;
     if (_hydration && _hydration.pending) {
@@ -965,38 +989,21 @@ function createPtyTerminalController(opts) {
         if (!_term) return;
         _reconnectPendingReset = false;
         _hydrationWritesInFlight = 0;
-        _term.reset();
-        // Buffer writes until next frame — ghostty-web WASM crashes with
-        // "memory access out of bounds" if write() follows reset() in the
-        // same tick. The prefill_done handler flushes chunks synchronously
-        // after calling onReplacePrefill, so we MUST buffer here.
-        _postResetBuffer = [];
-        requestAnimationFrame(() => {
-          if (!_term || !_postResetBuffer) return;
-          const buf = _postResetBuffer;
-          _postResetBuffer = null;
-          for (const chunk of buf) _writeTermData(chunk);
-        });
+        _scheduleBufferedClear();
       },
       onBinaryData: (data) => {
         if (!_term) return;
-        // Buffer writes while WASM settles after reset — ghostty-web crashes
-        // with "memory access out of bounds" if write() follows reset() in the
-        // same tick (common on tab-return reconnect prefill flush).
+        // Buffer writes while WASM settles after clear — ghostty-web crashes
+        // with "memory access out of bounds" if write() follows clear() in the
+        // same tick.
         if (_postResetBuffer) {
           _postResetBuffer.push(data);
           return;
         }
         if (_reconnectPendingReset) {
           _reconnectPendingReset = false;
-          _term.reset();
           _postResetBuffer = [data];
-          requestAnimationFrame(() => {
-            if (!_term || !_postResetBuffer) return;
-            const buf = _postResetBuffer;
-            _postResetBuffer = null;
-            for (const chunk of buf) _writeTermData(chunk);
-          });
+          _scheduleBufferedClear();
           return;
         }
         _writeTermData(data);
@@ -1098,6 +1105,15 @@ const KEY_TO_ESCAPE = {
 const _textEncoder = new TextEncoder();
 
 function _sendTerminalInput(bytes) {
+  // Classic mobile: send text via JSON over /ws/terminal
+  if (useClassicMobile()) {
+    if (state.mobileWs && state.mobileWs.readyState === WebSocket.OPEN) {
+      const text = new TextDecoder().decode(bytes);
+      state.mobileWs.send(JSON.stringify({ type: "input", data: text }));
+      return true;
+    }
+    return false;
+  }
   // In grid mode, route to the focused grid cell's controller
   if (isGridActive()) {
     const gs = state.gridSessions[state.gridFocusIndex];
@@ -1756,7 +1772,11 @@ async function openSession(name, machineUrl) {
   const cached = loadSnapshot(state.currentMachine, name);
   showView("terminal");
   destroyTerminal();
-  initTerminal(cached);
+  if (useClassicMobile()) {
+    initClassicMobile(cached);
+  } else {
+    initTerminal(cached);
+  }
   renderSidebar();
 }
 
@@ -2012,11 +2032,13 @@ async function initTerminal(cached) {
   let _cachedPendingReset = !!cached;
   // Timer stored on state so destroyTerminal() can cancel it — prevents cross-session
   // side effects if user switches sessions before first output arrives (see PR #89 review).
+  // After 5s, ensure canvas is visible even if hydration hasn't completed —
+  // but keep cached content showing (don't blank the screen). The onOutput
+  // handler removes cached-visible when live data arrives.
   state._cachedFallbackTimer = cached ? setTimeout(() => {
-    _cachedPendingReset = false;
     state._cachedFallbackTimer = null;
     const el = document.getElementById("desktop-terminal-container");
-    if (el) el.classList.remove("cached-visible");
+    if (el) el.classList.add("hydrated");
   }, 5000) : null;
 
   state.terminalController = createPtyTerminalController({
@@ -2041,7 +2063,7 @@ async function initTerminal(cached) {
         _cachedPendingReset = false;
         if (state._cachedFallbackTimer) { clearTimeout(state._cachedFallbackTimer); state._cachedFallbackTimer = null; }
         const el = document.getElementById("desktop-terminal-container");
-        if (el) el.classList.remove("cached-visible");
+        if (el) { el.classList.remove("cached-visible"); el.classList.add("hydrated"); }
       }
       if (state.enterRetryTimer) { clearTimeout(state.enterRetryTimer); state.enterRetryTimer = null; }
       wpMetrics.wsMessagesReceived++;
@@ -2120,8 +2142,16 @@ async function initTerminal(cached) {
       });
     }
     neutralizeGhostFocus();
-    // ghostty-web may re-apply attributes or add new elements on reconnect
-    state._ghostInputObserver = new MutationObserver(neutralizeGhostFocus);
+    // ghostty-web may re-apply attributes or add new elements on reconnect.
+    // Debounce to avoid jank from high-frequency DOM mutations during output.
+    let _ghostDebounce = null;
+    state._ghostInputObserver = new MutationObserver(() => {
+      if (_ghostDebounce) return;
+      _ghostDebounce = requestAnimationFrame(() => {
+        _ghostDebounce = null;
+        neutralizeGhostFocus();
+      });
+    });
     state._ghostInputObserver.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["contenteditable"] });
     // Blur anything that auto-focused during mount (prevents keyboard auto-open)
     if (document.activeElement && document.activeElement !== document.body) {
@@ -2147,12 +2177,10 @@ async function initTerminal(cached) {
 
   if (window.visualViewport && isMobile) {
     const termView = document.getElementById("terminal-view");
+    let _lastKbOpen: boolean | null = null;
     const vvHandler = () => {
       const kbHeight = window.innerHeight - window.visualViewport.height;
       const kbOpen = kbHeight > 150;
-      // Shrink terminal-view from the bottom so the terminal refits to correct rows.
-      // translateY broke fresh sessions — content at the top got pushed above viewport.
-      termView.style.bottom = kbOpen ? kbHeight + "px" : "";
       // Toggle visual state on keyboard button + sync accessory state
       const kbBtn = document.getElementById("kb-open-btn");
       if (kbBtn) kbBtn.classList.toggle("active", kbOpen);
@@ -2160,9 +2188,6 @@ async function initTerminal(cached) {
         state.kbAccessoryOpen = kbOpen;
         const cmd = document.getElementById("cmd-palette");
         if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", kbOpen);
-        // When keyboard closes (e.g. phone's native dismiss), re-lock proxy.
-        // Skip if proxy is still focused — the user just tapped kb-open-btn and
-        // the keyboard animation hasn't reached the 150px threshold yet.
         if (!kbOpen) {
           const p = document.getElementById("mobile-kb-proxy");
           if (p && document.activeElement !== p) {
@@ -2171,18 +2196,36 @@ async function initTerminal(cached) {
           }
         }
       }
-      // Debounce terminal refit during keyboard animation
+      // Only act when keyboard state actually changes (open↔close), not on
+      // every animation frame. This prevents ghostty-web from refitting the
+      // terminal mid-animation which causes visible scroll-through.
+      if (kbOpen === _lastKbOpen) return;
+      _lastKbOpen = kbOpen;
+
+      // Hide canvas during transition to prevent visible reflow.
+      // Use kb-transitioning (not transitioning) to avoid "Loading terminal" overlay.
+      container.classList.add("kb-transitioning");
+
       if (state.kbResizeTimer) clearTimeout(state.kbResizeTimer);
       state.kbResizeTimer = setTimeout(() => {
         state.kbResizeTimer = null;
+        // Apply the bottom offset AFTER animation settles
+        const finalKbHeight = window.innerHeight - window.visualViewport.height;
+        const finalKbOpen = finalKbHeight > 150;
+        termView.style.bottom = finalKbOpen ? finalKbHeight + "px" : "";
         if (state.terminalController) {
+          const t = state.terminalController.term;
+          const wasAtBottom = t && (t.buffer.active.baseY + t.rows >= t.buffer.active.length - 2);
           state.terminalController.resize();
-          // Keep cursor visible after refit
-          if (state.terminalController.term) {
-            try { state.terminalController.term.scrollToBottom(); } catch {}
+          if (wasAtBottom && t) {
+            try { t.scrollToBottom(); } catch {}
           }
         }
-      }, 100);
+        // Reveal canvas after refit
+        requestAnimationFrame(() => {
+          container.classList.remove("kb-transitioning");
+        });
+      }, 400);
     };
     window.visualViewport.addEventListener("resize", vvHandler);
     state.visualViewportHandler = vvHandler;
@@ -2194,6 +2237,8 @@ async function initTerminal(cached) {
 }
 
 function destroyTerminal() {
+  // Clean up classic mobile if it was active
+  if (document.body.classList.contains("classic-mobile")) destroyClassicMobile();
   if (state._ghostInputObserver) { state._ghostInputObserver.disconnect(); state._ghostInputObserver = null; }
   if (state._cachedFallbackTimer) { clearTimeout(state._cachedFallbackTimer); state._cachedFallbackTimer = null; }
   if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
@@ -2331,6 +2376,16 @@ function updatePreview() {
 
 function sendKey(key) {
   if (!state.currentSession) return;
+  // Classic mobile: send key name directly via WS JSON
+  if (useClassicMobile()) {
+    if (state.mobileWs && state.mobileWs.readyState === WebSocket.OPEN) {
+      wpMetrics.sendCount++;
+      state.mobileWs.send(JSON.stringify({ type: "key", key }));
+    } else {
+      wpMetrics.sendFailCount++;
+    }
+    return;
+  }
   const esc = KEY_TO_ESCAPE[key];
   if (!esc) return;
   wpMetrics.sendCount++;
@@ -2672,8 +2727,13 @@ function checkStateTransitions(groups) {
 }
 
 // Recover terminal stream on foreground; manage session refresh
+var _hiddenAt = 0;
+const DESKTOP_STALE_THRESHOLD_MS = 60_000;
+
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
+    const hiddenDuration = _hiddenAt ? Date.now() - _hiddenAt : 0;
+    _hiddenAt = 0;
     if (isDesktop() && !sidebarRefreshTimer) {
       startSidebarRefresh();
     }
@@ -2683,12 +2743,12 @@ document.addEventListener("visibilitychange", () => {
       state.sessionRefreshTimer = setInterval(loadSessions, 5000);
     }
     if (state.currentSession && state.currentView === "terminal") {
-      // Force-reconnect on mobile only: iOS/Android background tabs kill TCP
-      // silently while readyState still reports OPEN. Desktop OSes keep
-      // background sockets alive — reconnecting there just wastes time and
-      // causes a visible prefill flash. See df4180c / PR #89.
       if (!isDesktop()) {
-        if (isGridActive()) {
+        // Mobile: always force-reconnect — iOS/Android background tabs kill
+        // TCP silently while readyState still reports OPEN.
+        if (useClassicMobile()) {
+          startClassicPolling(true);
+        } else if (isGridActive()) {
           for (const gs of state.gridSessions) {
             if (!gs.controller || gs._displaced) continue;
             gs.controller.resetRetry();
@@ -2698,9 +2758,23 @@ document.addEventListener("visibilitychange", () => {
           state.terminalController.resetRetry();
           state.terminalController.reconnect();
         }
+      } else if (hiddenDuration > DESKTOP_STALE_THRESHOLD_MS) {
+        // Desktop: reconnect only if tab was backgrounded >60s (App Nap,
+        // browser throttling can silently kill the TCP connection too).
+        if (isGridActive()) {
+          for (const gs of state.gridSessions) {
+            if (!gs.controller || gs._displaced) continue;
+            gs.controller.resetRetry();
+            if (!gs.controller.isConnected) gs.controller.connect();
+          }
+        } else if (state.terminalController?.term) {
+          state.terminalController.resetRetry();
+          if (!state.terminalController.isConnected) connectDesktopWs();
+        }
       }
     }
   } else {
+    _hiddenAt = Date.now();
     // Stop session refresh when backgrounded
     if (state.sessionRefreshTimer) {
       clearInterval(state.sessionRefreshTimer);
@@ -2864,14 +2938,19 @@ function toggleKbAccessory() {
   let _composing = false;
   let _skipNextInput = false;
 
+  // Send every character immediately — don't wait for composition to finish.
+  // The proxy is invisible so we don't need composed text; the terminal wants
+  // each keystroke as it happens. On compositionend we flush any remaining
+  // buffered text (e.g. autocomplete selection that inserts multiple chars).
   proxy.addEventListener("compositionstart", () => { _composing = true; });
-  proxy.addEventListener("compositionend", (e) => {
+  proxy.addEventListener("compositionend", () => {
     _composing = false;
-    _skipNextInput = sendMobileProxyText(proxy, proxy.value || e.data || "");
+    if (proxy.value) {
+      _skipNextInput = sendMobileProxyText(proxy, proxy.value);
+    }
   });
 
   proxy.addEventListener("input", (e) => {
-    if (_composing) return;
     if (_skipNextInput) {
       _skipNextInput = false;
       return;
@@ -2880,6 +2959,15 @@ function toggleKbAccessory() {
     if (e.inputType === "deleteContentBackward") return;
     // Skip insertLineBreak/insertParagraph — keydown handler already sent \r
     if (e.inputType === "insertLineBreak" || e.inputType === "insertParagraph") return;
+    // During composition: send the newest char immediately (last char in value).
+    // Autocomplete/predictive text buffers chars in the proxy — we drain them
+    // one by one so the terminal sees each keystroke without waiting for word selection.
+    if (_composing && proxy.value) {
+      const last = proxy.value.slice(-1);
+      // Clear everything except what the IME is still composing over
+      sendMobileProxyText(proxy, last);
+      return;
+    }
     sendMobileProxyText(proxy, proxy.value || e.data || "");
   });
 
@@ -3539,6 +3627,18 @@ function bindHtmlEventListeners(): void {
     });
   });
 
+  // Mobile terminal mode buttons
+  document.querySelectorAll(".term-mobile-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = (btn as HTMLElement).dataset.mode;
+      if (mode) {
+        toggleSetting("mobileTerminal", mode);
+        document.querySelectorAll(".term-mobile-btn").forEach(b => b.classList.toggle("active", (b as HTMLElement).dataset.mode === mode));
+        document.body.classList.toggle("classic-mobile", mode === "classic");
+      }
+    });
+  });
+
   // Quick commands
   on("add-quick-cmd-btn", "click", () => addQuickCmd());
 
@@ -3600,6 +3700,240 @@ if (isDesktop() && state.sessionsExpanded) {
 }
 showView("sessions", true);
 loadSessions().then(renderSidebar);
+
+// ── Classic mobile terminal (text polling) ──
+
+function classicMobileWsUrl() {
+  if (state.currentMachine) {
+    const remote = new URL(state.currentMachine);
+    const proto = remote.protocol === "https:" ? "wss:" : "ws:";
+    return proto + "//" + remote.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
+  }
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  return proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
+}
+
+const classicReconnector = createReconnector({
+  shouldReconnect: () => state.mobileStreamingActive && useClassicMobile() && !!state.currentSession && state.currentView === "terminal",
+  onReconnecting: () => setConnState("reconnecting"),
+  onExhausted: () => setConnState("offline"),
+});
+
+function applyTerminalPane(pane) {
+  const renderStart = performance.now();
+  const term = document.getElementById("terminal");
+  const changed = pane !== state.lastRawPane;
+  state.lastRawPane = pane;
+  if (changed) {
+    if (state.enterRetryTimer) {
+      clearTimeout(state.enterRetryTimer);
+      state.enterRetryTimer = null;
+    }
+    if (state.searchActive && state.searchTerm) {
+      // Search highlight: wrap matches in <mark> tags
+      const escaped = state.searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(escaped, "gi");
+      term.innerHTML = esc(pane).replace(re, m => `<mark>${m}</mark>`);
+    } else {
+      term.textContent = pane;
+    }
+    wpMetrics.recordLatency(performance.now() - renderStart);
+    if (state.termFollowMode) term.scrollTop = term.scrollHeight;
+  }
+  if (changed) {
+    scheduleSnapshotSave(pane);
+  }
+}
+
+function setFollowMode(on) {
+  state.termFollowMode = on;
+  const btn = document.getElementById("jump-to-live");
+  if (btn) {
+    if (on) btn.classList.remove("visible");
+    else btn.classList.add("visible");
+  }
+}
+
+function jumpToLive() {
+  const term = document.getElementById("terminal");
+  term.scrollTop = term.scrollHeight;
+  setFollowMode(true);
+  haptic([10]);
+}
+
+// Detect user scroll-up to pause follow mode (classic terminal)
+(function() {
+  const term = document.getElementById("terminal");
+  if (!term) return;
+  let programmaticScroll = false;
+  const origDesc = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+  Object.defineProperty(term, "scrollTop", {
+    get() { return origDesc.get.call(this); },
+    set(v) {
+      programmaticScroll = true;
+      origDesc.set.call(this, v);
+      Promise.resolve().then(() => { programmaticScroll = false; });
+    }
+  });
+  term.addEventListener("scroll", () => {
+    if (programmaticScroll) return;
+    const atBottom = term.scrollHeight - origDesc.get.call(term) - term.clientHeight < 40;
+    if (atBottom) setFollowMode(true);
+    else if (state.termFollowMode) setFollowMode(false);
+  }, { passive: true });
+})();
+
+function connectClassicMobileWs() {
+  if (!state.mobileStreamingActive || !useClassicMobile() || !state.currentSession || state.currentView !== "terminal") return;
+  if (classicReconnector.isBlocked) return;
+  if (state.mobileWs && state.mobileWs.readyState <= WebSocket.OPEN) return;
+  const connectKey = terminalSessionKey();
+  const ws = new WebSocket(classicMobileWsUrl());
+  state.mobileWs = ws;
+
+  ws.onopen = async () => {
+    if (state.mobileWs !== ws) return;
+    if (!state.mobileStreamingActive || !useClassicMobile() || connectKey !== terminalSessionKey()) {
+      ws.close();
+      return;
+    }
+    if (classicReconnector.connected()) wpMetrics.reconnectCount++;
+    setConnState("live");
+    await resizePaneClassic();
+  };
+
+  ws.onmessage = (ev) => {
+    if (state.mobileWs !== ws) return;
+    wpMetrics.wsMessagesReceived++;
+    let msg = null;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg?.type === "output" && typeof msg.data === "string") {
+      setConnState("live");
+      applyTerminalPane(msg.data);
+    }
+  };
+
+  ws.onclose = (ev) => {
+    if (state.mobileWs === ws) state.mobileWs = null;
+    if (!state.mobileStreamingActive || !useClassicMobile() || connectKey !== terminalSessionKey()) return;
+    if (ev.code === 4001 || (ev.code === 1000 && ev.reason === "session ended")) {
+      setConnState("session-ended");
+      return;
+    }
+    classicReconnector.schedule(connectClassicMobileWs);
+  };
+
+  ws.onerror = () => {};
+}
+
+async function resizePaneClassic() {
+  if (!state.currentSession) return;
+  const term = document.getElementById("terminal");
+  const dims = getCharDimensions();
+  if (!dims.w || !dims.h) return;
+  const cols = Math.floor(term.clientWidth / dims.w);
+  const rows = Math.floor(term.clientHeight / dims.h);
+  if (cols > 0 && rows > 0) {
+    try {
+      await api("/resize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session: state.currentSession, cols, rows }),
+      }, state.currentMachine);
+    } catch {}
+  }
+}
+
+function startClassicPolling(resetBudget = true) {
+  state.mobileStreamingActive = true;
+  if (resetBudget) classicReconnector.reset();
+  if (classicReconnector.isBlocked && !resetBudget) {
+    setConnState("offline");
+    return;
+  }
+  classicReconnector.cancel();
+  if (!state.mobileWs || state.mobileWs.readyState === WebSocket.CLOSED) {
+    setConnState("reconnecting");
+  }
+  connectClassicMobileWs();
+}
+
+function stopClassicPolling() {
+  if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
+  state.mobileStreamingActive = false;
+  classicReconnector.reset();
+  classicReconnector.cancel();
+  if (state.enterRetryTimer) {
+    clearTimeout(state.enterRetryTimer);
+    state.enterRetryTimer = null;
+  }
+  if (state.mobileWs) {
+    const ws = state.mobileWs;
+    state.mobileWs = null;
+    try { ws.close(1000, "viewer changed"); } catch {}
+  }
+  const statusEl = document.getElementById("conn-status");
+  if (statusEl) {
+    statusEl.style.display = "none";
+    statusEl.style.background = "#cc3333";
+  }
+}
+
+function initClassicMobile(cached) {
+  document.body.classList.add("classic-mobile");
+  const term = document.getElementById("terminal");
+  if (cached) {
+    term.textContent = cached;
+    state.lastRawPane = cached;
+  } else {
+    term.textContent = "";
+    state.lastRawPane = "";
+  }
+  state.termFollowMode = true;
+  resizePaneClassic();
+  startClassicPolling();
+}
+
+function destroyClassicMobile() {
+  stopClassicPolling();
+  document.body.classList.remove("classic-mobile");
+  const term = document.getElementById("terminal");
+  if (term) term.textContent = "";
+}
+
+// Classic mobile search bar handlers
+(function() {
+  const searchInput = document.getElementById("search-input");
+  const searchBar = document.getElementById("search-bar");
+  const searchCount = document.getElementById("search-count");
+  if (!searchInput || !searchBar) return;
+
+  searchInput.addEventListener("input", () => {
+    state.searchTerm = searchInput.value;
+    state.searchActive = !!state.searchTerm;
+    if (state.lastRawPane) applyTerminalPane(state.lastRawPane);
+    // Count matches
+    if (state.searchTerm && searchCount) {
+      const escaped = state.searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const matches = (state.lastRawPane || "").match(new RegExp(escaped, "gi"));
+      searchCount.textContent = matches ? matches.length + " found" : "0 found";
+    } else if (searchCount) {
+      searchCount.textContent = "";
+    }
+  });
+
+  document.getElementById("search-close-btn")?.addEventListener("click", () => {
+    searchBar.classList.remove("visible");
+    state.searchActive = false;
+    state.searchTerm = "";
+    searchInput.value = "";
+    if (searchCount) searchCount.textContent = "";
+    if (state.lastRawPane) applyTerminalPane(state.lastRawPane);
+  });
+})();
+
+// Apply classic-mobile class on boot if setting is active
+if (useClassicMobile()) document.body.classList.add("classic-mobile");
 
 // Unregister any stale service workers (no longer used)
 if ("serviceWorker" in navigator) {
