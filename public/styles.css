@@ -2404,8 +2404,8 @@ body.mobile-no-ghost-focus #desktop-terminal-container textarea {
     padding: 4px 4px !important;
   }
   #kb-accessory .kb-open svg {
-    width: 16px;
-    height: 16px;
+    width: 24px;
+    height: 24px;
   }
   .header-center .wolfpack-icon { display: none; }
   #terminal-view {

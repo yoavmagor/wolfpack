@@ -986,10 +986,15 @@ function createPtyTerminalController(opts) {
       },
       onPtyReady: () => { if (isCurrent() && opts.onPtyReady) opts.onPtyReady(); },
       onReplacePrefill: () => {
+        // Phase 2 scrollback replaces phase 1 viewport. The full scrollback
+        // is a superset that contains the viewport content, so we skip the
+        // clear() entirely — just let the chunks write directly over the
+        // existing buffer. This avoids any visible flash. The terminal ends
+        // up with correct content; the viewport portion is overwritten in-place
+        // and scrollback history appears above.
         if (!_term) return;
         _reconnectPendingReset = false;
         _hydrationWritesInFlight = 0;
-        _scheduleBufferedClear();
       },
       onBinaryData: (data) => {
         if (!_term) return;
@@ -1028,22 +1033,10 @@ function createPtyTerminalController(opts) {
   let _resizeTransitionId = 0;
   /** Blank canvas → fit → reveal. No loading overlay — just instant hide/show. */
   function resizeWithTransition() {
-    const el = _getHydrationElement();
-    if (!el || !_fitAddon || !_term) { fitTerminalPreserveScroll(); return; }
-    if (_hydration && _hydration.pending) { fitTerminalPreserveScroll(); return; }
-    if (!el.classList.contains('hydrated')) { fitTerminalPreserveScroll(); return; }
-    const id = ++_resizeTransitionId;
-    const canvas = el.querySelector('canvas');
-    if (canvas) { canvas.style.opacity = '0'; canvas.style.visibility = 'hidden'; }
-    requestAnimationFrame(() => {
-      if (_resizeTransitionId !== id) return;
-      fitTerminalPreserveScroll();
-      requestAnimationFrame(() => {
-        if (_resizeTransitionId !== id) return;
-        if (canvas) { canvas.style.opacity = ''; canvas.style.visibility = ''; }
-        el.classList.remove('transitioning');
-      });
-    });
+    if (!_fitAddon || !_term) return;
+    // Refit directly without hiding the canvas — hiding causes a blank frame
+    // flicker that's more jarring than the brief reflow ghostty-web does.
+    fitTerminalPreserveScroll();
   }
 
   /**
@@ -2177,10 +2170,13 @@ async function initTerminal(cached) {
 
   if (window.visualViewport && isMobile) {
     const termView = document.getElementById("terminal-view");
-    let _lastKbOpen: boolean | null = null;
     const vvHandler = () => {
       const kbHeight = window.innerHeight - window.visualViewport.height;
       const kbOpen = kbHeight > 150;
+      // Option A: translateY slides the terminal up without changing its height.
+      // ghostty-web sees no container resize → no reflow → no scroll-through.
+      // The bottom portion of the terminal is clipped behind the keyboard.
+      termView.style.transform = kbOpen ? `translateY(-${kbHeight}px)` : "";
       // Toggle visual state on keyboard button + sync accessory state
       const kbBtn = document.getElementById("kb-open-btn");
       if (kbBtn) kbBtn.classList.toggle("active", kbOpen);
@@ -2196,36 +2192,6 @@ async function initTerminal(cached) {
           }
         }
       }
-      // Only act when keyboard state actually changes (open↔close), not on
-      // every animation frame. This prevents ghostty-web from refitting the
-      // terminal mid-animation which causes visible scroll-through.
-      if (kbOpen === _lastKbOpen) return;
-      _lastKbOpen = kbOpen;
-
-      // Hide canvas during transition to prevent visible reflow.
-      // Use kb-transitioning (not transitioning) to avoid "Loading terminal" overlay.
-      container.classList.add("kb-transitioning");
-
-      if (state.kbResizeTimer) clearTimeout(state.kbResizeTimer);
-      state.kbResizeTimer = setTimeout(() => {
-        state.kbResizeTimer = null;
-        // Apply the bottom offset AFTER animation settles
-        const finalKbHeight = window.innerHeight - window.visualViewport.height;
-        const finalKbOpen = finalKbHeight > 150;
-        termView.style.bottom = finalKbOpen ? finalKbHeight + "px" : "";
-        if (state.terminalController) {
-          const t = state.terminalController.term;
-          const wasAtBottom = t && (t.buffer.active.baseY + t.rows >= t.buffer.active.length - 2);
-          state.terminalController.resize();
-          if (wasAtBottom && t) {
-            try { t.scrollToBottom(); } catch {}
-          }
-        }
-        // Reveal canvas after refit
-        requestAnimationFrame(() => {
-          container.classList.remove("kb-transitioning");
-        });
-      }, 400);
     };
     window.visualViewport.addEventListener("resize", vvHandler);
     state.visualViewportHandler = vvHandler;
@@ -2256,7 +2222,7 @@ function destroyTerminal() {
   }
   // Reset termView positioning
   const termView = document.getElementById("terminal-view");
-  if (termView) { termView.style.bottom = ""; }
+  if (termView) { termView.style.bottom = ""; termView.style.transform = ""; }
   if (state.kbResizeTimer) { clearTimeout(state.kbResizeTimer); state.kbResizeTimer = null; }
   // Blur and hide mobile-kb-proxy
   const kbProxy = document.getElementById("mobile-kb-proxy");
