@@ -100,6 +100,19 @@ export function collectJsonMessages(ws: WebSocket): { type: string; [k: string]:
   return msgs;
 }
 
+/** Collect all WS messages — binary as ArrayBuffer, JSON as parsed objects. */
+export function collectAllMessages(ws: WebSocket): ({ kind: "binary"; data: ArrayBuffer } | { kind: "json"; data: { type: string; [k: string]: any } })[] {
+  const msgs: ({ kind: "binary"; data: ArrayBuffer } | { kind: "json"; data: { type: string; [k: string]: any } })[] = [];
+  ws.addEventListener("message", (ev) => {
+    if (typeof ev.data === "string") {
+      try { msgs.push({ kind: "json", data: JSON.parse(ev.data) }); } catch {}
+    } else if (ev.data instanceof ArrayBuffer) {
+      msgs.push({ kind: "binary", data: ev.data });
+    }
+  });
+  return msgs;
+}
+
 export function waitForMessage(ws: WebSocket, type: string, timeoutMs = 3000): Promise<any> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timeout waiting for ${type}`)), timeoutMs);

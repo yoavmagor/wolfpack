@@ -346,6 +346,47 @@ describe("desktop grid: reset=1 remount path", () => {
     await closeWs(ws);
     await wait(100);
   });
+
+  test("reset=1 old viewer close does NOT teardown new entry (race condition guard)", async () => {
+    const ws1 = await connectPty("grid-a");
+    await wait(10);
+
+    const ws1Close = waitForClose(ws1);
+
+    // Connect with reset=1 — old entry torn down, new entry created
+    const ws2 = await connectPty("grid-a", { reset: true });
+    await wait(50);
+
+    // Old ws1 should be closed by teardownPty
+    const ev = await ws1Close;
+    expect(ev.code).toBe(1000);
+
+    // Wait for old close event handlers to fully propagate through detach()
+    await wait(300);
+
+    // New entry must still be alive — old detach handler must NOT destroy it
+    // (detach() triple-guards: entry.alive && entry.viewer === ws && map.get(session) === entry)
+    const entry = ctx.activePtySessions.get("grid-a");
+    expect(entry).toBeTruthy();
+    expect(entry!.alive).toBe(true);
+
+    await closeWs(ws2);
+    await wait(100);
+  });
+
+  test("rapid reset=1 cycles don't leak entries", async () => {
+    for (let i = 0; i < 5; i++) {
+      const ws = await connectPty("grid-a", { reset: true });
+      await wait(50);
+      await closeWs(ws);
+      await wait(100);
+    }
+
+    const entry = ctx.activePtySessions.get("grid-a");
+    if (entry) {
+      expect(entry.alive).toBe(false);
+    }
+  });
 });
 
 // ── Focus switching: server-side resize per cell ──

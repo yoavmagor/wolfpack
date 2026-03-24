@@ -52,12 +52,21 @@ window.Terminal = GhosttyWeb.Terminal;
 window.FitAddon = GhosttyWeb.FitAddon;
 
 // Auto-init WASM — consumers await window.ghosttyReady before creating terminals
-window.ghosttyReady = GhosttyWeb.init().then(function() {
-  console.log("[ghostty-web] WASM initialized");
-}).catch(function(err) {
-  console.error("[ghostty-web] WASM init failed:", err);
-  throw err;
-});
+window.wasmFailed = false;
+if (typeof WebAssembly === "undefined" || typeof WebAssembly.instantiate !== "function") {
+  console.warn("[ghostty-web] WebAssembly not supported — falling back to text mode");
+  window.wasmFailed = true;
+  window.ghosttyReady = Promise.reject(new Error("WebAssembly not supported"));
+  window.ghosttyReady.catch(function() {});
+} else {
+  window.ghosttyReady = GhosttyWeb.init().then(function() {
+    console.log("[ghostty-web] WASM initialized");
+  }).catch(function(err) {
+    console.error("[ghostty-web] WASM init failed:", err);
+    window.wasmFailed = true;
+    throw err;
+  });
+}
 
 })();
 `;

@@ -1,6 +1,6 @@
 import {
   esc, escAttr, loadStoredJson, isDesktop, formatSnapshotTtl,
-  getTerminalFontFamily, _charDimCache, getCharDimensions,
+  getTerminalFontFamily, getCharDimensions,
   wpDefaults, wpSettings, TERM_PRESETS, toggleSetting, applySetting,
   applyTermToXterm, initSettings, haptic, requestNotifications,
   QC_STORAGE_KEY, loadQuickCmds, RECENTS_STORAGE_KEY, MAX_RECENTS,
@@ -8,6 +8,10 @@ import {
   SNAPSHOT_KEY_PREFIX, SNAPSHOT_MAX_BYTES, SNAPSHOT_SAVE_INTERVAL,
   DESKTOP_TERMINAL_SCROLLBACK, GRID_TERMINAL_SCROLLBACK,
 } from "./app-state";
+
+function useClassicMobile(): boolean {
+  return !isDesktop() && wpSettings.mobileTerminal === "classic";
+}
 
 import {
   initRalphDeps,
@@ -27,6 +31,14 @@ import {
   fitAllGridCells, hideGridCellsForTransition, revealGridCellsWithoutResize,
   scheduleGridStabilizedFit, isSessionInGrid, toggleGrid,
 } from "./app-grid";
+
+import { setupTouchScrollHandler } from "./app-touch";
+
+// ── WASM capability guard ──
+
+function canUseWasmTerminal() {
+  return !(window as any).wasmFailed;
+}
 
 // ── Performance Metrics (UX-16) ──
 
@@ -127,18 +139,12 @@ function renderCmdPalette() {
   el.classList.toggle("visible", state.kbAccessoryOpen);
 }
 
-async function sendQuickCmd(index) {
+function sendQuickCmd(index) {
   const cmd = state.quickCmds[index];
   if (!cmd || !state.currentSession) return;
   haptic([30]);
-  try {
-    await api("/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session: state.currentSession, text: cmd.cmd }),
-    }, state.currentMachine);
-    connectMobileTerminalWs();
-  } catch {
+  wpMetrics.sendCount++;
+  if (!_sendTerminalInput(_textEncoder.encode(cmd.cmd + "\r"))) {
     wpMetrics.sendFailCount++;
   }
 }
@@ -350,7 +356,7 @@ function createTerminalInstance({ fontSize, scrollback, cursorBlink = true, disa
   // ghostty-web: true = "handled, stop", false = "not handled, continue"
   term.attachCustomKeyEventHandler((e) => {
     if (WP.shouldInterceptCopy(e, term.hasSelection())) {
-      navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+      navigator.clipboard.writeText(term.getSelection()).catch((e) => { console.debug("[clipboard] copy failed:", e); });
       return true;
     }
     return false;
@@ -491,13 +497,15 @@ function createInitialHydrationController(opts) {
  * @param {string} opts.session - tmux session name
  * @param {string} opts.machine - remote machine URL ("" for local)
  * @param {boolean} [opts.resetPty] - append &reset=1 on first connect
- * @param {boolean} [opts.skipInitialPrefill] - ask server to skip first attach prefill
+ * @param {string} [opts.prefillMode] - "full" (default), "viewport", or "none"
  * @param {() => {cols:number, rows:number}|null} opts.getTermDimensions
  * @param {() => void} opts.fitTerminal
  * @param {(Uint8Array) => void} opts.onBinaryData
  * @param {() => void} [opts.onOpen]
+ * @param {() => void} [opts.onPtyReady]
  * @param {() => void} [opts.onViewerConflict]
  * @param {() => void} [opts.onControlGranted]
+ * @param {() => void} [opts.onReplacePrefill]
  * @param {(number, string) => void} opts.onDisconnected
  * @param {() => void} [opts.onReconnecting]
  * @param {() => void} [opts.onReconnectExhausted]
@@ -512,11 +520,13 @@ function createPtySocketClient(opts) {
   });
   let hasConnected = false;
   let consumeReset = !!opts.resetPty;
-  let _skipInitialPrefill = !!opts.skipInitialPrefill;
+  let _initialPrefillMode = opts.prefillMode || "full";
   let _attachAckTimer = null;
   let _awaitingAttachAck = false;
   let _prefillChunks: Uint8Array[] = [];
   let _awaitingPrefillDone = false;
+  let _sawViewportPrefill = false;
+  let _prefillDoneTimeout = null;
 
   function buildUrl() {
     const resetSuffix = consumeReset ? "&reset=1" : "";
@@ -532,18 +542,23 @@ function createPtySocketClient(opts) {
   }
 
   /** Send one attach handshake to bootstrap PTY spawn on fresh WS open. */
+  let _takeControlOnAttach = !!opts.takeControlOnAttach;
+
   function sendAttachHandshake() {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     try { opts.fitTerminal(); } catch {}
     const dims = opts.getTermDimensions();
     if (!dims) return;
-    const skipPrefill = _skipInitialPrefill;
-    _skipInitialPrefill = false;
+    const prefillMode = _initialPrefillMode;
+    _initialPrefillMode = "full";
     _lastSentResize = dims.cols + "x" + dims.rows;
     _awaitingAttachAck = true;
     _prefillChunks = [];
-    _awaitingPrefillDone = !skipPrefill;
-    ws.send(JSON.stringify({ type: "attach", cols: dims.cols, rows: dims.rows, skipPrefill }));
+    _awaitingPrefillDone = prefillMode !== "none";
+    _sawViewportPrefill = false;
+    const msg: any = { type: "attach", cols: dims.cols, rows: dims.rows, prefillMode };
+    if (_takeControlOnAttach) { msg.takeControl = true; _takeControlOnAttach = false; }
+    ws.send(JSON.stringify(msg));
     if (_attachAckTimer) clearTimeout(_attachAckTimer);
     // Compatibility fallback: older servers don't implement attach_ack.
     _attachAckTimer = setTimeout(() => {
@@ -587,6 +602,7 @@ function createPtySocketClient(opts) {
     ws = sock;
 
     sock.onopen = () => {
+      console.log("[pty-ws]", opts.session, "ws.onopen, readyState=", sock.readyState);
       const wasReconnect = hasConnected;
       hasConnected = true;
       _rc.connected();
@@ -601,26 +617,68 @@ function createPtySocketClient(opts) {
           if (msg.type === "attach_ack") {
             _awaitingAttachAck = false;
             if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+          } else if (msg.type === "pty_ready") {
+            if (opts.onPtyReady) opts.onPtyReady();
+          } else if (msg.type === "prefill_viewport") {
+            // Phase 1 complete: viewport content already written as binary.
+            // Flush any buffered viewport chunks immediately for fast first paint.
+            const viewportChunks = _prefillChunks;
+            _prefillChunks = [];
+            if (opts.onBinaryData) {
+              for (const chunk of viewportChunks) opts.onBinaryData(chunk);
+            }
+            // Stay in prefill mode for phase 2 scrollback (if server sends it)
+            _awaitingPrefillDone = true;
+            _sawViewportPrefill = true;
+            // Safety timeout: if WS drops between phase 1 and phase 2 (prefill_done
+            // never arrives), we'd buffer live output indefinitely. Force-flush after
+            // 2s so the terminal isn't stuck blank on flaky mobile connections.
+            if (_prefillDoneTimeout) clearTimeout(_prefillDoneTimeout);
+            _prefillDoneTimeout = setTimeout(() => {
+              _prefillDoneTimeout = null;
+              if (!_awaitingPrefillDone) return;
+              console.warn("[pty-ws] prefill_done timeout — force-flushing buffered output");
+              _awaitingPrefillDone = false;
+              const chunks = _prefillChunks;
+              _prefillChunks = [];
+              // Mark viewport prefill as consumed so a late prefill_done
+              // doesn't trigger onReplacePrefill (which would clear+reflash).
+              _sawViewportPrefill = false;
+              if (opts.onBinaryData) {
+                for (const chunk of chunks) opts.onBinaryData(chunk);
+              }
+            }, 2000);
           } else if (msg.type === "prefill_done") {
-            // Flush buffered prefill chunks to the terminal in one batch.
+            // Phase 2 complete (or single-phase legacy): flush remaining chunks.
+            // If the 2s timeout already force-flushed (_sawViewportPrefill was
+            // cleared), skip onReplacePrefill to avoid a needless clear+flash.
             _awaitingPrefillDone = false;
+            if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
             const chunks = _prefillChunks;
             _prefillChunks = [];
+            if (_sawViewportPrefill && chunks.length && opts.onReplacePrefill) {
+              opts.onReplacePrefill();
+            }
+            _sawViewportPrefill = false;
             if (opts.onBinaryData) {
               for (const chunk of chunks) opts.onBinaryData(chunk);
             }
           } else if (msg.type === "viewer_conflict") {
+            console.log("[pty-ws]", opts.session, "viewer_conflict");
             _awaitingAttachAck = false;
             _awaitingPrefillDone = false;
             _prefillChunks = [];
+            _sawViewportPrefill = false;
+            if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
             if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
             if (opts.onViewerConflict) opts.onViewerConflict();
           } else if (msg.type === "control_granted") {
+            console.log("[pty-ws]", opts.session, "control_granted — sending re-attach");
             // Fresh viewer takeover needs a fresh attach bootstrap.
             sendAttachHandshake();
             if (opts.onControlGranted) opts.onControlGranted();
           }
-        } catch {}
+        } catch (e) { console.warn("[pty-ws] failed to parse control message:", e); }
         return;
       }
       if (_awaitingPrefillDone) {
@@ -631,10 +689,14 @@ function createPtySocketClient(opts) {
     };
 
     sock.onclose = (ev) => {
-      if (ws === sock) ws = null;
+      // Ignore stale close events from sockets replaced by reconnect().
+      if (ws !== sock) return;
+      ws = null;
       _awaitingAttachAck = false;
       _awaitingPrefillDone = false;
       _prefillChunks = [];
+      _sawViewportPrefill = false;
+      if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
       if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
       if (opts.onDisconnected) opts.onDisconnected(ev.code, ev.reason);
     };
@@ -668,6 +730,10 @@ function createPtySocketClient(opts) {
     _rc.cancel();
     _rc.block();
     _awaitingAttachAck = false;
+    _awaitingPrefillDone = false;
+    _prefillChunks = [];
+    _sawViewportPrefill = false;
+    if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
     if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
     if (ws) { ws.close(); ws = null; }
   }
@@ -676,8 +742,25 @@ function createPtySocketClient(opts) {
     _rc.reset();
   }
 
+  // Force-close a potentially zombie socket and reconnect. iOS/Android background
+  // tabs kill TCP silently while readyState still reports OPEN — connect() guards
+  // against this and bails. reconnect() bypasses that guard. See PR #89 review / df4180c.
+  function reconnect(reconnectOpts?: { takeControl?: boolean }) {
+    _rc.cancel();
+    _awaitingAttachAck = false;
+    _awaitingPrefillDone = false;
+    _prefillChunks = [];
+    _sawViewportPrefill = false;
+    if (_prefillDoneTimeout) { clearTimeout(_prefillDoneTimeout); _prefillDoneTimeout = null; }
+    if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
+    _takeControlOnAttach = !!(reconnectOpts && reconnectOpts.takeControl);
+    if (ws) { try { ws.close(); } catch {} ws = null; }
+    connect();
+  }
+
   return {
     connect,
+    reconnect,
     scheduleReconnect,
     sendFitResize,
     sendResize,
@@ -706,14 +789,16 @@ function createPtySocketClient(opts) {
  * @param {number} [opts.hydrationTimeoutMs] - hydration reveal timeout
  * @param {() => HTMLElement|null} [opts.getHydrationElement] - element to show/hide for hydration (defaults to mount container)
  * @param {boolean} [opts.resetPty] - append &reset=1 on first connect
- * @param {boolean} [opts.skipInitialPrefill] - skip server prefill on first attach
+ * @param {string} [opts.prefillMode] - "full" (default), "viewport", or "none"
  * @param {() => boolean} [opts.shouldReconnect] - guard for reconnect attempts
  * @param {() => boolean} [opts.canAcceptInput] - override stdin guard (default: ptyClient.isOpen)
  * @param {() => boolean} [opts.canSendResize] - override resize guard (default: canAcceptInput)
  * @param {(Uint8Array) => void} [opts.onOutput] - called after data written to term
  * @param {(boolean) => void} [opts.onOpen] - WebSocket opened (wasReconnect)
+ * @param {() => void} [opts.onPtyReady]
  * @param {() => void} [opts.onViewerConflict]
  * @param {() => void} [opts.onControlGranted]
+ * @param {() => void} [opts.onReplacePrefill]
  * @param {(number, string) => void} [opts.onDisconnected]
  * @param {() => void} [opts.onReconnecting]
  * @param {() => void} [opts.onReconnectExhausted]
@@ -728,11 +813,44 @@ function createPtyTerminalController(opts) {
   let _hydrationStarted = false;
   let _hydrationWritesInFlight = 0;
   let _reconnectPendingReset = false;
+  let _postResetBuffer: Uint8Array[] | null = null;
   let _mounting = false;
+  let _cachedLoaded = false;
 
   const _canAcceptInput = opts.canAcceptInput || (() => !!(_ptyClient && _ptyClient.isOpen));
   const _canSendResize = opts.canSendResize || _canAcceptInput;
   const _getHydrationElement = opts.getHydrationElement || (() => _container);
+
+  /** Clear scrollback and flush buffered writes next frame.
+   *  Uses clear() instead of reset() to avoid a 1-frame blank flash —
+   *  clear() preserves the visible viewport while wiping scrollback.
+   *  Buffers writes because ghostty-web WASM crashes with "memory access
+   *  out of bounds" if write() follows clear() in the same tick. */
+  function _scheduleBufferedClear() {
+    if (!_postResetBuffer) _postResetBuffer = [];
+    _term.clear();
+    requestAnimationFrame(() => {
+      if (!_term || !_postResetBuffer) return;
+      const buf = _postResetBuffer;
+      _postResetBuffer = null;
+      for (const chunk of buf) _writeTermData(chunk);
+    });
+  }
+
+  function _writeTermData(data: Uint8Array) {
+    if (!_term) return;
+    if (_hydration && _hydration.pending) {
+      _hydrationWritesInFlight++;
+      _term.write(data, () => {
+        _hydrationWritesInFlight = Math.max(0, _hydrationWritesInFlight - 1);
+        if (_hydration) _hydration.scheduleFinish();
+        if (opts.onOutput) opts.onOutput(data);
+      });
+    } else {
+      _term.write(data);
+      if (opts.onOutput) opts.onOutput(data);
+    }
+  }
 
   function fitTerminalPreserveScroll() {
     if (!_fitAddon || !_term) return;
@@ -802,6 +920,7 @@ function createPtyTerminalController(opts) {
 
     fitTerminalPreserveScroll();
     if (mountOpts && mountOpts.cached) {
+      _cachedLoaded = true;
       _term.write(mountOpts.cached, () => {
         try { _term.scrollToBottom(); } catch {}
       });
@@ -813,7 +932,7 @@ function createPtyTerminalController(opts) {
    * connect() — start hydration (first time only), create PTY WebSocket
    * client, and open the connection.
    */
-  function connect() {
+  function connect(connectOpts?: { takeControl?: boolean }) {
     if (_ptyClient && _ptyClient.isOpen) return;
     if (_ptyClient) _ptyClient.close();
 
@@ -823,23 +942,32 @@ function createPtyTerminalController(opts) {
       _hydrationStarted = true;
     }
 
+    // If cached snapshot was written during mount(), replace the cached
+    // buffer with live data on first output (tmux attach redraws the pane).
+    if (_cachedLoaded && opts.prefillMode !== "full") {
+      _reconnectPendingReset = true;
+      _cachedLoaded = false;
+    }
+
     // Capture reference to detect stale callbacks from replaced ptyClients
     let thisClient = null;
     const isCurrent = () => _ptyClient === thisClient;
 
     thisClient = _ptyClient = createPtySocketClient({
+      takeControlOnAttach: !!(connectOpts && connectOpts.takeControl),
       session: opts.session,
       machine: opts.machine || "",
       resetPty: opts.resetPty,
-      skipInitialPrefill: opts.skipInitialPrefill,
+      prefillMode: opts.prefillMode,
       getTermDimensions: () => _term ? { cols: _term.cols, rows: _term.rows } : null,
       fitTerminal: fitTerminalPreserveScroll,
       shouldReconnect: opts.shouldReconnect,
       onOpen: (wasReconnect) => {
+        console.log("[pty-ctrl]", opts.session, "onOpen, isCurrent=", isCurrent(), "wasReconnect=", wasReconnect);
         if (!isCurrent()) return;
         // On reconnect, clear stale content and restart hydration —
         // server sends fresh prefill scrollback on the new connection.
-        const rehydrate = WP.shouldRehydrate(wasReconnect, _hydrationStarted, opts.skipInitialPrefill);
+        const rehydrate = WP.shouldRehydrate(wasReconnect, _hydrationStarted, opts.prefillMode !== "full");
         if (rehydrate && _term) {
           _hydrationWritesInFlight = 0;
           if (wasReconnect) {
@@ -856,23 +984,34 @@ function createPtyTerminalController(opts) {
         }
         if (opts.onOpen) opts.onOpen(wasReconnect);
       },
+      onPtyReady: () => { if (isCurrent() && opts.onPtyReady) opts.onPtyReady(); },
+      onReplacePrefill: () => {
+        // Phase 2 scrollback replaces phase 1 viewport. The full scrollback
+        // is a superset that contains the viewport content, so we skip the
+        // clear() entirely — just let the chunks write directly over the
+        // existing buffer. This avoids any visible flash. The terminal ends
+        // up with correct content; the viewport portion is overwritten in-place
+        // and scrollback history appears above.
+        if (!_term) return;
+        _reconnectPendingReset = false;
+        _hydrationWritesInFlight = 0;
+      },
       onBinaryData: (data) => {
         if (!_term) return;
+        // Buffer writes while WASM settles after clear — ghostty-web crashes
+        // with "memory access out of bounds" if write() follows clear() in the
+        // same tick.
+        if (_postResetBuffer) {
+          _postResetBuffer.push(data);
+          return;
+        }
         if (_reconnectPendingReset) {
           _reconnectPendingReset = false;
-          _term.reset();
+          _postResetBuffer = [data];
+          _scheduleBufferedClear();
+          return;
         }
-        if (_hydration && _hydration.pending) {
-          _hydrationWritesInFlight++;
-          _term.write(data, () => {
-            _hydrationWritesInFlight = Math.max(0, _hydrationWritesInFlight - 1);
-            if (_hydration) _hydration.scheduleFinish();
-            if (opts.onOutput) opts.onOutput(data);
-          });
-        } else {
-          _term.write(data);
-          if (opts.onOutput) opts.onOutput(data);
-        }
+        _writeTermData(data);
       },
       onViewerConflict: () => { if (isCurrent() && opts.onViewerConflict) opts.onViewerConflict(); },
       onControlGranted: () => { if (isCurrent() && opts.onControlGranted) opts.onControlGranted(); },
@@ -894,22 +1033,10 @@ function createPtyTerminalController(opts) {
   let _resizeTransitionId = 0;
   /** Blank canvas → fit → reveal. No loading overlay — just instant hide/show. */
   function resizeWithTransition() {
-    const el = _getHydrationElement();
-    if (!el || !_fitAddon || !_term) { fitTerminalPreserveScroll(); return; }
-    if (_hydration && _hydration.pending) { fitTerminalPreserveScroll(); return; }
-    if (!el.classList.contains('hydrated')) { fitTerminalPreserveScroll(); return; }
-    const id = ++_resizeTransitionId;
-    const canvas = el.querySelector('canvas');
-    if (canvas) { canvas.style.opacity = '0'; canvas.style.visibility = 'hidden'; }
-    requestAnimationFrame(() => {
-      if (_resizeTransitionId !== id) return;
-      fitTerminalPreserveScroll();
-      requestAnimationFrame(() => {
-        if (_resizeTransitionId !== id) return;
-        if (canvas) { canvas.style.opacity = ''; canvas.style.visibility = ''; }
-        el.classList.remove('transitioning');
-      });
-    });
+    if (!_fitAddon || !_term) return;
+    // Refit directly without hiding the canvas — hiding causes a blank frame
+    // flicker that's more jarring than the brief reflow ghostty-web does.
+    fitTerminalPreserveScroll();
   }
 
   /**
@@ -922,7 +1049,9 @@ function createPtyTerminalController(opts) {
     _hydrationStarted = false;
     _hydrationWritesInFlight = 0;
     _reconnectPendingReset = false;
+    _postResetBuffer = null;
     _mounting = false;
+    _cachedLoaded = false;
     if (_term) { try { _term.dispose(); } catch {} _term = null; }
     _fitAddon = null;
     _container = null;
@@ -941,6 +1070,7 @@ function createPtyTerminalController(opts) {
     sendFitResize: () => { if (_ptyClient) _ptyClient.sendFitResize(); },
     send: (data) => { if (_ptyClient) _ptyClient.send(data); },
     resetRetry: () => { if (_ptyClient) _ptyClient.resetRetry(); },
+    reconnect: (reconnectOpts?: { takeControl?: boolean }) => { if (_ptyClient) _ptyClient.reconnect(reconnectOpts); },
     // Accessors
     get term() { return _term; },
     get fitAddon() { return _fitAddon; },
@@ -953,6 +1083,65 @@ function createPtyTerminalController(opts) {
 
 
 var encodeTerminalBinary = WP.encodeTerminalBinary;
+
+const KEY_TO_ESCAPE = {
+  Enter: "\r", Tab: "\t", Escape: "\x1b",
+  Up: "\x1b[A", Down: "\x1b[B", Right: "\x1b[C", Left: "\x1b[D",
+  Home: "\x1b[H", End: "\x1b[F", PPage: "\x1b[5~", NPage: "\x1b[6~",
+  BTab: "\x1b[Z", BSpace: "\x7f", DC: "\x1b[3~",
+  y: "y", n: "n",
+  "C-a": "\x01", "C-b": "\x02", "C-c": "\x03", "C-d": "\x04",
+  "C-e": "\x05", "C-f": "\x06", "C-g": "\x07", "C-h": "\x08",
+  "C-k": "\x0b", "C-l": "\x0c", "C-n": "\x0e", "C-p": "\x10",
+  "C-r": "\x12", "C-u": "\x15", "C-w": "\x17", "C-z": "\x1a",
+};
+const _textEncoder = new TextEncoder();
+
+function _sendTerminalInput(bytes) {
+  // Classic mobile: send text via JSON over /ws/terminal
+  if (useClassicMobile()) {
+    if (state.mobileWs && state.mobileWs.readyState === WebSocket.OPEN) {
+      const text = new TextDecoder().decode(bytes);
+      state.mobileWs.send(JSON.stringify({ type: "input", data: text }));
+      return true;
+    }
+    return false;
+  }
+  // In grid mode, route to the focused grid cell's controller
+  if (isGridActive()) {
+    const gs = state.gridSessions[state.gridFocusIndex];
+    if (gs?.controller?.isConnected) {
+      gs.controller.send(bytes);
+      return true;
+    }
+    return false;
+  }
+  if (state.terminalController?.isConnected) {
+    state.terminalController.send(bytes);
+    return true;
+  }
+  return false;
+}
+
+function sendMobileProxyText(proxy, text) {
+  const pending = text || proxy.value;
+  if (!pending) return true;
+  // Preserve original field content so we don't silently lose buffered chars
+  // when an explicit `text` arg is passed and the send fails (PR #89 review).
+  const savedField = proxy.value;
+  if (_sendTerminalInput(_textEncoder.encode(pending))) {
+    proxy.value = "";
+    return true;
+  }
+  proxy.value = savedField || pending;
+  return false;
+}
+
+function flushMobileKbProxyPendingInput() {
+  const proxy = document.getElementById("mobile-kb-proxy");
+  if (!proxy) return false;
+  return sendMobileProxyText(proxy, proxy.value);
+}
 
 function createConflictOverlay(message, buttonLabel, onClick) {
   const overlay = document.createElement("div");
@@ -1009,7 +1198,7 @@ function loadSnapshot(machine, session) {
     if (!raw) return null;
     const snap = JSON.parse(raw);
     const age = (Date.now() - snap.ts) / 1000;
-    if (age > (wpSettings.snapshotTtl || 300)) {
+    if (age > (wpSettings.snapshotTtl || 900)) {
       localStorage.removeItem(snapshotKey(machine, session));
       return null;
     }
@@ -1017,7 +1206,7 @@ function loadSnapshot(machine, session) {
   } catch { return null; }
 }
 function cleanStaleSnapshots() {
-  const ttl = (wpSettings.snapshotTtl || 300) * 1000;
+  const ttl = (wpSettings.snapshotTtl || 900) * 1000;
   const now = Date.now();
   const toRemove = [];
   for (let i = 0; i < localStorage.length; i++) {
@@ -1039,16 +1228,24 @@ function flushSnapshot() {
   state.snapshotTimer = null;
   if (!state.currentSession) { snapshotPending = null; return; }
   let text;
-  if (state.useDesktopTerminal && state.desktopController?.term) {
-    text = serializeXtermTail(state.desktopController.term, 100);
+  if (state.terminalController?.term) {
+    text = serializeXtermTail(state.terminalController.term, 200);
   } else {
     text = snapshotPending;
   }
   snapshotPending = null;
   if (text) saveSnapshot(state.currentMachine, state.currentSession, text);
+  flushGridSnapshots();
 }
 function serializeXtermTail(term, maxLines) {
   return WP.serializeBufferTail(term.buffer.active, maxLines);
+}
+function flushGridSnapshots() {
+  for (const gs of state.gridSessions) {
+    if (!gs.controller?.term) continue;
+    const text = serializeXtermTail(gs.controller.term, 200);
+    if (text) saveSnapshot(gs.machine || "", gs.session, text);
+  }
 }
 
 // ── Machine registry ──
@@ -1170,8 +1367,7 @@ function showView(name, skipAnimation) {
   // Prevents background WS from auto-reconnecting and stealing control from other instances
   if (prevView === "terminal" && effectiveName !== "terminal") {
     if (isGridActive()) { suspendGridMode(); }
-    else if (state.useDesktopTerminal) { destroyDesktopTerminal(); }
-    else { stopPolling(); }
+    else { destroyTerminal(); }
   }
 
   setState({ currentView: effectiveName });
@@ -1275,14 +1471,12 @@ function showView(name, skipAnimation) {
   const applyHeader = () => {
     // Always start with kb-accessory closed on view change
     document.getElementById("kb-accessory").classList.remove("visible");
-    document.getElementById("kb-toggle")?.classList.remove("active");
     state.kbAccessoryOpen = false;
     chip.style.display = "none";
     closeDrawer(true);
     title.style.display = "";
     title.style.cursor = "";
     title.onclick = null;
-    document.getElementById("search-btn").style.display = "none";
     document.getElementById("header-machine-label").style.display = "none";
     headerCenter.style.transform = "";
 
@@ -1294,7 +1488,7 @@ function showView(name, skipAnimation) {
       state.sessionRefreshTimer = setInterval(loadSessions, 5000);
     } else if (name === "projects") {
       back.style.display = "block";
-      back.onclick = () => { stopPolling(); showView(state.viewBeforePicker); loadSessions(); };
+      back.onclick = () => { showView(state.viewBeforePicker); loadSessions(); };
       gear.style.display = "none";
       title.textContent = "select project";
 
@@ -1314,9 +1508,7 @@ function showView(name, skipAnimation) {
     } else if (name === "terminal") {
       back.style.display = "block";
       back.onclick = () => {
-        if (state.useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
-        closeSearch();
-        state.useDesktopTerminal = false;
+        destroyTerminal();
         setState({ currentSession: null, currentMachine: "" });
         showView("sessions");
         loadSessions();
@@ -1326,7 +1518,6 @@ function showView(name, skipAnimation) {
       loadSessionSwitcher();
       chip.style.display = "flex";
       headerCenter.style.transform = "";
-      document.getElementById("search-btn").style.display = "";
       const hml = document.getElementById("header-machine-label");
       if (getMachines().length > 0) {
         const mName = state.currentMachine
@@ -1549,7 +1740,7 @@ async function openSession(name, machineUrl) {
   if (isDesktop() && state.currentView === "terminal" && state.currentSession) {
     // If sidebar is auto-expanded (hover), instantly collapse it before
     // switching so the new terminal fits to full width. Without this,
-    // initDesktopTerminal() fits to the narrow width, triggering a PTY
+    // initTerminal() fits to the narrow width, triggering a PTY
     // resize that causes Claude Code's TUI to redraw with · fill dots.
     if (state.sidebarAutoExpanded) {
       const sb = document.getElementById("desktop-sidebar");
@@ -1569,47 +1760,19 @@ async function openSession(name, machineUrl) {
   }
   setState({ currentSession: name, currentMachine: machineUrl || "" });
   recordRecent(state.currentMachine, name);
-  state.lastRawPane = null;
-  state.useDesktopTerminal = isDesktop();
   wpMetrics.reset();
-  setFollowMode(true);
   restoreDraft();
   const cached = loadSnapshot(state.currentMachine, name);
   showView("terminal");
-  if (state.useDesktopTerminal) {
-    destroyDesktopTerminal();
-    initDesktopTerminal(cached);
+  destroyTerminal();
+  if (useClassicMobile()) {
+    initClassicMobile(cached);
   } else {
-    const term = document.getElementById("terminal");
-    term.textContent = cached || "";
-    if (cached) term.scrollTop = term.scrollHeight;
-    await resizePane();
-    startPolling();
+    initTerminal(cached);
   }
   renderSidebar();
 }
 
-async function resizePane() {
-  if (!state.currentSession) return;
-  const term = document.getElementById("terminal");
-  const dims = getCharDimensions();
-  if (!dims.w || !dims.h) return false;
-  const cols = Math.floor(term.clientWidth / dims.w);
-  const rows = Math.floor(term.clientHeight / dims.h);
-  if (cols > 0 && rows > 0) {
-    try {
-      await api("/resize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session: state.currentSession, cols, rows }),
-      }, state.currentMachine);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
 
 // ── Project picker ──
 
@@ -1645,8 +1808,9 @@ async function showProjectPicker(machineUrl) {
 function showTerminalLoading(label) {
   clearPreservedGrid();
   showView("terminal");
-  const term = document.getElementById("terminal");
-  term.innerHTML = '<span class="loading-text">Starting session in ' + esc(label) + '\u2026</span>';
+  const dtc = document.getElementById("desktop-terminal-container");
+  dtc.style.display = "block";
+  dtc.innerHTML = '<span class="loading-text">Starting session in ' + esc(label) + '\u2026</span>';
 }
 
 function selectProject(project) {
@@ -1766,18 +1930,14 @@ async function createSessionWithAgent(cmd) {
     }, machine);
     if (data.session) {
       setState({ currentSession: data.session, currentMachine: machine });
-      state.useDesktopTerminal = isDesktop();
       // Refresh session list in background so it doesn't block terminal init
       loadSessions().then(() => { loadSessionSwitcher(); renderSidebar(); });
-      if (state.useDesktopTerminal && isGridActive()) {
+      if (isGridActive()) {
         // Grid is active — add new session to grid instead of single-terminal
         addToGrid(data.session, machine);
-      } else if (state.useDesktopTerminal) {
-        destroyDesktopTerminal();
-        initDesktopTerminal();
       } else {
-        await resizePane();
-        startPolling();
+        destroyTerminal();
+        initTerminal();
       }
     } else {
       alert("Failed to create session: Server returned no session (is wolfpack up to date?)");
@@ -1794,18 +1954,28 @@ async function createSessionWithAgent(cmd) {
 // ── Desktop Terminal (ghostty-web + /ws/pty binary WS) ──
 
 function connectDesktopWs() {
-  if (!state.desktopController) return;
-  state.desktopController.connect();
+  if (!state.terminalController) return;
+  state.terminalController.connect();
 }
+
+// Take-control state for single-terminal mode — mirrors grid's gs._displaced / gs._autoTakeControl
+var _tcState = { displaced: false, autoTakeControl: false };
 
 function showDesktopConflictOverlay() {
   const container = document.getElementById("desktop-terminal-container");
   if (!container) return;
   // Force hydration complete so overlay is visible (container may be opacity:0)
-  if (state.desktopController && state.desktopController.hydration) state.desktopController.hydration.finish();
+  if (state.terminalController && state.terminalController.hydration) state.terminalController.hydration.finish();
   removeDesktopConflictOverlay();
   const overlay = createConflictOverlay("Session active on another device", "Take Control", () => {
-    if (state.desktopController) state.desktopController.sendTakeControl();
+    if (!state.terminalController) return;
+    var clickAction = WP.handleTakeControlClick(state.terminalController.isConnected);
+    if (clickAction === "send-take-control") {
+      state.terminalController.sendTakeControl();
+    } else {
+      _tcState = WP.prepareAutoTakeControl(_tcState);
+      state.terminalController.reconnect({ takeControl: true });
+    }
     // Don't remove overlay here — wait for control_granted to confirm
   });
   overlay.id = "desktop-conflict-overlay";
@@ -1817,46 +1987,106 @@ function removeDesktopConflictOverlay() {
   if (el) el.remove();
 }
 
-async function initDesktopTerminal(cached) {
-  if (state.desktopController) return;
+async function initTerminal(cached) {
+  if (state.terminalController) return;
+  // Defensive: clear stale timer from a prior session that wasn't properly destroyed
+  if (state._cachedFallbackTimer) { clearTimeout(state._cachedFallbackTimer); state._cachedFallbackTimer = null; }
+  const isMobile = !isDesktop();
   const container = document.getElementById("desktop-terminal-container");
+  const kbProxy = document.getElementById("mobile-kb-proxy");
   container.style.display = "block";
   container.innerHTML = "";
-  container.classList.add("hydrating");
-  container.classList.remove("hydrated");
-  document.getElementById("terminal").style.display = "none";
+  if (cached) {
+    container.classList.add("cached-visible");
+    container.classList.remove("hydrating", "hydrated");
+  } else {
+    container.classList.add("hydrating");
+    container.classList.remove("hydrated", "cached-visible");
+  }
   document.getElementById("kb-accessory").classList.remove("visible");
-  document.getElementById("kb-toggle")?.classList.remove("active");
   state.kbAccessoryOpen = false;
   document.getElementById("input-bar").style.display = "none";
-  document.getElementById("cmd-palette").style.display = "none";
+  document.getElementById("cmd-palette").classList.remove("visible");
   document.getElementById("msg-preview").style.display = "none";
 
-  state.desktopController = createPtyTerminalController({
+  if (isMobile) {
+    kbProxy.style.display = "block";
+    // Start with inputmode=none so the browser never shows a virtual keyboard
+    // on focus. kb-open-btn switches to inputmode=text when user wants to type.
+    kbProxy.setAttribute("inputmode", "none");
+    kbProxy.setAttribute("readonly", "");
+    // Hide ghostty-web's textarea on mobile to prevent focus stealing
+    document.body.classList.add("mobile-no-ghost-focus");
+  } else {
+    kbProxy.style.display = "none";
+  }
+
+  _tcState = { displaced: false, autoTakeControl: false };
+  let _cachedPendingReset = !!cached;
+  // Timer stored on state so destroyTerminal() can cancel it — prevents cross-session
+  // side effects if user switches sessions before first output arrives (see PR #89 review).
+  // After 5s, ensure canvas is visible even if hydration hasn't completed —
+  // but keep cached content showing (don't blank the screen). The onOutput
+  // handler removes cached-visible when live data arrives.
+  state._cachedFallbackTimer = cached ? setTimeout(() => {
+    state._cachedFallbackTimer = null;
+    const el = document.getElementById("desktop-terminal-container");
+    if (el) el.classList.add("hydrated");
+  }, 5000) : null;
+
+  state.terminalController = createPtyTerminalController({
     session: state.currentSession,
     machine: state.currentMachine || "",
     scrollback: DESKTOP_TERMINAL_SCROLLBACK,
+    prefillMode: "none",
+    disableStdin: isMobile,
     getHydrationElement: () => document.getElementById("desktop-terminal-container"),
-    shouldFocus: () => true,
-    shouldReconnect: () => state.useDesktopTerminal && !!state.desktopController?.term,
+    shouldFocus: () => !isMobile,
+    shouldReconnect: () => !!state.terminalController?.term,
     onOpen: (wasReconnect) => {
       if (wasReconnect) wpMetrics.reconnectCount++;
+      // Successful WS open clears stale conflict overlay. If the server
+      // sees a conflict, onViewerConflict fires after onOpen and re-shows it.
+      _tcState = WP.handleControlGranted(_tcState);
+      removeDesktopConflictOverlay();
       setConnState("live");
     },
+    onPtyReady: () => { flushMobileKbProxyPendingInput(); },
     onOutput: (data) => {
+      if (_cachedPendingReset) {
+        _cachedPendingReset = false;
+        if (state._cachedFallbackTimer) { clearTimeout(state._cachedFallbackTimer); state._cachedFallbackTimer = null; }
+        const el = document.getElementById("desktop-terminal-container");
+        if (el) { el.classList.remove("cached-visible"); el.classList.add("hydrated"); }
+      }
+      if (state.enterRetryTimer) { clearTimeout(state.enterRetryTimer); state.enterRetryTimer = null; }
       wpMetrics.wsMessagesReceived++;
       scheduleSnapshotSave(null);
     },
-    onViewerConflict: () => showDesktopConflictOverlay(),
+    onViewerConflict: () => {
+      var r = WP.handleViewerConflict(_tcState);
+      _tcState = r.newState;
+      if (r.action === "auto-take-control") {
+        state.terminalController.sendTakeControl();
+      } else {
+        showDesktopConflictOverlay();
+      }
+    },
     onControlGranted: () => {
+      _tcState = WP.handleControlGranted(_tcState);
       removeDesktopConflictOverlay();
-      if (state.desktopController) state.desktopController.focus();
+      if (state.terminalController) state.terminalController.focus();
+      if (isMobile) {
+        const proxy = document.getElementById("mobile-kb-proxy");
+        if (proxy && proxy.style.display !== "none") proxy.focus({ preventScroll: true });
+      }
     },
     onDisconnected: (code, reason) => {
       removeDesktopConflictOverlay();
       var action = WP.classifyDisconnect(code, reason || "");
       if (action === "displaced") {
-        setConnState("displaced");
+        _tcState = WP.handleDisplaced(_tcState);
+        showDesktopConflictOverlay();
         return;
       }
       if (action === "session-ended") {
@@ -1869,61 +2099,144 @@ async function initDesktopTerminal(cached) {
         setConnState("session-ended");
         return;
       }
-      state.desktopController.scheduleReconnect();
+      state.terminalController.scheduleReconnect();
     },
     onReconnecting: () => setConnState("reconnecting"),
     onReconnectExhausted: () => setConnState("offline"),
   });
 
-  await state.desktopController.mount(container, { cached });
-  if (!state.desktopController) return; // disposed while awaiting WASM init
+  await state.terminalController.mount(container, { cached });
+  if (!state.terminalController) return; // disposed while awaiting WASM init
+  if (!state.terminalController.term) {
+    // WASM init failed — show error instead of blank screen
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:13px;padding:20px;text-align:center">Terminal unavailable — WebAssembly not supported in this browser</div>';
+    return;
+  }
 
+  // Mobile: attach touch scroll handler + blur any auto-focused element
+  if (isMobile && state.terminalController.term) {
+    state._touchCleanup = setupTouchScrollHandler(
+      container, state.terminalController.term,
+      (data) => state.terminalController && state.terminalController.send(data),
+      () => !!(state.terminalController && state.terminalController.isConnected),
+    );
+    // ghostty-web sets contentEditable + role=textbox on the container, which
+    // causes mobile browsers to show the keyboard on any touch. Adding
+    // inputmode=none suppresses the keyboard while preserving ghostty's internals.
+    function neutralizeGhostFocus() {
+      if (container.getAttribute("contenteditable") && !container.getAttribute("inputmode")) {
+        container.setAttribute("inputmode", "none");
+      }
+      container.querySelectorAll("textarea, input").forEach((el: HTMLElement) => {
+        if (!el.hasAttribute("readonly")) {
+          el.setAttribute("tabindex", "-1");
+          el.setAttribute("inputmode", "none");
+          el.setAttribute("readonly", "");
+        }
+      });
+    }
+    neutralizeGhostFocus();
+    // ghostty-web may re-apply attributes or add new elements on reconnect.
+    // Debounce to avoid jank from high-frequency DOM mutations during output.
+    let _ghostDebounce = null;
+    state._ghostInputObserver = new MutationObserver(() => {
+      if (_ghostDebounce) return;
+      _ghostDebounce = requestAnimationFrame(() => {
+        _ghostDebounce = null;
+        neutralizeGhostFocus();
+      });
+    });
+    state._ghostInputObserver.observe(container, { childList: true, subtree: true, attributes: true, attributeFilter: ["contenteditable"] });
+    // Blur anything that auto-focused during mount (prevents keyboard auto-open)
+    if (document.activeElement && document.activeElement !== document.body) {
+      (document.activeElement as HTMLElement).blur();
+    }
+  }
+
+  let _lastContainerWidth = container.clientWidth;
   const onResize = () => {
     if (state.desktopResizeTimer) clearTimeout(state.desktopResizeTimer);
     state.desktopResizeTimer = setTimeout(() => {
       state.desktopResizeTimer = null;
-      if (state.desktopController) state.desktopController.resizeWithTransition();
+      const newWidth = container.clientWidth;
+      if (isMobile && newWidth === _lastContainerWidth) return;
+      _lastContainerWidth = newWidth;
+      if (state.terminalController) {
+        isMobile ? state.terminalController.resize() : state.terminalController.resizeWithTransition();
+      }
     }, 60);
   };
   window.addEventListener("resize", onResize);
   state.desktopResizeHandler = onResize;
 
-  const onKeyDown = (e) => {
-    if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
-      e.preventDefault();
-      if (!state.searchActive) toggleSearch();
-      return;
-    }
-    if (state.searchActive && e.key === "Escape") {
-      e.preventDefault();
-      closeSearch();
-    }
-  };
-  document.addEventListener("keydown", onKeyDown);
-  container._onKeyDown = onKeyDown;
+  if (window.visualViewport && isMobile) {
+    const termView = document.getElementById("terminal-view");
+    const vvHandler = () => {
+      const kbHeight = window.innerHeight - window.visualViewport.height;
+      const kbOpen = kbHeight > 150;
+      // Option A: translateY slides the terminal up without changing its height.
+      // ghostty-web sees no container resize → no reflow → no scroll-through.
+      // The bottom portion of the terminal is clipped behind the keyboard.
+      termView.style.transform = kbOpen ? `translateY(-${kbHeight}px)` : "";
+      // Toggle visual state on keyboard button + sync accessory state
+      const kbBtn = document.getElementById("kb-open-btn");
+      if (kbBtn) kbBtn.classList.toggle("active", kbOpen);
+      if (state.kbAccessoryOpen !== kbOpen) {
+        state.kbAccessoryOpen = kbOpen;
+        const cmd = document.getElementById("cmd-palette");
+        if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", kbOpen);
+        if (!kbOpen) {
+          const p = document.getElementById("mobile-kb-proxy");
+          if (p && document.activeElement !== p) {
+            p.setAttribute("readonly", "");
+            p.setAttribute("inputmode", "none");
+          }
+        }
+      }
+    };
+    window.visualViewport.addEventListener("resize", vvHandler);
+    state.visualViewportHandler = vvHandler;
+    // Fire once to catch keyboard already open from previous session
+    vvHandler();
+  }
 
   connectDesktopWs();
 }
 
-function destroyDesktopTerminal() {
+function destroyTerminal() {
+  // Clean up classic mobile if it was active
+  if (document.body.classList.contains("classic-mobile")) destroyClassicMobile();
+  if (state._ghostInputObserver) { state._ghostInputObserver.disconnect(); state._ghostInputObserver = null; }
+  if (state._cachedFallbackTimer) { clearTimeout(state._cachedFallbackTimer); state._cachedFallbackTimer = null; }
   if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
   if (state.desktopResizeTimer) { clearTimeout(state.desktopResizeTimer); state.desktopResizeTimer = null; }
-  if (state.desktopController) { state.desktopController.dispose(); state.desktopController = null; }
+  if (state._touchCleanup) { state._touchCleanup(); state._touchCleanup = null; }
+  if (state.terminalController) { state.terminalController.dispose(); state.terminalController = null; }
   if (state.desktopResizeHandler) {
     window.removeEventListener("resize", state.desktopResizeHandler);
     state.desktopResizeHandler = null;
   }
-  const container = document.getElementById("desktop-terminal-container");
-  if (container._onKeyDown) {
-    document.removeEventListener("keydown", container._onKeyDown);
-    container._onKeyDown = null;
+  // Clean up visualViewport handler
+  if (state.visualViewportHandler && window.visualViewport) {
+    window.visualViewport.removeEventListener("resize", state.visualViewportHandler);
+    state.visualViewportHandler = null;
   }
+  // Reset termView positioning
+  const termView = document.getElementById("terminal-view");
+  if (termView) { termView.style.bottom = ""; termView.style.transform = ""; }
+  if (state.kbResizeTimer) { clearTimeout(state.kbResizeTimer); state.kbResizeTimer = null; }
+  // Blur and hide mobile-kb-proxy
+  const kbProxy = document.getElementById("mobile-kb-proxy");
+  if (kbProxy) { kbProxy.blur(); kbProxy.style.display = "none"; }
+  // Remove mobile ghost focus suppression
+  document.body.classList.remove("mobile-no-ghost-focus");
+
+  const container = document.getElementById("desktop-terminal-container");
   container.style.display = "none";
   container.classList.remove("hydrating", "hydrated");
   container.innerHTML = "";
-  document.getElementById("terminal").style.display = "";
   document.getElementById("input-bar").style.display = "";
-  document.getElementById("cmd-palette").style.display = "";
+  renderCmdPalette();
 }
 
 // ── Terminal ──
@@ -1935,7 +2248,7 @@ function terminalSessionKey() {
 function setConnState(connState) {
   const statusEl = document.getElementById("conn-status");
   if (!statusEl) return;
-  const active = state.useDesktopTerminal ? !!state.desktopController?.term : state.mobileStreamingActive;
+  const active = !!state.terminalController?.term;
   if (state.currentView !== "terminal" || !active || connState === "live") {
     statusEl.style.display = "none";
     statusEl.style.background = "#cc3333";
@@ -1950,9 +2263,9 @@ function setConnState(connState) {
   if (connState === "displaced") {
     statusEl.style.display = "block";
     statusEl.style.background = "#8a5a00";
-    statusEl.innerHTML = '<img src="/wolfpack-icon.svg" class="conn-icon">taken over by another viewer \u2014 <button type="button" id="conn-retry-btn" class="conn-retry-btn">Reconnect</button>';
+    statusEl.innerHTML = '<img src="/wolfpack-icon.svg" class="conn-icon">taken over by another viewer \u2014 <button type="button" id="conn-retry-btn" class="conn-retry-btn">Take Control</button>';
     const retryBtn = document.getElementById("conn-retry-btn");
-    if (retryBtn) retryBtn.onclick = retryConnection;
+    if (retryBtn) retryBtn.onclick = takeBackControl;
     return;
   }
   if (connState === "offline") {
@@ -1968,196 +2281,15 @@ function setConnState(connState) {
   statusEl.textContent = "session ended \u2014 use \u2190 to go back";
 }
 
-function applyTerminalPane(pane) {
-  const renderStart = performance.now();
-  const term = document.getElementById("terminal");
-  const changed = pane !== state.lastRawPane;
-  state.lastRawPane = pane;
-  if (changed) {
-    // Clear Enter retry once output has advanced.
-    if (state.enterRetryTimer) {
-      clearTimeout(state.enterRetryTimer);
-      state.enterRetryTimer = null;
-    }
-    if (state.searchActive && state.searchTerm) {
-      applySearchHighlights();
-    } else {
-      term.textContent = pane;
-    }
-    wpMetrics.recordLatency(performance.now() - renderStart);
-    if (state.termFollowMode) term.scrollTop = term.scrollHeight;
-  }
-  if (changed && !state.useDesktopTerminal) {
-    scheduleSnapshotSave(pane);
-  }
-}
 
-function setFollowMode(on) {
-  state.termFollowMode = on;
-  const btn = document.getElementById("jump-to-live");
-  if (btn) {
-    if (on) {
-      btn.classList.remove("visible");
-    } else {
-      btn.classList.add("visible");
-    }
-  }
-}
 
-function jumpToLive() {
-  const term = document.getElementById("terminal");
-  term.scrollTop = term.scrollHeight;
-  setFollowMode(true);
-  haptic([10]);
-}
-
-// Detect user scroll-up to pause follow mode
-(function() {
-  const term = document.getElementById("terminal");
-  let programmaticScroll = false;
-
-  // Patch scrollTop setter to distinguish programmatic scrolls
-  const origDesc = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
-  Object.defineProperty(term, "scrollTop", {
-    get() { return origDesc.get.call(this); },
-    set(v) {
-      programmaticScroll = true;
-      origDesc.set.call(this, v);
-      // Reset after microtask so the scroll event handler can read it
-      Promise.resolve().then(() => { programmaticScroll = false; });
-    }
-  });
-
-  term.addEventListener("scroll", () => {
-    if (programmaticScroll) return;
-    const atBottom = term.scrollHeight - origDesc.get.call(term) - term.clientHeight < 40;
-    if (atBottom) {
-      setFollowMode(true);
-    } else if (state.termFollowMode) {
-      setFollowMode(false);
-    }
-  }, { passive: true });
-})();
-
-function mobileTerminalWsUrl() {
-  if (state.currentMachine) {
-    const remote = new URL(state.currentMachine);
-    const proto = remote.protocol === "https:" ? "wss:" : "ws:";
-    return proto + "//" + remote.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
-  }
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  return proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
-}
-
-const mobileReconnector = createReconnector({
-  shouldReconnect: () => state.mobileStreamingActive && !state.useDesktopTerminal && !!state.currentSession && state.currentView === "terminal",
-  onReconnecting: () => setConnState("reconnecting"),
-  onExhausted: () => setConnState("offline"),
-});
-
-function connectMobileTerminalWs() {
-  if (!state.mobileStreamingActive || state.useDesktopTerminal || !state.currentSession || state.currentView !== "terminal") return;
-  if (mobileReconnector.isBlocked) return;
-  if (state.mobileWs && state.mobileWs.readyState <= WebSocket.OPEN) return;
-  const connectKey = terminalSessionKey();
-  const ws = new WebSocket(mobileTerminalWsUrl());
-  state.mobileWs = ws;
-
-  ws.onopen = async () => {
-    if (state.mobileWs !== ws) return;
-    if (!state.mobileStreamingActive || state.useDesktopTerminal || connectKey !== terminalSessionKey()) {
-      ws.close();
-      return;
-    }
-    if (mobileReconnector.connected()) wpMetrics.reconnectCount++;
-    setConnState("live");
-    await resizePane();
-  };
-
-  ws.onmessage = (ev) => {
-    if (state.mobileWs !== ws) return;
-    wpMetrics.wsMessagesReceived++;
-    let msg = null;
-    try { msg = JSON.parse(ev.data); } catch { return; }
-    if (msg?.type === "output" && typeof msg.data === "string") {
-      setConnState("live");
-      applyTerminalPane(msg.data);
-    }
-  };
-
-  ws.onclose = (ev) => {
-    if (state.mobileWs === ws) state.mobileWs = null;
-    if (!state.mobileStreamingActive || state.useDesktopTerminal || connectKey !== terminalSessionKey()) return;
-    if (ev.code === 4001 || (ev.code === 1000 && ev.reason === "session ended")) {
-      setConnState("session-ended");
-      return;
-    }
-    mobileReconnector.schedule(connectMobileTerminalWs);
-  };
-
-  ws.onerror = () => {};
-}
-
-function startPolling(resetBudget = true) {
-  state.mobileStreamingActive = true;
-  if (resetBudget) {
-    mobileReconnector.reset();
-  }
-  if (mobileReconnector.isBlocked && !resetBudget) {
-    setConnState("offline");
-    return;
-  }
-  mobileReconnector.cancel();
-  if (!state.mobileWs || state.mobileWs.readyState === WebSocket.CLOSED) {
-    setConnState("reconnecting");
-  }
-  connectMobileTerminalWs();
-}
-
-function stopPolling() {
-  if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
-  state.mobileStreamingActive = false;
-  mobileReconnector.reset();
-  mobileReconnector.cancel();
-  if (state.enterRetryTimer) {
-    clearTimeout(state.enterRetryTimer);
-    state.enterRetryTimer = null;
-  }
-  if (state.mobileWs) {
-    const ws = state.mobileWs;
-    state.mobileWs = null;
-    try { ws.close(1000, "viewer changed"); } catch {}
-  }
-  const statusEl = document.getElementById("conn-status");
-  if (statusEl) {
-    statusEl.style.display = "none";
-    statusEl.style.background = "#cc3333";
-  }
-}
-
-function retryTerminalConnection() {
-  if (state.useDesktopTerminal || !state.currentSession) return;
-  mobileReconnector.reset();
-  if (state.mobileWs) {
-    const ws = state.mobileWs;
-    state.mobileWs = null;
-    try { ws.close(1000, "manual retry"); } catch {}
-  }
-  startPolling(true);
-}
-
-function retryDesktopConnection() {
-  if (!state.useDesktopTerminal || !state.desktopController?.term) return;
+function retryConnection() {
+  if (!state.terminalController?.term) return;
   setConnState("reconnecting");
   connectDesktopWs();
 }
 
-function retryConnection() {
-  if (state.useDesktopTerminal) retryDesktopConnection();
-  else retryTerminalConnection();
-}
-
-async function sendMsg() {
+function sendMsg() {
   const input = document.getElementById("msg-input");
   const text = input.value.trim();
   if (!text || !state.currentSession) return;
@@ -2173,28 +2305,23 @@ async function sendMsg() {
   void btn.offsetWidth; // force reflow
   btn.classList.add("send-flash");
 
-  try {
-    wpMetrics.sendCount++;
-    await api("/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session: state.currentSession, text: text.replace(/\n/g, " ") }),
-    }, state.currentMachine);
-    connectMobileTerminalWs();
-
+  wpMetrics.sendCount++;
+  if (_sendTerminalInput(_textEncoder.encode(text.replace(/\n/g, " ") + "\r"))) {
     // Enter retry: if output hasn't changed within 800ms, Enter may have been dropped.
-    // Timer is cleared on any pane change, so this only fires if truly stuck.
-    // Scope to the session that was active at send time to prevent phantom Enter on other sessions.
-    if (state.enterRetryTimer) clearTimeout(state.enterRetryTimer);
-    const retrySession = state.currentSession;
-    const retryMachine = state.currentMachine;
-    state.enterRetryTimer = setTimeout(() => {
-      if (state.currentSession === retrySession && state.currentMachine === retryMachine) {
-        sendKey("Enter");
-      }
-      state.enterRetryTimer = null;
-    }, 800);
-  } catch {
+    // Timer is cleared on any output, so this only fires if truly stuck.
+    // Skip in grid mode — grid cells have their own controllers and onOutput won't clear this timer.
+    if (!isGridActive()) {
+      if (state.enterRetryTimer) clearTimeout(state.enterRetryTimer);
+      const retrySession = state.currentSession;
+      const retryMachine = state.currentMachine;
+      state.enterRetryTimer = setTimeout(() => {
+        if (state.currentSession === retrySession && state.currentMachine === retryMachine) {
+          sendKey("Enter");
+        }
+        state.enterRetryTimer = null;
+      }, 800);
+    }
+  } else {
     wpMetrics.sendFailCount++;
     input.value = saved;
     saveDraft();
@@ -2214,19 +2341,23 @@ function updatePreview() {
   }
 }
 
-async function sendKey(key) {
+function sendKey(key) {
   if (!state.currentSession) return;
-  try {
-    wpMetrics.sendCount++;
-    await api("/key", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session: state.currentSession, key }),
-    }, state.currentMachine);
-    connectMobileTerminalWs();
-  } catch {
-    wpMetrics.sendFailCount++;
+  // Classic mobile: send key name directly via WS JSON
+  if (useClassicMobile()) {
+    if (state.mobileWs && state.mobileWs.readyState === WebSocket.OPEN) {
+      wpMetrics.sendCount++;
+      state.mobileWs.send(JSON.stringify({ type: "key", key }));
+    } else {
+      wpMetrics.sendFailCount++;
+    }
+    return;
   }
+  const esc = KEY_TO_ESCAPE[key];
+  if (!esc) return;
+  wpMetrics.sendCount++;
+  if (_sendTerminalInput(_textEncoder.encode(esc))) return;
+  wpMetrics.sendFailCount++;
 }
 
 async function killSession(name, e, machineUrl) {
@@ -2244,9 +2375,7 @@ async function killSession(name, e, machineUrl) {
   }
   const wasCurrentSession = name === state.currentSession && (machineUrl || "") === state.currentMachine;
   if (wasCurrentSession && state.currentView === "terminal") {
-    if (state.useDesktopTerminal) { destroyDesktopTerminal(); } else { stopPolling(); }
-    closeSearch();
-    state.useDesktopTerminal = false;
+    destroyTerminal();
     setState({ currentSession: null, currentMachine: "" });
     showView("sessions");
   }
@@ -2500,16 +2629,10 @@ async function switchSession(val) {
   }
   if (name === state.currentSession && machineUrl === state.currentMachine) {
     // Same session — reconnect or reinitialize if the terminal is not active.
-    if (state.useDesktopTerminal) {
-      if (state.desktopController) {
-        if (!state.desktopController.isConnected) connectDesktopWs();
-      } else if (state.currentView === "terminal") {
-        initDesktopTerminal();
-      }
-    } else if (!state.mobileStreamingActive && state.currentView === "terminal") {
-      document.getElementById("terminal").textContent = "";
-      await resizePane();
-      startPolling();
+    if (state.terminalController) {
+      if (!state.terminalController.isConnected) connectDesktopWs();
+    } else if (state.currentView === "terminal") {
+      initTerminal();
     }
     return;
   }
@@ -2517,14 +2640,9 @@ async function switchSession(val) {
   // Exit grid mode if active
   if (isGridActive()) exitGridMode();
   // Suspend current mode (cache terminal state)
-  if (state.useDesktopTerminal) {
-    destroyDesktopTerminal();
-  } else {
-    stopPolling();
-  }
+  destroyTerminal();
   setState({ currentSession: name, currentMachine: machineUrl });
   recordRecent(machineUrl, name);
-  state.lastRawPane = null;
   restoreDraft();
   loadSessionSwitcher();
   // Update machine label in header (showView sets it, but drawer bypasses showView)
@@ -2536,14 +2654,7 @@ async function switchSession(val) {
     hml.textContent = mName;
     hml.style.display = "block";
   }
-  state.useDesktopTerminal = isDesktop();
-  if (state.useDesktopTerminal) {
-    initDesktopTerminal();
-  } else {
-    document.getElementById("terminal").textContent = "";
-    await resizePane();
-    startPolling();
-  }
+  initTerminal();
   renderSidebar();
 }
 
@@ -2583,8 +2694,13 @@ function checkStateTransitions(groups) {
 }
 
 // Recover terminal stream on foreground; manage session refresh
+var _hiddenAt = 0;
+const DESKTOP_STALE_THRESHOLD_MS = 60_000;
+
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
+    const hiddenDuration = _hiddenAt ? Date.now() - _hiddenAt : 0;
+    _hiddenAt = 0;
     if (isDesktop() && !sidebarRefreshTimer) {
       startSidebarRefresh();
     }
@@ -2594,32 +2710,38 @@ document.addEventListener("visibilitychange", () => {
       state.sessionRefreshTimer = setInterval(loadSessions, 5000);
     }
     if (state.currentSession && state.currentView === "terminal") {
-      if (state.useDesktopTerminal) {
-        // Desktop: reset retry budget and reconnect current terminal context.
+      if (!isDesktop()) {
+        // Mobile: always force-reconnect — iOS/Android background tabs kill
+        // TCP silently while readyState still reports OPEN.
+        if (useClassicMobile()) {
+          startClassicPolling(true);
+        } else if (isGridActive()) {
+          for (const gs of state.gridSessions) {
+            if (!gs.controller || gs._displaced) continue;
+            gs.controller.resetRetry();
+            gs.controller.reconnect();
+          }
+        } else if (state.terminalController?.term) {
+          state.terminalController.resetRetry();
+          state.terminalController.reconnect();
+        }
+      } else if (hiddenDuration > DESKTOP_STALE_THRESHOLD_MS) {
+        // Desktop: reconnect only if tab was backgrounded >60s (App Nap,
+        // browser throttling can silently kill the TCP connection too).
         if (isGridActive()) {
           for (const gs of state.gridSessions) {
             if (!gs.controller || gs._displaced) continue;
             gs.controller.resetRetry();
             if (!gs.controller.isConnected) gs.controller.connect();
           }
-        } else if (state.desktopController?.term) {
-          state.desktopController.resetRetry();
-          connectDesktopWs();
+        } else if (state.terminalController?.term) {
+          state.terminalController.resetRetry();
+          if (!state.terminalController.isConnected) connectDesktopWs();
         }
-      } else {
-        // Mobile: kill stale WS and reconnect fresh.
-        // After backgrounding, the OS suspends the tab and the TCP connection
-        // dies silently — but the WS object may still report readyState=OPEN,
-        // blocking reconnection for 30-60s until the browser detects the dead socket.
-        if (state.mobileWs) {
-          const ws = state.mobileWs;
-          state.mobileWs = null;
-          try { ws.close(1000, "resume foreground"); } catch {}
-        }
-        startPolling(true);
       }
     }
   } else {
+    _hiddenAt = Date.now();
     // Stop session refresh when backgrounded
     if (state.sessionRefreshTimer) {
       clearInterval(state.sessionRefreshTimer);
@@ -2633,7 +2755,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // Dismiss preview when tapping terminal area
-document.getElementById("terminal").addEventListener("click", () => {
+document.getElementById("desktop-terminal-container").addEventListener("click", () => {
   document.getElementById("msg-preview").style.display = "none";
 });
 
@@ -2738,47 +2860,27 @@ msgInput.addEventListener("keydown", (e) => {
 function toggleKbAccessory() {
   const acc = document.getElementById("kb-accessory");
   const cmd = document.getElementById("cmd-palette");
-  const tog = document.getElementById("kb-toggle");
   if (!acc) return;
   state.kbAccessoryOpen = !state.kbAccessoryOpen;
   acc.classList.toggle("visible", state.kbAccessoryOpen);
   if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", state.kbAccessoryOpen);
-  if (tog) tog.classList.toggle("active", state.kbAccessoryOpen);
   haptic([10]);
 }
 
 (function setupKbAccessory() {
   const acc = document.getElementById("kb-accessory");
-  const ta = document.getElementById("msg-input");
-  const tog = document.getElementById("kb-toggle");
-  if (!acc || !ta) return;
-
-  // Insert text at cursor position in textarea
-  function insertAtCursor(char) {
-    const start = ta.selectionStart;
-    const end = ta.selectionEnd;
-    ta.value = ta.value.substring(0, start) + char + ta.value.substring(end);
-    ta.selectionStart = ta.selectionEnd = start + char.length;
-    ta.dispatchEvent(new Event("input"));
-    ta.focus();
-  }
+  if (!acc) return;
 
   // Wire up all keys — prevent blur with mousedown/touchstart preventDefault
   acc.querySelectorAll(".kb-key").forEach((btn) => {
     const key = btn.dataset.key;
-    const insert = btn.dataset.insert;
     // Skip buttons with their own onclick (e.g. git button)
-    if (!key && !insert) return;
+    if (!key) return;
     let touchFired = false;
 
     function fire() {
-      if (key) {
-        haptic([15]);
-        sendKey(key);
-      } else if (insert) {
-        haptic([10]);
-        insertAtCursor(insert);
-      }
+      haptic([15]);
+      sendKey(key);
     }
 
     // Prevent focus steal (keeps keyboard open)
@@ -2797,16 +2899,86 @@ function toggleKbAccessory() {
   });
 })();
 
-// Global arrow keys → tmux when in terminal and textarea not focused
-document.addEventListener("keydown", (e) => {
-  if (state.currentView !== "terminal") return;
-  if (state.useDesktopTerminal) return; // desktop terminal has its own handler
-  const tag = document.activeElement && document.activeElement.tagName;
-  if (document.activeElement === msgInput || tag === "SELECT" || tag === "INPUT") return;
-  const keyMap = { ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Enter: "Enter", Escape: "Escape" };
-  const mapped = keyMap[e.key];
-  if (mapped) { e.preventDefault(); sendKey(mapped); }
-});
+(function setupMobileKbProxy() {
+  const proxy = document.getElementById("mobile-kb-proxy");
+  if (!proxy) return;
+  let _composing = false;
+  let _skipNextInput = false;
+
+  // Send every character immediately — don't wait for composition to finish.
+  // The proxy is invisible so we don't need composed text; the terminal wants
+  // each keystroke as it happens. On compositionend we flush any remaining
+  // buffered text (e.g. autocomplete selection that inserts multiple chars).
+  proxy.addEventListener("compositionstart", () => { _composing = true; });
+  proxy.addEventListener("compositionend", () => {
+    _composing = false;
+    if (proxy.value) {
+      _skipNextInput = sendMobileProxyText(proxy, proxy.value);
+    }
+  });
+
+  proxy.addEventListener("input", (e) => {
+    if (_skipNextInput) {
+      _skipNextInput = false;
+      return;
+    }
+    // Skip deleteContentBackward — keydown handler already sent \x7f
+    if (e.inputType === "deleteContentBackward") return;
+    // Skip insertLineBreak/insertParagraph — keydown handler already sent \r
+    if (e.inputType === "insertLineBreak" || e.inputType === "insertParagraph") return;
+    // During composition: send the newest char immediately (last char in value).
+    // Autocomplete/predictive text buffers chars in the proxy — we drain them
+    // one by one so the terminal sees each keystroke without waiting for word selection.
+    if (_composing && proxy.value) {
+      const last = proxy.value.slice(-1);
+      // Clear everything except what the IME is still composing over
+      sendMobileProxyText(proxy, last);
+      return;
+    }
+    sendMobileProxyText(proxy, proxy.value || e.data || "");
+  });
+
+  proxy.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      if (_sendTerminalInput(_textEncoder.encode("\r"))) e.preventDefault();
+    } else if (e.key === "Backspace") {
+      if (_sendTerminalInput(_textEncoder.encode("\x7f")) || !proxy.value) e.preventDefault();
+    } else if (e.key === "Escape") {
+      if (_sendTerminalInput(_textEncoder.encode("\x1b"))) e.preventDefault();
+    }
+  });
+
+  // Keyboard toggle button — explicit open/close instead of tap-on-terminal
+  // (tap-to-focus was unreliable: scroll gestures triggered keyboard open)
+  const kbOpenBtn = document.getElementById("kb-open-btn");
+  if (kbOpenBtn) {
+    function toggleMobileKeyboard() {
+      if (proxy.style.display === "none") return;
+      const opening = document.activeElement !== proxy;
+      if (opening) {
+        proxy.removeAttribute("readonly");
+        proxy.setAttribute("inputmode", "text");
+        proxy.focus({ preventScroll: true });
+      } else {
+        proxy.blur();
+        proxy.setAttribute("readonly", "");
+        proxy.setAttribute("inputmode", "none");
+      }
+      // Sync kbAccessoryOpen so cmd-palette visibility tracks keyboard state
+      state.kbAccessoryOpen = opening;
+      const cmd = document.getElementById("cmd-palette");
+      if (cmd && cmd.innerHTML) cmd.classList.toggle("visible", opening);
+    }
+    kbOpenBtn.addEventListener("mousedown", (e) => e.preventDefault());
+    kbOpenBtn.addEventListener("touchstart", () => {
+      haptic([15]);
+    }, { passive: true });
+    kbOpenBtn.addEventListener("click", () => {
+      toggleMobileKeyboard();
+    });
+  }
+})();
+
 
 // Navigate back to fully expanded sessions view (desktop: expand mode, mobile: just sessions)
 function backToSessions() {
@@ -2875,8 +3047,8 @@ document.addEventListener("keydown", (e) => {
     if (isGridActive()) {
       const gs = state.gridSessions[state.gridFocusIndex];
       if (gs && gs.controller && gs.controller.term) gs.controller.term.clear();
-    } else if (state.desktopController?.term) {
-      state.desktopController.term.clear();
+    } else if (state.terminalController?.term) {
+      state.terminalController.term.clear();
     }
     return;
   }
@@ -2982,100 +3154,6 @@ async function discoverMachines() {
   }
 }
 
-// ── Search ──
-
-function toggleSearch() {
-  const bar = document.getElementById("search-bar");
-  if (state.searchActive) {
-    closeSearch();
-  } else {
-    state.searchActive = true;
-    bar.classList.add("visible");
-    document.getElementById("search-input").focus();
-  }
-}
-
-function closeSearch() {
-  state.searchActive = false;
-  state.searchTerm = "";
-  state.searchMatches = [];
-  state.searchIndex = -1;
-  document.getElementById("search-bar").classList.remove("visible");
-  document.getElementById("search-input").value = "";
-  document.getElementById("search-count").textContent = "";
-  if (state.useDesktopTerminal) {
-    if (state.desktopController) state.desktopController.focus();
-  } else {
-    const term = document.getElementById("terminal");
-    if (state.lastRawPane) term.textContent = state.lastRawPane;
-  }
-}
-
-function doSearch() {
-  state.searchTerm = document.getElementById("search-input").value;
-  if (!state.searchTerm) {
-    document.getElementById("search-count").textContent = "";
-    if (!state.useDesktopTerminal) {
-      const term = document.getElementById("terminal");
-      if (state.lastRawPane) term.textContent = state.lastRawPane;
-    }
-    state.searchMatches = [];
-    state.searchIndex = -1;
-    return;
-  }
-  if (state.useDesktopTerminal) {
-    // ghostty-web doesn't have a search API yet — search is disabled for desktop terminal
-    document.getElementById("search-count").textContent = "n/a";
-    return;
-  }
-  state.searchIndex = 0;
-  applySearchHighlights();
-}
-
-function applySearchHighlights() {
-  if (state.useDesktopTerminal) return; // search not available with ghostty-web
-  const term = document.getElementById("terminal");
-  if (!state.searchTerm || !state.lastRawPane) return;
-  const escaped = state.lastRawPane.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const escapedTerm = state.searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(escapedTerm.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"), "gi");
-  let count = 0;
-  let current = state.searchIndex;
-  const html = escaped.replace(re, (m) => {
-    const cls = count === current ? "search-current" : "";
-    count++;
-    return `<mark class="${cls}">${m}</mark>`;
-  });
-  state.searchMatches = Array.from({ length: count });
-  if (count > 0 && state.searchIndex >= count) state.searchIndex = 0;
-  document.getElementById("search-count").textContent = count > 0 ? `${state.searchIndex + 1}/${count}` : "0/0";
-  term.innerHTML = html;
-  const cur = term.querySelector("mark.search-current");
-  if (cur) cur.scrollIntoView({ block: "center", behavior: "smooth" });
-}
-
-function nextMatch() {
-  if (state.useDesktopTerminal) return; // search not available with ghostty-web
-  if (state.searchMatches.length === 0) return;
-  state.searchIndex = (state.searchIndex + 1) % state.searchMatches.length;
-  applySearchHighlights();
-}
-
-function prevMatch() {
-  if (state.useDesktopTerminal) return; // search not available with ghostty-web
-  if (state.searchMatches.length === 0) return;
-  state.searchIndex = (state.searchIndex - 1 + state.searchMatches.length) % state.searchMatches.length;
-  applySearchHighlights();
-}
-
-document.getElementById("search-input").addEventListener("input", doSearch);
-document.getElementById("search-input").addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeSearch();
-  else if (e.key === "Enter") {
-    e.preventDefault();
-    if (e.shiftKey) prevMatch(); else nextMatch();
-  }
-});
 
 
 // ── Swipe Gesture Engine (mobile only) ──
@@ -3155,19 +3233,6 @@ if (!isDesktop()) {
         bgEl.style.zIndex = "0";
       } else {
         // forward: card drags independently, terminal peeks behind
-        // eager pre-load: fetch the swiped session's content into terminal
-        if (swipeCard && targetView === "terminal") {
-          const onclick = swipeCard.getAttribute("onclick") || "";
-          const m = onclick.match(/openSession\('([^']+)'(?:,\s*'([^']*)')?\)/);
-          if (m) {
-            const sName = m[1], sMachine = m[2] || "";
-            const base = sMachine ? sMachine + "/api" : "/api";
-            fetch(base + "/poll?session=" + encodeURIComponent(sName))
-              .then(r => r.ok ? r.json() : null)
-              .then(d => { if (d && d.pane != null) document.getElementById("terminal").textContent = d.pane; })
-              .catch(() => {});
-          }
-        }
         bgEl.style.transform = "translate3d(100%, 0, 0)";
         bgEl.classList.add("visible");
         bgEl.style.zIndex = "2";
@@ -3431,8 +3496,8 @@ function initSidebar() {
       // Pin/unpin — resize PTY to fit new layout
       if (isGridActive()) {
         scheduleGridStabilizedFit();
-      } else if (state.desktopController) {
-        state.desktopController.resizeWithTransition();
+      } else if (state.terminalController) {
+        state.terminalController.resizeWithTransition();
       }
     }
     state.sidebarResizeDone = true;
@@ -3468,7 +3533,6 @@ function bindHtmlEventListeners(): void {
 
   // Header
   on("session-chip", "click", () => toggleDrawer());
-  on("search-btn", "click", () => toggleSearch());
   on("gear-btn", "click", () => showSettings());
 
   // Drawer / overlays
@@ -3530,6 +3594,19 @@ function bindHtmlEventListeners(): void {
     });
   });
 
+  // Mobile terminal mode buttons — setting takes effect on next session open
+  document.querySelectorAll(".term-mobile-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mode = (btn as HTMLElement).dataset.mode;
+      if (mode && mode !== wpSettings.mobileTerminal) {
+        toggleSetting("mobileTerminal", mode);
+        document.querySelectorAll(".term-mobile-btn").forEach(b => b.classList.toggle("active", (b as HTMLElement).dataset.mode === mode));
+        // Don't apply classic-mobile class immediately — it takes effect
+        // on next session open to avoid mid-session transport mismatch.
+      }
+    });
+  });
+
   // Quick commands
   on("add-quick-cmd-btn", "click", () => addQuickCmd());
 
@@ -3537,23 +3614,12 @@ function bindHtmlEventListeners(): void {
   const debugResetBtn = document.querySelector(".debug-reset-btn");
   if (debugResetBtn) debugResetBtn.addEventListener("click", () => { wpMetrics.reset(); renderDebugPanel(); });
 
-  // Search bar
-  const searchBar = $("search-bar");
-  if (searchBar) {
-    const btns = searchBar.querySelectorAll("button");
-    if (btns[0]) btns[0].addEventListener("click", () => prevMatch());
-    if (btns[1]) btns[1].addEventListener("click", () => nextMatch());
-    if (btns[2]) btns[2].addEventListener("click", () => closeSearch());
-  }
-
   // Terminal view
-  on("jump-to-live", "click", () => jumpToLive());
 
   // Keyboard accessory
   const gitBtn = document.querySelector(".kb-key.kb-git");
   if (gitBtn) gitBtn.addEventListener("click", () => showGitStatus());
 
-  on("kb-toggle", "click", () => toggleKbAccessory());
 
   // Ralph detail
   on("ralph-detail-back-btn", "click", () => backFromRalph());
@@ -3570,9 +3636,17 @@ function bindHtmlEventListeners(): void {
 bindHtmlEventListeners();
 
 initGridDeps({
-  showView, openSession, destroyDesktopTerminal, initDesktopTerminal,
-  backToSessions, startPolling, resizePane, renderSidebar,
+  showView, openSession, destroyTerminal, initTerminal,
+  backToSessions, renderSidebar,
   createPtyTerminalController, createConflictOverlay,
+  canUseWasmTerminal,
+  saveGridCellSnapshot: (gs) => {
+    if (!gs.controller?.term) return;
+    const text = serializeXtermTail(gs.controller.term, 200);
+    if (text) saveSnapshot(gs.machine || "", gs.session, text);
+  },
+  flushGridSnapshots,
+  loadSnapshot,
 });
 initRalphDeps({
   api, errorMessage, showView, getMachines, backToSessions,
@@ -3594,6 +3668,240 @@ if (isDesktop() && state.sessionsExpanded) {
 }
 showView("sessions", true);
 loadSessions().then(renderSidebar);
+
+// ── Classic mobile terminal (text polling) ──
+
+function classicMobileWsUrl() {
+  if (state.currentMachine) {
+    const remote = new URL(state.currentMachine);
+    const proto = remote.protocol === "https:" ? "wss:" : "ws:";
+    return proto + "//" + remote.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
+  }
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  return proto + "//" + location.host + "/ws/terminal?session=" + encodeURIComponent(state.currentSession);
+}
+
+const classicReconnector = createReconnector({
+  shouldReconnect: () => state.mobileStreamingActive && useClassicMobile() && !!state.currentSession && state.currentView === "terminal",
+  onReconnecting: () => setConnState("reconnecting"),
+  onExhausted: () => setConnState("offline"),
+});
+
+function applyTerminalPane(pane) {
+  const renderStart = performance.now();
+  const term = document.getElementById("terminal");
+  const changed = pane !== state.lastRawPane;
+  state.lastRawPane = pane;
+  if (changed) {
+    if (state.enterRetryTimer) {
+      clearTimeout(state.enterRetryTimer);
+      state.enterRetryTimer = null;
+    }
+    if (state.searchActive && state.searchTerm) {
+      // Search highlight: wrap matches in <mark> tags
+      const escaped = state.searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(escaped, "gi");
+      term.innerHTML = esc(pane).replace(re, m => `<mark>${m}</mark>`);
+    } else {
+      term.textContent = pane;
+    }
+    wpMetrics.recordLatency(performance.now() - renderStart);
+    if (state.termFollowMode) term.scrollTop = term.scrollHeight;
+  }
+  if (changed) {
+    scheduleSnapshotSave(pane);
+  }
+}
+
+function setFollowMode(on) {
+  state.termFollowMode = on;
+  const btn = document.getElementById("jump-to-live");
+  if (btn) {
+    if (on) btn.classList.remove("visible");
+    else btn.classList.add("visible");
+  }
+}
+
+function jumpToLive() {
+  const term = document.getElementById("terminal");
+  term.scrollTop = term.scrollHeight;
+  setFollowMode(true);
+  haptic([10]);
+}
+
+// Detect user scroll-up to pause follow mode (classic terminal)
+(function() {
+  const term = document.getElementById("terminal");
+  if (!term) return;
+  let programmaticScroll = false;
+  const origDesc = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+  Object.defineProperty(term, "scrollTop", {
+    get() { return origDesc.get.call(this); },
+    set(v) {
+      programmaticScroll = true;
+      origDesc.set.call(this, v);
+      Promise.resolve().then(() => { programmaticScroll = false; });
+    }
+  });
+  term.addEventListener("scroll", () => {
+    if (programmaticScroll) return;
+    const atBottom = term.scrollHeight - origDesc.get.call(term) - term.clientHeight < 40;
+    if (atBottom) setFollowMode(true);
+    else if (state.termFollowMode) setFollowMode(false);
+  }, { passive: true });
+})();
+
+function connectClassicMobileWs() {
+  if (!state.mobileStreamingActive || !useClassicMobile() || !state.currentSession || state.currentView !== "terminal") return;
+  if (classicReconnector.isBlocked) return;
+  if (state.mobileWs && state.mobileWs.readyState <= WebSocket.OPEN) return;
+  const connectKey = terminalSessionKey();
+  const ws = new WebSocket(classicMobileWsUrl());
+  state.mobileWs = ws;
+
+  ws.onopen = async () => {
+    if (state.mobileWs !== ws) return;
+    if (!state.mobileStreamingActive || !useClassicMobile() || connectKey !== terminalSessionKey()) {
+      ws.close();
+      return;
+    }
+    if (classicReconnector.connected()) wpMetrics.reconnectCount++;
+    setConnState("live");
+    await resizePaneClassic();
+  };
+
+  ws.onmessage = (ev) => {
+    if (state.mobileWs !== ws) return;
+    wpMetrics.wsMessagesReceived++;
+    let msg = null;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg?.type === "output" && typeof msg.data === "string") {
+      setConnState("live");
+      applyTerminalPane(msg.data);
+    }
+  };
+
+  ws.onclose = (ev) => {
+    if (state.mobileWs === ws) state.mobileWs = null;
+    if (!state.mobileStreamingActive || !useClassicMobile() || connectKey !== terminalSessionKey()) return;
+    if (ev.code === 4001 || (ev.code === 1000 && ev.reason === "session ended")) {
+      setConnState("session-ended");
+      return;
+    }
+    classicReconnector.schedule(connectClassicMobileWs);
+  };
+
+  ws.onerror = () => {};
+}
+
+async function resizePaneClassic() {
+  if (!state.currentSession) return;
+  const term = document.getElementById("terminal");
+  const dims = getCharDimensions();
+  if (!dims.w || !dims.h) return;
+  const cols = Math.floor(term.clientWidth / dims.w);
+  const rows = Math.floor(term.clientHeight / dims.h);
+  if (cols > 0 && rows > 0) {
+    try {
+      await api("/resize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session: state.currentSession, cols, rows }),
+      }, state.currentMachine);
+    } catch {}
+  }
+}
+
+function startClassicPolling(resetBudget = true) {
+  state.mobileStreamingActive = true;
+  if (resetBudget) classicReconnector.reset();
+  if (classicReconnector.isBlocked && !resetBudget) {
+    setConnState("offline");
+    return;
+  }
+  classicReconnector.cancel();
+  if (!state.mobileWs || state.mobileWs.readyState === WebSocket.CLOSED) {
+    setConnState("reconnecting");
+  }
+  connectClassicMobileWs();
+}
+
+function stopClassicPolling() {
+  if (state.snapshotTimer) { clearTimeout(state.snapshotTimer); flushSnapshot(); }
+  state.mobileStreamingActive = false;
+  classicReconnector.reset();
+  classicReconnector.cancel();
+  if (state.enterRetryTimer) {
+    clearTimeout(state.enterRetryTimer);
+    state.enterRetryTimer = null;
+  }
+  if (state.mobileWs) {
+    const ws = state.mobileWs;
+    state.mobileWs = null;
+    try { ws.close(1000, "viewer changed"); } catch {}
+  }
+  const statusEl = document.getElementById("conn-status");
+  if (statusEl) {
+    statusEl.style.display = "none";
+    statusEl.style.background = "#cc3333";
+  }
+}
+
+function initClassicMobile(cached) {
+  document.body.classList.add("classic-mobile");
+  const term = document.getElementById("terminal");
+  if (cached) {
+    term.textContent = cached;
+    state.lastRawPane = cached;
+  } else {
+    term.textContent = "";
+    state.lastRawPane = "";
+  }
+  state.termFollowMode = true;
+  resizePaneClassic();
+  startClassicPolling();
+}
+
+function destroyClassicMobile() {
+  stopClassicPolling();
+  document.body.classList.remove("classic-mobile");
+  const term = document.getElementById("terminal");
+  if (term) term.textContent = "";
+}
+
+// Classic mobile search bar handlers
+(function() {
+  const searchInput = document.getElementById("search-input");
+  const searchBar = document.getElementById("search-bar");
+  const searchCount = document.getElementById("search-count");
+  if (!searchInput || !searchBar) return;
+
+  searchInput.addEventListener("input", () => {
+    state.searchTerm = searchInput.value;
+    state.searchActive = !!state.searchTerm;
+    if (state.lastRawPane) applyTerminalPane(state.lastRawPane);
+    // Count matches
+    if (state.searchTerm && searchCount) {
+      const escaped = state.searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const matches = (state.lastRawPane || "").match(new RegExp(escaped, "gi"));
+      searchCount.textContent = matches ? matches.length + " found" : "0 found";
+    } else if (searchCount) {
+      searchCount.textContent = "";
+    }
+  });
+
+  document.getElementById("search-close-btn")?.addEventListener("click", () => {
+    searchBar.classList.remove("visible");
+    state.searchActive = false;
+    state.searchTerm = "";
+    searchInput.value = "";
+    if (searchCount) searchCount.textContent = "";
+    if (state.lastRawPane) applyTerminalPane(state.lastRawPane);
+  });
+})();
+
+// classic-mobile class is applied by initClassicMobile() on session open,
+// not at boot — avoids mid-session transport mismatch if setting changes.
 
 // Unregister any stale service workers (no longer used)
 if ("serviceWorker" in navigator) {

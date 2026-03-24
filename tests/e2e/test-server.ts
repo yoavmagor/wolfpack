@@ -22,7 +22,6 @@ const fakeSessions = [
   "error-project",
 ];
 
-// Stateful pane content — updates when tmuxSend is called
 const paneContent: Record<string, string> = {
   "test-project": "$ mock-terminal-ready\n",
   "another-project": "$ idle\n",
@@ -32,13 +31,25 @@ const paneContent: Record<string, string> = {
 
 __setTestOverrides({
   tmuxList: async () => [...fakeSessions],
-  tmuxSend: async (session, text) => {
-    // Simulate command echo + output
-    paneContent[session] = (paneContent[session] || "") + `$ ${text}\ncommand-output\n`;
-  },
-  tmuxSendKey: async () => {},
   tmuxResize: async () => {},
   capturePane: async (session) => paneContent[session] || "",
+  // Stub exec so handlePtyWs doesn't call real tmux
+  exec: (async (cmd: string, args?: readonly string[]) => {
+    const a = args || [];
+    if (a[0] === "has-session") {
+      const session = String(a[2] || "");
+      if (!fakeSessions.includes(session)) throw new Error("session not found");
+      return { stdout: "", stderr: "" };
+    }
+    if (a[0] === "set-option" || a[0] === "resize-window") {
+      return { stdout: "", stderr: "" };
+    }
+    if (a[0] === "capture-pane") {
+      const session = String(a[2] || "");
+      return { stdout: paneContent[session] || "", stderr: "" };
+    }
+    return { stdout: "", stderr: "" };
+  }) as any,
 });
 
 // Suppress expected tmux noise

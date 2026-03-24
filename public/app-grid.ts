@@ -12,14 +12,16 @@ import {
 interface GridDeps {
   showView: (name: string, skipAnimation?: boolean) => void;
   openSession: (name: string, machineUrl?: string) => void;
-  destroyDesktopTerminal: () => void;
-  initDesktopTerminal: (cached?: any) => void;
+  destroyTerminal: () => void;
+  initTerminal: (cached?: any) => void;
   backToSessions: () => void;
-  startPolling: (resetBudget?: boolean) => void;
-  resizePane: () => Promise<void>;
   renderSidebar: () => void;
   createPtyTerminalController: (opts: any) => any;
   createConflictOverlay: (message: string, buttonLabel: string, onClick: (e: any) => void) => HTMLElement;
+  canUseWasmTerminal?: () => boolean;
+  saveGridCellSnapshot?: (gs: any) => void;
+  flushGridSnapshots?: () => void;
+  loadSnapshot?: (machine: string, session: string) => string | null;
 }
 
 let deps: GridDeps;
@@ -98,10 +100,8 @@ export function updateGridLayout() {
   container.style.display = "";
   // Ensure single-terminal container is hidden
   document.getElementById("desktop-terminal-container").style.display = "none";
-  // Hide mobile elements
-  document.getElementById("terminal").style.display = "none";
   document.getElementById("input-bar").style.display = "none";
-  document.getElementById("cmd-palette").style.display = "none";
+  document.getElementById("cmd-palette").classList.remove("visible");
   document.getElementById("kb-accessory").classList.remove("visible");
 }
 
@@ -128,6 +128,9 @@ function createGridCell(gs, idx) {
 
 async function mountGridController(gs, cell, idx) {
   if (gs.controller) return; // already mounted
+  const cached = deps.loadSnapshot ? deps.loadSnapshot(gs.machine || "", gs.session) : null;
+  if (cached) cell.classList.add("cached-visible");
+  let _gridCachedPending = !!cached;
   const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
   gs.controller = deps.createPtyTerminalController({
     session: gs.session,
@@ -137,16 +140,32 @@ async function mountGridController(gs, cell, idx) {
     cursorBlink: idx === state.gridFocusIndex,
     disableStdin: idx !== state.gridFocusIndex,
     resetPty: gs._resetPty,
-    skipInitialPrefill: true,
+    prefillMode: "none",
     shouldFocus: () => state.gridSessions[state.gridFocusIndex] === gs,
     shouldReconnect: () => state.gridSessions.includes(gs),
     canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && state.gridSessions[state.gridFocusIndex] === gs),
     canSendResize: () => !!(gs.controller && gs.controller.isConnected),
+    onOpen: () => {
+      // Successful WS open means we have the session — clear any stale
+      // conflict overlay. If the server sees a conflict, onViewerConflict
+      // fires AFTER onOpen and re-shows the overlay.
+      gs._displaced = false;
+      removeGridCellConflictOverlay(gs);
+    },
+    onOutput: () => {
+      if (_gridCachedPending) {
+        _gridCachedPending = false;
+        cell.classList.remove("cached-visible");
+        cell.classList.add("hydrated");
+      }
+    },
     onViewerConflict: () => {
+
       var r = WP.handleViewerConflict({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
       gs._displaced = r.newState.displaced;
       gs._autoTakeControl = r.newState.autoTakeControl;
       if (r.action === "auto-take-control") {
+
         gs.controller.sendTakeControl();
       } else {
         showGridCellConflictOverlay(gs);
@@ -174,7 +193,7 @@ async function mountGridController(gs, cell, idx) {
     },
   });
   delete gs._resetPty;
-  await gs.controller.mount(cell);
+  await gs.controller.mount(cell, { cached });
   gs._needsConnect = true;
 }
 
@@ -256,6 +275,58 @@ export function getGridCellElement(gs) {
   return document.querySelector('#desktop-grid-container .grid-cell[data-grid-index="' + idx + '"]');
 }
 
+/** Reclaim control of a single grid cell. */
+function takeControlOfCell(gs) {
+  if (!gs.controller) return;
+  if (gs.controller.isConnected) {
+    // Socket still open (viewer_conflict path) — send take_control directly
+    gs.controller.sendTakeControl();
+    // Safety net: if control_granted doesn't arrive within 3s, force-reconnect
+    if (gs._takeControlTimer) clearTimeout(gs._takeControlTimer);
+    gs._takeControlTimer = setTimeout(() => {
+      gs._takeControlTimer = null;
+      if (!gs.controller) return;
+      const cell = getGridCellElement(gs);
+      if (!cell || !cell.querySelector(".viewer-conflict-overlay")) return;
+      gs._autoTakeControl = true;
+      if (gs.controller.isConnected) {
+        gs.controller.reconnect({ takeControl: true });
+      } else {
+        gs.controller.connect({ takeControl: true });
+      }
+    }, 3000);
+  } else {
+    // Socket closed (displaced) — reconnect with takeControl flag in attach.
+    // Server sees takeControl=true and does immediate takeover, no extra
+    // viewer_conflict → take_control round trip needed.
+    // Set autoTakeControl so the viewer_conflict callback (which still fires
+    // before control_granted) doesn't flash the conflict overlay.
+    gs._autoTakeControl = true;
+    gs.controller.connect({ takeControl: true });
+  }
+}
+
+/**
+ * Take control of ALL displaced grid cells at once.
+ * UX decision: reclaiming one cell reclaims all — avoids confusing partial
+ * states where some cells are active and others show conflict overlays.
+ * If per-cell takeover is ever needed, wire a separate "Take All" action.
+ */
+function takeControlOfAllDisplacedCells() {
+  for (const gs of state.gridSessions) {
+    const cell = getGridCellElement(gs);
+    if (!cell || !cell.querySelector(".viewer-conflict-overlay")) continue;
+    takeControlOfCell(gs);
+  }
+}
+
+function removeGridCellConflictOverlay(gs) {
+  if (gs._takeControlTimer) { clearTimeout(gs._takeControlTimer); gs._takeControlTimer = null; }
+  const cell = getGridCellElement(gs);
+  if (!cell) return;
+  cell.querySelectorAll(".viewer-conflict-overlay").forEach(el => el.remove());
+}
+
 function showGridCellConflictOverlay(gs) {
   const cell = getGridCellElement(gs);
   if (!cell) return;
@@ -264,25 +335,11 @@ function showGridCellConflictOverlay(gs) {
   removeGridCellConflictOverlay(gs);
   const overlay = deps.createConflictOverlay("Active on another device", "Take Control", (e) => {
     e.stopPropagation();
-    if (!gs.controller) return;
-    var clickAction = WP.handleTakeControlClick(gs.controller.isConnected);
-    if (clickAction === "send-take-control") {
-      gs.controller.sendTakeControl();
-    } else {
-      var ns = WP.prepareAutoTakeControl({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
-      gs._displaced = ns.displaced;
-      gs._autoTakeControl = ns.autoTakeControl;
-      gs.controller.connect();
-    }
+    // Reclaim ALL displaced cells — not just this one
+    takeControlOfAllDisplacedCells();
   });
   overlay.dataset.conflictType = "conflict";
   cell.appendChild(overlay);
-}
-
-function removeGridCellConflictOverlay(gs) {
-  const cell = getGridCellElement(gs);
-  if (!cell) return;
-  cell.querySelectorAll(".viewer-conflict-overlay").forEach(el => el.remove());
 }
 
 export function hasPreservedGrid() {
@@ -306,12 +363,7 @@ export function returnToTerminalView() {
   deps.showView("terminal");
   if (restorePreservedGrid()) return true;
   if (!state.currentSession) return false;
-  if (isDesktop()) {
-    state.useDesktopTerminal = true;
-    if (!state.desktopController) deps.initDesktopTerminal();
-  } else {
-    deps.resizePane().then(() => deps.startPolling());
-  }
+  if (!state.terminalController) deps.initTerminal();
   return true;
 }
 
@@ -342,6 +394,7 @@ export function setGridFocus(idx) {
 }
 
 export function suspendGridMode() {
+  if (deps.flushGridSnapshots) deps.flushGridSnapshots();
   const preserved = WP.suspendGridState(state.gridSessions, state.gridFocusIndex);
   state.preservedGridSessions = preserved.sessions;
   state.preservedGridFocusIndex = preserved.focusIndex;
@@ -363,7 +416,7 @@ export function suspendGridMode() {
   const dtc = document.getElementById("desktop-terminal-container");
   dtc.style.display = "none";
   dtc.innerHTML = "";
-  state.desktopController = null;
+  state.terminalController = null;
   if (preserved.focusedSession) {
     setState({
       currentSession: preserved.focusedSession.session,
@@ -386,7 +439,6 @@ export function restorePreservedGrid() {
   state.gridFocusIndex = restored.focusIndex;
   clearPreservedGrid();
   state.sidebarResizeDone = false;
-  state.useDesktopTerminal = true;
   setCurrentSessionFromGridFocus(state.gridSessions, state.gridFocusIndex);
   renderGridCells();
   deps.renderSidebar();
@@ -415,7 +467,10 @@ export function backFromSettings() {
 }
 
 export function addToGrid(session, machine) {
-  if (!isDesktop()) return;
+  if (!(deps.canUseWasmTerminal ? deps.canUseWasmTerminal() : isDesktop())) {
+    console.warn("[grid] WebAssembly unavailable — cannot open grid terminal");
+    return;
+  }
   const targetMachine = machine || "";
   if (state.currentView !== "terminal" && hasPreservedGrid()) {
     const result = WP.addToGridState(
@@ -442,7 +497,7 @@ export function addToGrid(session, machine) {
   // Already in grid?
   if (state.gridSessions.some(gs => gs.session === session && (gs.machine || "") === (machine || ""))) return;
   // Track which session had a full-width PTY (needs reset on grid connect)
-  const singleTermSession = (state.desktopController?.term && state.currentSession) ? state.currentSession : null;
+  const singleTermSession = (state.terminalController?.term && state.currentSession) ? state.currentSession : null;
   const singleTermMachine = singleTermSession ? (state.currentMachine || "") : "";
   const gs = {
     session,
@@ -471,7 +526,7 @@ export function addToGrid(session, machine) {
   }
   if (isGridActive()) {
     // Destroy single-terminal mode
-    deps.destroyDesktopTerminal();
+    deps.destroyTerminal();
     state.gridFocusIndex = state.gridSessions.length - 1;
     renderGridCells();
     deps.renderSidebar();
@@ -487,6 +542,8 @@ export function removeFromGrid(idx) {
   if (idx < 0 || idx >= state.gridSessions.length) return;
   state.sidebarResizeDone = false;
   const gs = state.gridSessions[idx];
+  // Save snapshot before disposing
+  if (deps.saveGridCellSnapshot) deps.saveGridCellSnapshot(gs);
   // Remove cell DOM immediately (avoids full rebuild flash)
   if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
   // Cleanup controller
@@ -520,7 +577,7 @@ export function removeFromGrid(idx) {
 }
 
 // skipRestore: when true, preserves session identity state but does NOT call
-// initDesktopTerminal(). Pass true when navigating AWAY from terminal view so
+// initTerminal(). Pass true when navigating AWAY from terminal view so
 // the caller controls when the terminal is next initialized.
 export function exitGridMode(skipRestore?) {
   cancelGridRelayoutTransition();
@@ -550,16 +607,15 @@ export function exitGridMode(skipRestore?) {
   const dtc = document.getElementById("desktop-terminal-container");
   dtc.style.display = "none";
   dtc.innerHTML = "";
-  // Clear state.desktopController reference in case it's stale
-  state.desktopController = null;
+  // Clear state.terminalController reference in case it's stale
+  state.terminalController = null;
   // Preserve which session to restore when returning to terminal view
   if (restoreSession) {
     setState({ currentSession: restoreSession, currentMachine: restoreMachine });
   }
   // Restore single-terminal mode (skip when navigating away from terminal view)
   if (!skipRestore && restoreSession) {
-    state.useDesktopTerminal = true;
-    deps.initDesktopTerminal();
+    deps.initTerminal();
     deps.renderSidebar();
   }
 }

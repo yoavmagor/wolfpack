@@ -1605,6 +1605,7 @@ describe("POST /api/ralph/dismiss — worktree cleanup", () => {
     execFileSync("git", ["init", gitRepoDir], { stdio: "pipe" });
     execFileSync("git", ["-C", gitRepoDir, "config", "user.name", "test"], { stdio: "pipe" });
     execFileSync("git", ["-C", gitRepoDir, "config", "user.email", "test@test.com"], { stdio: "pipe" });
+    execFileSync("git", ["-C", gitRepoDir, "config", "commit.gpgsign", "false"], { stdio: "pipe" });
     execFileSync("git", ["-C", gitRepoDir, "commit", "--allow-empty", "-m", "init"], { stdio: "pipe" });
   });
 

@@ -33,8 +33,8 @@ function encodeTerminalBinary(data) {
   return buf;
 }
 // src/reconnect-hydration.ts
-function shouldRehydrate(wasReconnect, hydrationStarted, skipInitialPrefill) {
-  return wasReconnect || hydrationStarted && !skipInitialPrefill;
+function shouldRehydrate(wasReconnect, hydrationStarted, prefillDisabled) {
+  return wasReconnect || hydrationStarted && !prefillDisabled;
 }
 // src/grid-logic.ts
 var MAX_GRID_CELLS = 6;

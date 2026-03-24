@@ -48,6 +48,8 @@ export function getTerminalFontFamily() {
     : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
 }
 
+// ── Classic mobile terminal char-dimension probing ──
+
 export var _charDimCache = { key: "", w: 0, h: 0 };
 export function getCharDimensions() {
   const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
@@ -65,7 +67,7 @@ export function getCharDimensions() {
 
 // ── Settings (persisted to localStorage) ──
 
-export const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:300, debugPanel:false, ralphEnabled:false};
+export const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:900, debugPanel:false, ralphEnabled:false, mobileTerminal:"classic"};
 export const wpSettings = Object.assign({}, wpDefaults, loadStoredJson("wp-effects", {}));
 
 export const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
@@ -73,8 +75,6 @@ export const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fo
 export function toggleSetting(key, val) {
   wpSettings[key] = val;
   localStorage.setItem("wp-effects", JSON.stringify(wpSettings));
-  // Invalidate cached char dimensions on font changes
-  if (key === "termFontSize" || key === "termFont") _charDimCache = { key: "", w: 0, h: 0 };
   applySetting(key, val);
 }
 
@@ -85,6 +85,7 @@ export function applySetting(key, val) {
     const el = document.getElementById("msg-input");
     if (el) el.placeholder = val ? "$ (Enter to send)" : "$ (⚡ to send)";
   }
+  if (key === "termFontSize" || key === "termFont") _charDimCache = { key: "", w: 0, h: 0 };
   if (key === "termFontSize") {
     document.body.classList.remove("term-size-small", "term-size-medium", "term-size-large");
     document.body.classList.add("term-size-" + val);
@@ -107,11 +108,11 @@ export function applySetting(key, val) {
 export function applyTermToXterm() {
   const p = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
   const fontFamily = getTerminalFontFamily();
-  if (state.desktopController?.term) {
-    state.desktopController.term.options.fontSize = p.fontSize;
-    state.desktopController.term.options.lineHeight = p.lineHeight;
-    state.desktopController.term.options.fontFamily = fontFamily;
-    state.desktopController.resize();
+  if (state.terminalController?.term) {
+    state.terminalController.term.options.fontSize = p.fontSize;
+    state.terminalController.term.options.lineHeight = p.lineHeight;
+    state.terminalController.term.options.fontFamily = fontFamily;
+    state.terminalController.resize();
   }
   for (const gs of state.gridSessions) {
     if (!gs.controller?.term) continue;
@@ -132,6 +133,10 @@ export function initSettings() {
   });
   const ttlLabel = document.getElementById("snapshot-ttl-val");
   if (ttlLabel) ttlLabel.textContent = formatSnapshotTtl(wpSettings.snapshotTtl);
+  // Set active state on mobile terminal mode buttons
+  document.querySelectorAll(".term-mobile-btn").forEach(b =>
+    b.classList.toggle("active", (b as any).dataset.mode === wpSettings.mobileTerminal)
+  );
 }
 
 export function haptic(pattern) {
@@ -215,10 +220,12 @@ export const state = {
   currentRalphWorktreeBranch: "",
   currentRalphAgent: "",
   // desktop/grid terminal state
-  desktopController: null,
-  useDesktopTerminal: false,
+  terminalController: null,
   desktopResizeHandler: null,
   desktopResizeTimer: null,
+  _touchCleanup: null,
+  visualViewportHandler: null,
+  kbResizeTimer: null,
   gridSessions: [],
   gridFocusIndex: 0,
   preservedGridSessions: [],
@@ -232,10 +239,7 @@ export const state = {
   sidebarTransitionIsHover: false,
   sidebarResizeDone: false,
   sessionsExpanded: true,
-  // mobile/connection state
-  mobileWs: null,
-  mobileStreamingActive: false,
-  termFollowMode: true,
+  // connection state
   sessionRefreshTimer: null,
   // UI interaction state
   snapshotTimer: null,
@@ -247,11 +251,15 @@ export const state = {
   drawerOpen: false,
   notificationsEnabled: ("Notification" in window && Notification.permission === "granted"),
   kbAccessoryOpen: false,
+  _cachedFallbackTimer: null,
+  _ghostInputObserver: null,
+  // classic mobile terminal state
+  mobileWs: null,
+  mobileStreamingActive: false,
+  termFollowMode: true,
+  lastRawPane: "",
   searchActive: false,
   searchTerm: "",
-  searchMatches: [],
-  searchIndex: -1,
-  lastRawPane: null,
 };
 
 export function setState(patch) { Object.assign(state, patch); }
@@ -259,7 +267,7 @@ export function setState(patch) { Object.assign(state, patch); }
 // ── Constants ──
 
 export const SNAPSHOT_KEY_PREFIX = "wp-snap|";
-export const SNAPSHOT_MAX_BYTES = 8192;
+export const SNAPSHOT_MAX_BYTES = 16384;
 export const SNAPSHOT_SAVE_INTERVAL = 2000;
 export const DESKTOP_TERMINAL_SCROLLBACK = 2000;
 export const GRID_TERMINAL_SCROLLBACK = 1000;

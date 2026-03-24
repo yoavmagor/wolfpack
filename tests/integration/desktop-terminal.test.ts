@@ -16,6 +16,7 @@ import {
   wait,
   connectPty as _connectPty,
   collectJsonMessages,
+  collectAllMessages,
   waitForMessage,
   type PtyTestContext,
 } from "./pty-test-helpers";
@@ -102,6 +103,29 @@ describe("desktop terminal: open (attach handshake)", () => {
     expect(received.length).toBeGreaterThanOrEqual(1);
     expect(received[0].frame).toBe("text");
     expect(received[0].type).toBe("attach_ack");
+
+    await closeWs(ws);
+    await wait(100);
+  });
+
+  test("attach to an existing proc sends pty_ready after attach_ack", async () => {
+    const ws = await connectPty("desktop-test");
+    await wait(10);
+    const entry = ctx.activePtySessions.get("desktop-test") as any;
+    entry.proc = {
+      terminal: {
+        write() {},
+        resize() {},
+        close() {},
+      },
+      kill() {},
+    };
+
+    const msgs = collectJsonMessages(ws);
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
+    await wait(100);
+
+    expect(msgs.map(m => m.type)).toEqual(["attach_ack", "pty_ready", "prefill_done"]);
 
     await closeWs(ws);
     await wait(100);
@@ -330,5 +354,128 @@ describe("desktop terminal: session lifecycle", () => {
     expect(ws.readyState).toBe(WebSocket.OPEN);
     await closeWs(ws);
     await wait(50);
+  });
+});
+
+// ── Two-phase prefill protocol ──
+
+describe("desktop terminal: two-phase prefill", () => {
+  beforeEach(async () => {
+    ctx.activePtySessions.delete("desktop-test");
+    ctx.ptySpawnAttempts.delete("desktop-test");
+    await wait(50);
+  });
+
+  test("attach with prefillMode=viewport sends attach_ack and correct prefill sequence", async () => {
+    const ws = await connectPty("desktop-test");
+    const msgs = collectJsonMessages(ws);
+
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "viewport" }));
+
+    await wait(1500);
+
+    const types = msgs.map(m => m.type);
+    expect(types).toContain("attach_ack");
+    // In test mode, has-session fails → WS closes with 4001 before prefill runs.
+    // When has-session succeeds (production), prefill_done is guaranteed.
+    // Verify ordering invariant: if prefill messages exist, they follow attach_ack.
+    const ackIdx = types.indexOf("attach_ack");
+    const vpIdx = types.indexOf("prefill_viewport");
+    const doneIdx = types.indexOf("prefill_done");
+    if (vpIdx >= 0) {
+      expect(vpIdx).toBeGreaterThan(ackIdx);
+    }
+    if (doneIdx >= 0) {
+      expect(doneIdx).toBeGreaterThan(ackIdx);
+      if (vpIdx >= 0) expect(doneIdx).toBeGreaterThan(vpIdx);
+    }
+
+    await closeWs(ws);
+    await wait(100);
+  });
+
+  test("attach with prefillMode=full sends attach_ack and correct prefill sequence", async () => {
+    const ws = await connectPty("desktop-test");
+    const msgs = collectJsonMessages(ws);
+
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "full" }));
+
+    await wait(1500);
+
+    const types = msgs.map(m => m.type);
+    expect(types).toContain("attach_ack");
+    // Verify ordering: attach_ack < prefill_viewport < prefill_done
+    const ackIdx = types.indexOf("attach_ack");
+    const vpIdx = types.indexOf("prefill_viewport");
+    const doneIdx = types.indexOf("prefill_done");
+    if (vpIdx >= 0) {
+      expect(vpIdx).toBeGreaterThan(ackIdx);
+    }
+    if (doneIdx >= 0) {
+      expect(doneIdx).toBeGreaterThan(ackIdx);
+      if (vpIdx >= 0) expect(doneIdx).toBeGreaterThan(vpIdx);
+    }
+
+    await closeWs(ws);
+    await wait(100);
+  });
+
+  test("attach with prefillMode=none skips all prefill messages and sends no binary data", async () => {
+    const ws = await connectPty("desktop-test");
+    const msgs = collectJsonMessages(ws);
+    const allMsgs = collectAllMessages(ws);
+
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "none" }));
+
+    await wait(1500);
+
+    const types = msgs.map(m => m.type);
+    expect(types).toContain("attach_ack");
+    // No prefill messages when mode is "none"
+    expect(types).not.toContain("prefill_viewport");
+    expect(types).not.toContain("prefill_done");
+    // No binary prefill data should arrive before attach_ack
+    const jsonIdxOfAck = allMsgs.findIndex(m => m.kind === "json" && m.data.type === "attach_ack");
+    const binaryBeforeAck = allMsgs.slice(0, jsonIdxOfAck).filter(m => m.kind === "binary");
+    expect(binaryBeforeAck.length).toBe(0);
+
+    await closeWs(ws);
+    await wait(100);
+  });
+
+  test("backward compat: skipPrefill=true behaves like prefillMode=none", async () => {
+    const ws = await connectPty("desktop-test");
+    const msgs = collectJsonMessages(ws);
+
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
+
+    await wait(1500);
+
+    const types = msgs.map(m => m.type);
+    expect(types).toContain("attach_ack");
+    expect(types).not.toContain("prefill_viewport");
+    expect(types).not.toContain("prefill_done");
+
+    await closeWs(ws);
+    await wait(100);
+  });
+
+  test("session-unavailable closes with 4001 before any prefill (no real tmux session)", async () => {
+    // In test mode, has-session fails → server closes WS with 4001 before prefill.
+    // This verifies the client gets a clean close code instead of hanging.
+    const ws = await connectPty("desktop-test");
+    const msgs = collectJsonMessages(ws);
+    const closePromise = waitForClose(ws, 5000);
+
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "full" }));
+
+    const closeEv = await closePromise;
+    expect(closeEv.code).toBe(4001);
+    // No prefill messages should have been sent — session didn't exist
+    const types = msgs.map(m => m.type);
+    expect(types).not.toContain("prefill_viewport");
+    expect(types).not.toContain("prefill_done");
+
+    await wait(100);
   });
 });

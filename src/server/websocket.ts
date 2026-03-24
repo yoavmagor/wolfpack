@@ -1,5 +1,5 @@
 /**
- * WebSocket handlers — terminal (capture-pane polling) and PTY (ghostty-web direct).
+ * WebSocket handlers — PTY (ghostty-web WASM) + classic terminal (text polling).
  */
 import type { WebSocket } from "ws";
 import {
@@ -11,12 +11,12 @@ import {
   TMUX,
   DESKTOP_PREFILL_HISTORY_LINES,
   exec,
+  capturePane,
   tmuxSend,
   tmuxSendKey,
   tmuxResize,
-  capturePane,
 } from "./tmux.js";
-import { isAllowedSession, createRateLimiter } from "./http.js";
+import { createRateLimiter, isAllowedSession } from "./http.js";
 import { createLogger, errMsg } from "../log.js";
 
 const log = createLogger("ws");
@@ -38,13 +38,13 @@ const PREFILL_CHUNK_SIZE = 32 * 1024;
 const PREFILL_CHUNK_DELAY_MS = 8;
 const PREFILL_OVERLAP_LIMIT = 32 * 1024;
 const POLL_INTERVAL_MS = 50;
+const POST_INPUT_DELAY_MS = 50;
+const MAX_WS_MESSAGE_BYTES = 4096;
 const PING_INTERVAL_MS = 25_000;
 const RATE_LIMIT_PER_SEC = 60;
-const MAX_WS_MESSAGE_BYTES = 65_536;
 const MAX_PTY_BINARY_BYTES = 16_384;
 const RESIZE_DEBOUNCE_MS = 80;
 const RAPID_EXIT_THRESHOLD_MS = 3_000;
-const POST_INPUT_DELAY_MS = 15;
 const POST_SPAWN_RESIZE_DELAY_MS = 100;
 
 function bufferStartsWithPrefillSuffix(prefillTail: Buffer, attachPrefix: Buffer, overlap: number): boolean {
@@ -80,15 +80,28 @@ export function __stripInitialPtyOverlap(
   return { awaitingMore: false, data: attachPrefix };
 }
 
-/** Send prefill buffer in 32KB chunks with short delays to avoid stalling mobile connections. */
+function sendPrefillDone(entry: { viewer: WebSocket | null; alive: boolean }): boolean {
+  if (!entry.alive || !entry.viewer || entry.viewer.readyState !== 1) return false;
+  entry.viewer.send(JSON.stringify({ type: "prefill_done" }));
+  return true;
+}
+
+function sendPtyReady(entry: { viewer: WebSocket | null; alive: boolean }): boolean {
+  if (!entry.alive || !entry.viewer || entry.viewer.readyState !== 1) return false;
+  entry.viewer.send(JSON.stringify({ type: "pty_ready" }));
+  return true;
+}
+
+/** Send prefill buffer in 32KB chunks with short delays to avoid stalling mobile connections.
+ *  Sends `prefill_done` message at the end so the client exits buffering state. */
 async function sendPrefillChunked(
   entry: { viewer: WebSocket | null; alive: boolean },
   prefill: Buffer,
   session: string,
-): Promise<void> {
+): Promise<boolean> {
   let offset = 0;
   while (offset < prefill.length) {
-    if (!entry.alive || !entry.viewer || entry.viewer.readyState !== 1) return;
+    if (!entry.alive || !entry.viewer || entry.viewer.readyState !== 1) return false;
     const end = Math.min(offset + PREFILL_CHUNK_SIZE, prefill.length);
     entry.viewer.send(prefill.subarray(offset, end));
     offset = end;
@@ -96,9 +109,7 @@ async function sendPrefillChunked(
       await new Promise(resolve => setTimeout(resolve, PREFILL_CHUNK_DELAY_MS));
     }
   }
-  if (entry.alive && entry.viewer && entry.viewer.readyState === 1) {
-    entry.viewer.send(JSON.stringify({ type: "prefill_done" }));
-  }
+  return sendPrefillDone(entry);
 }
 
 /** Test hook: expose PTY internal state for assertions */
@@ -112,7 +123,7 @@ export function __getTestState(): {
   return { activePtySessions, ptySpawnAttempts, sendPrefillChunked, PREFILL_CHUNK_SIZE };
 }
 
-// ── Terminal WS handler (mobile — capture-pane polling) ──
+// ── Classic terminal WS handler (text polling for mobile) ──
 
 export function handleTerminalWs(ws: WebSocket, session: string): void {
   let prev = "";
@@ -213,7 +224,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
   });
 }
 
-// ── PTY WS handler (desktop — ghostty-web direct) ──
+// ── PTY WS handler (ghostty-web WASM direct) ──
 
 export function teardownPty(session: string): void {
   const entry = activePtySessions.get(session);
@@ -247,6 +258,32 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
 
   if (maybeExisting && maybeExisting.alive) {
     const existing = maybeExisting; // const binding for closure narrowing
+
+    // ── Fast path: immediate takeover ──
+    // When a reconnecting client already knows it wants control (e.g. grid
+    // cell reclaiming after displacement), it sets takeControl=true in the
+    // attach. We skip the viewer_conflict → take_control handshake entirely.
+    function performImmediateTakeover(dims: { cols: number; rows: number; prefillMode?: string } | null) {
+      const oldViewer = existing.viewer;
+      existing.viewer = null;
+      if (oldViewer) {
+        try { oldViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`takeover: oldViewer close failed`, { session, error: errMsg(e) }); }
+      }
+      const oldProc = existing.proc;
+      existing.alive = false;
+      activePtySessions.delete(session);
+      if (oldProc) {
+        try { oldProc.terminal!.close(); } catch (e: unknown) { log.debug(`takeover: terminal close failed`, { session, error: errMsg(e) }); }
+        try { oldProc.kill(); } catch (e: unknown) { log.debug(`takeover: proc kill failed`, { session, error: errMsg(e) }); }
+      }
+      if (existing.pendingViewer) {
+        try { existing.pendingViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`displaced pendingViewer close failed`, { session, error: errMsg(e) }); }
+        existing.pendingViewer = null;
+      }
+      setupNewPtyEntry(ws, session, dims);
+      try { ws.send(JSON.stringify({ type: "control_granted" })); } catch (e: unknown) { log.warn("control_granted send failed", { session, error: errMsg(e) }); }
+    }
+
     // Session occupied — send conflict, hold connection open as pending
     ws.send(JSON.stringify({ type: "viewer_conflict" }));
 
@@ -261,38 +298,45 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
       else clearInterval(pingTimer);
     }, PING_INTERVAL_MS);
 
+    // Capture the initial attach dimensions so we can spawn the PTY
+    // immediately on take_control without waiting for a second attach.
+    let pendingAttachDims: { cols: number; rows: number; prefillMode?: string } | null = null;
+
+    function cleanupPending() {
+      clearInterval(pingTimer);
+      if (existing.pendingViewer && existing.pendingViewer !== ws) {
+        try { existing.pendingViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`cleanupPending: displaced other pending`, { session, error: errMsg(e) }); }
+      }
+      ws.removeListener("message", pendingMessage);
+      ws.removeListener("close", cleanup);
+      ws.removeListener("error", cleanup);
+      existing.pendingViewer = null;
+    }
+
     function pendingMessage(raw: Buffer | string) {
       try {
         const str = String(raw);
         const msg = JSON.parse(str);
+        if (msg.type === "attach" && typeof msg.cols === "number" && typeof msg.rows === "number") {
+          const pm = typeof msg.prefillMode === "string" ? msg.prefillMode : undefined;
+          pendingAttachDims = { cols: msg.cols, rows: msg.rows, prefillMode: pm };
+          // Immediate takeover: client already knows it wants control
+          if (msg.takeControl) {
+            cleanupPending();
+            performImmediateTakeover(pendingAttachDims);
+            return;
+          }
+          // Ack so client doesn't hit the fallback timer
+          try { ws.send(JSON.stringify({ type: "attach_ack" })); } catch (e: unknown) { log.debug(`pending attach_ack send failed`, { session, error: errMsg(e) }); }
+          return;
+        }
         if (msg.type === "take_control") {
-          // Null out viewer BEFORE closing — prevents old detach handler
-          // from calling teardownPty() which would destroy the NEW entry
-          const oldViewer = existing.viewer;
-          existing.viewer = null;
-          if (oldViewer) {
-            try { oldViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`takeover: oldViewer close failed`, { session, error: errMsg(e) }); }
+          if (!pendingAttachDims) {
+            log.warn("take_control without prior attach — ignoring", { session });
+            return;
           }
-          // Tear down old PTY proc (no tmux session to clean up anymore)
-          const oldProc = existing.proc;
-          existing.alive = false;
-          activePtySessions.delete(session);
-          if (oldProc) {
-            try { oldProc.terminal!.close(); } catch (e: unknown) { log.debug(`takeover: terminal close failed`, { session, error: errMsg(e) }); }
-            try { oldProc.kill(); } catch (e: unknown) { log.debug(`takeover: proc kill failed`, { session, error: errMsg(e) }); }
-          }
-
-          // Remove pending handlers before promoting — prevents duplicate handlers
-          clearInterval(pingTimer);
-          ws.removeListener("message", pendingMessage);
-          ws.removeListener("close", cleanup);
-          ws.removeListener("error", cleanup);
-          existing.pendingViewer = null;
-
-          // Promote this viewer — spawn fresh PTY on first resize
-          setupNewPtyEntry(ws, session);
-          // Tell client takeover succeeded so it re-sends resize
-          try { ws.send(JSON.stringify({ type: "control_granted" })); } catch (e: unknown) { log.warn("control_granted send failed", { session, error: errMsg(e) }); }
+          cleanupPending();
+          performImmediateTakeover(pendingAttachDims);
         }
       } catch (e: unknown) {
         if (!(e instanceof SyntaxError)) log.warn("pendingMessage handler failed", { session, error: errMsg(e) });
@@ -318,7 +362,11 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
   setupNewPtyEntry(ws, session);
 }
 
-function setupNewPtyEntry(ws: WebSocket, session: string): void {
+function setupNewPtyEntry(
+  ws: WebSocket,
+  session: string,
+  initialDims?: { cols: number; rows: number; prefillMode?: string } | null,
+): void {
   const entry = {
     viewer: ws as WebSocket | null,
     pendingViewer: null as WebSocket | null,
@@ -328,22 +376,25 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
   activePtySessions.set(session, entry as any);
   let spawning = false;
   let latestRequestedSize: { cols: number; rows: number } | null = null;
-  let pendingSkipPrefill = false;
+  const VALID_PREFILL_MODES = ["full", "viewport", "none"] as const;
+  type PrefillMode = typeof VALID_PREFILL_MODES[number];
+  let pendingPrefillMode: PrefillMode = "full";
 
   async function spawnPty(
     cols: number,
     rows: number,
-    options?: { skipPrefill?: boolean },
+    options?: { prefillMode?: PrefillMode; skipPrefill?: boolean },
   ) {
-    if (options?.skipPrefill === true) pendingSkipPrefill = true;
+    if (options?.prefillMode) pendingPrefillMode = options.prefillMode;
+    else if (options?.skipPrefill === true) pendingPrefillMode = "none";
     latestRequestedSize = { cols, rows };
     if (entry.proc || spawning) return;
     spawning = true;
     if (process.env.WOLFPACK_TEST) {
       ptySpawnAttempts.set(session, (ptySpawnAttempts.get(session) || 0) + 1);
     }
-    const skipPrefill = pendingSkipPrefill;
-    pendingSkipPrefill = false;
+    const prefillMode = pendingPrefillMode;
+    pendingPrefillMode = "full";
     let prefill = Buffer.alloc(0);
     let pendingAttach = Buffer.alloc(0);
     let shouldDedupeInitialAttach = false;
@@ -368,34 +419,63 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
 
       if (!entry.alive || activePtySessions.get(session) !== entry || entry.viewer !== ws) return;
 
-      // Pre-fill viewer with tmux scrollback so terminal has content to scroll through.
-      // The attach path can replay part of the visible pane, so strip any overlap from
-      // the first PTY bytes only after the prefill has been delivered successfully.
-      if (!skipPrefill) {
+      // Two-phase prefill:
+      // Phase 1 (viewport): Send visible pane content for instant display.
+      // Phase 2 (full only): Send full scrollback history.
+      if (prefillMode !== "none") {
+        // Phase 1: Viewport-only capture (no -S flag = visible pane only)
         try {
-          const { stdout } = await exec(TMUX, [
-            "capture-pane", "-t", session, "-p", "-e", "-S", `-${DESKTOP_PREFILL_HISTORY_LINES}`,
+          const { stdout: viewportStdout } = await exec(TMUX, [
+            "capture-pane", "-t", session, "-p", "-e",
           ], { timeout: 3000 });
-          if (stdout && entry.viewer && entry.viewer.readyState === 1) {
-            const rawPrefill = Buffer.from(stdout);
-            if (rawPrefill.length > DESKTOP_PREFILL_MAX_BYTES) {
-              // Keep only the most recent chunk to avoid long first-frame paint stalls.
-              let start = rawPrefill.length - DESKTOP_PREFILL_MAX_BYTES;
-              while (start < rawPrefill.length && rawPrefill[start] !== 0x0a) start++;
-              if (start < rawPrefill.length) start++;
-              prefill = rawPrefill.subarray(start);
-            } else {
-              prefill = rawPrefill;
-            }
-            try {
-              await sendPrefillChunked(entry, prefill, session);
-              shouldDedupeInitialAttach = true;
-            } catch (e: unknown) {
-              log.error("PTY prefill send failed", { session, error: errMsg(e) });
-            }
+          if (viewportStdout && entry.viewer && entry.viewer.readyState === 1) {
+            const viewportBuf = Buffer.from(viewportStdout);
+            entry.viewer.send(viewportBuf);
+            entry.viewer.send(JSON.stringify({ type: "prefill_viewport" }));
+            prefill = viewportBuf;
+            shouldDedupeInitialAttach = true;
           }
         } catch (e: unknown) {
-          log.warn("PTY prefill capture failed", { session, error: errMsg(e) });
+          log.warn("PTY viewport prefill capture failed", { session, error: errMsg(e) });
+        }
+
+        // Phase 2: Full scrollback (only if prefillMode === "full")
+        if (prefillMode === "full" && entry.alive && entry.viewer && entry.viewer.readyState === 1) {
+          let phase2Completed = false;
+          try {
+            const { stdout } = await exec(TMUX, [
+              "capture-pane", "-t", session, "-p", "-e", "-S", `-${DESKTOP_PREFILL_HISTORY_LINES}`,
+            ], { timeout: 3000 });
+            if (stdout && entry.viewer && entry.viewer.readyState === 1) {
+              const rawPrefill = Buffer.from(stdout);
+              let fullPrefill: Buffer;
+              if (rawPrefill.length > DESKTOP_PREFILL_MAX_BYTES) {
+                let start = rawPrefill.length - DESKTOP_PREFILL_MAX_BYTES;
+                while (start < rawPrefill.length && rawPrefill[start] !== 0x0a) start++;
+                if (start < rawPrefill.length) start++;
+                fullPrefill = rawPrefill.subarray(start);
+              } else {
+                fullPrefill = rawPrefill;
+              }
+              try {
+                phase2Completed = await sendPrefillChunked(entry, fullPrefill, session);
+                // Only update dedup reference when the full scrollback was actually
+                // sent — partial sends leave the client with viewport-only data, so
+                // dedup must match what was actually delivered. See PR #89 review.
+                if (phase2Completed) prefill = fullPrefill;
+              } catch (e: unknown) {
+                log.error("PTY scrollback prefill send failed", { session, error: errMsg(e) });
+              }
+            }
+          } catch (e: unknown) {
+            log.warn("PTY scrollback prefill capture failed", { session, error: errMsg(e) });
+          }
+          if (!phase2Completed) sendPrefillDone(entry);
+        } else if (prefillMode !== "full") {
+          // Viewport-only: send prefill_done so client exits buffering state
+          if (!sendPrefillDone(entry)) {
+            log.debug("PTY viewport-only prefill_done not sent (WS closed)", { session });
+          }
         }
       }
 
@@ -444,6 +524,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
         }
       });
       activePtySessions.set(session, entry as any);
+      sendPtyReady(entry);
       setTimeout(async () => {
         if (!entry.alive || !entry.proc) return;
         const latestSize = latestRequestedSize || initialSize;
@@ -469,6 +550,7 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
     if (!rl.allow()) return;
     try {
       if (!isBinary) {
+        if (raw.length > MAX_WS_MESSAGE_BYTES) return; // reject oversized JSON frames
         const msg = JSON.parse(String(raw));
         if (
           msg.type === "attach" &&
@@ -479,12 +561,26 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
           // It spawns the PTY without forcing an extra tmux resize if dims are unchanged.
           latestRequestedSize = { cols: clampCols(msg.cols), rows: clampRows(msg.rows) };
           if (!entry.proc) {
+            // Parse prefillMode with backward compat for skipPrefill boolean
+            let prefillMode: PrefillMode = "full";
+            if (typeof msg.prefillMode === "string" && VALID_PREFILL_MODES.includes(msg.prefillMode)) {
+              prefillMode = msg.prefillMode as PrefillMode;
+            } else if (msg.skipPrefill === true) {
+              prefillMode = "none";
+            }
             spawnPty(latestRequestedSize.cols, latestRequestedSize.rows, {
-              skipPrefill: msg.skipPrefill === true,
+              prefillMode,
             });
           }
           if (entry.viewer && entry.viewer.readyState === 1) {
             try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch (e: unknown) { log.debug(`attach_ack send failed`, { session, error: errMsg(e) }); }
+            if (entry.proc) {
+              sendPtyReady(entry);
+              // Client expects prefill_done after every attach — without it,
+              // binary output is buffered indefinitely. Send it immediately
+              // since we're not doing a fresh capture for an existing proc.
+              sendPrefillDone(entry);
+            }
           }
         } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           const cols = clampCols(msg.cols);
@@ -532,4 +628,18 @@ function setupNewPtyEntry(ws: WebSocket, session: string): void {
   }
   ws.on("close", detach);
   ws.on("error", detach);
+
+  // If initial dims were captured (e.g. from a pending viewer's attach before
+  // take_control), spawn PTY immediately — saves a full round trip.
+  if (initialDims && typeof initialDims.cols === "number" && typeof initialDims.rows === "number") {
+    let prefillMode: PrefillMode = "full";
+    if (typeof initialDims.prefillMode === "string" && VALID_PREFILL_MODES.includes(initialDims.prefillMode as PrefillMode)) {
+      prefillMode = initialDims.prefillMode as PrefillMode;
+    }
+    latestRequestedSize = { cols: clampCols(initialDims.cols), rows: clampRows(initialDims.rows) };
+    spawnPty(latestRequestedSize.cols, latestRequestedSize.rows, { prefillMode });
+    if (entry.viewer && entry.viewer.readyState === 1) {
+      try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch (e: unknown) { log.debug(`immediate attach_ack send failed`, { session, error: errMsg(e) }); }
+    }
+  }
 }

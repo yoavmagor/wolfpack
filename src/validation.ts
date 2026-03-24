@@ -3,7 +3,7 @@
  * Extracted from serve.ts and cli.ts for testability — zero side effects.
  */
 
-// ── Key allowlist for WS terminal handler ──
+// ── Classic terminal WS allowed keys ──
 
 export const WS_ALLOWED_KEYS = new Set([
   "Enter", "Tab", "Escape", "Up", "Down", "Left", "Right",

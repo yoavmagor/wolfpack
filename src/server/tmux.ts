@@ -11,7 +11,10 @@ import { createLogger, errMsg } from "../log.js";
 
 const log = createLogger("tmux");
 
-const exec = promisify(execFile);
+const _realExec = promisify(execFile);
+let _execOverride: typeof _realExec | null = null;
+const exec: typeof _realExec = (...args: Parameters<typeof _realExec>) =>
+  (_execOverride || _realExec)(...args);
 
 export const TMUX = "tmux";
 export const MOBILE_CAPTURE_HISTORY_LINES = 2000;
@@ -132,21 +135,23 @@ let _tmuxListFn: () => Promise<string[]> = _realTmuxList;
 /** Test hook: override tmux functions to avoid requiring real tmux */
 export function __setTestOverrides(overrides: Partial<{
   tmuxList: () => Promise<string[]>;
-  tmuxSend: (session: string, text: string, noEnter?: boolean) => Promise<void>;
-  tmuxSendKey: (session: string, key: string) => Promise<void>;
   tmuxResize: (session: string, cols: number, rows: number) => Promise<void>;
   capturePane: (session: string) => Promise<string>;
+  tmuxSend: (session: string, text: string, noEnter?: boolean) => Promise<void>;
+  tmuxSendKey: (session: string, key: string) => Promise<void>;
   listSessionsRaw: () => Promise<string>;
   showEnvironment: (session: string) => Promise<string>;
+  exec: typeof _realExec;
 }>): void {
   assertTestMode("__setTestOverrides");
   if (overrides.tmuxList) _tmuxListFn = overrides.tmuxList;
-  if (overrides.tmuxSend) _tmuxSendFn = overrides.tmuxSend;
-  if (overrides.tmuxSendKey) _tmuxSendKeyFn = overrides.tmuxSendKey;
   if (overrides.tmuxResize) _tmuxResizeFn = overrides.tmuxResize;
   if (overrides.capturePane) _capturePane = overrides.capturePane;
+  if (overrides.tmuxSend) _tmuxSendFn = overrides.tmuxSend;
+  if (overrides.tmuxSendKey) _tmuxSendKeyFn = overrides.tmuxSendKey;
   if (overrides.listSessionsRaw) _listSessionsRaw = overrides.listSessionsRaw;
   if (overrides.showEnvironment) _showEnvironment = overrides.showEnvironment;
+  if (overrides.exec) _execOverride = overrides.exec;
 }
 
 /** Test hook: clear backfill cache for isolation between tests */
@@ -165,7 +170,7 @@ export async function tmuxList(): Promise<string[]> {
   return _tmuxListFn();
 }
 
-// ── tmuxSend / tmuxSendKey ──
+// ── tmuxSend / tmuxSendKey (classic mobile terminal) ──
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const SEND_ENTER_DELAY_MS = 50;

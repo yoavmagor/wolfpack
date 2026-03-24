@@ -1,7 +1,7 @@
 /**
  * Session switch — open drawer, switch between sessions, verify terminal updates.
  *
- * Uses mobile viewport which routes through /ws/terminal capture-pane polling.
+ * Uses mobile viewport which routes through /ws/pty unified terminal path.
  */
 import { test, expect } from "@playwright/test";
 import { startTestServer, type TestServer } from "./helpers.ts";
@@ -17,7 +17,7 @@ test.afterAll(async () => {
 });
 
 test("open session drawer from terminal view", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === "desktop", "mobile-only /ws/terminal flow");
+  test.skip(testInfo.project.name === "desktop", "mobile-only viewport tests");
   await page.goto(srv.baseUrl);
   await page.waitForSelector(".card", { timeout: 5000 });
 

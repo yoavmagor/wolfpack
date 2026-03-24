@@ -35,8 +35,6 @@
              :+**++++++*++*+=-:: .. ...... ..   .:..::
 ```
 
-I got tired of SSHing into 4 machines to check if Claude was stuck on a permission prompt. I wanted one screen — on my phone, on my laptop, wherever — that showed me every running agent across every box, and let me actually interact with them. So I built wolfpack.
-
 Mobile & desktop command center for AI coding agents. Control tmux-based sessions (Claude, Codex, Gemini, or any custom command) across multiple machines from your phone or browser. Secured by [Tailscale](https://tailscale.com/) — zero-config encrypted access, no ports to open.
 
 Install on your phone's home screen for a native app experience — scan the QR code after setup and tap **"Add to Home Screen"**.
@@ -52,8 +50,14 @@ Install on your phone's home screen for a native app experience — scan the QR 
 ### Mobile
 
 <p align="center">
-  <img src="docs/mobile-sessions.png" width="300" alt="Mobile — session list with multi-machine support" />
-  <img src="docs/mobile-terminal.png" width="300" alt="Mobile — live terminal view" />
+  <img src="docs/mobile-sessions.png" width="250" alt="Mobile — session list with multi-machine support" />
+</p>
+<p align="center">
+  <kbd>Classic</kbd>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<kbd>Ghostty (WASM)</kbd>
+</p>
+<p align="center">
+  <img src="docs/mobile-terminal.png" width="300" alt="Mobile — classic terminal mode" />
+  <img src="docs/mobile-ghostty.png" width="300" alt="Mobile — ghostty WASM terminal mode" />
 </p>
 
 ## Architecture
@@ -156,10 +160,15 @@ On first run, `wolfpack` walks you through:
   - `Cmd/Ctrl + K` — clear terminal
 
 ### Mobile
-- **Capture-pane polling** — real-time terminal view optimized for mobile
-- **Swipe gestures** — swipe between sessions and views
-- **Haptic feedback** — vibration on key actions
+- **Two terminal modes** — choose in Settings:
+  - **Classic** (default) — lightweight capture-pane polling. No WASM, works on all devices. Best for quick monitoring and input.
+  - **Ghostty (WASM)** — full terminal emulator via [ghostty-web](https://github.com/ghostty-org/ghostty). Richer output (colors, cursor, scrollback) but heavier on battery. Keyboard is suppressed by default — tap the keyboard button to open it.
+- **Keyboard accessory** — quick-action bar with Enter, Esc, arrow keys, Ctrl combos, and git status
+- **Touch scrolling** — momentum physics, long-press to select text and copy
+- **Haptic feedback** — vibration on key actions (toggleable)
 - **PWA** — install as a standalone app on your phone's home screen
+
+All settings (terminal mode, font size, haptics, etc.) persist in localStorage across sessions.
 
 ### Multi-Machine
 - One phone connects to multiple Wolfpack servers
