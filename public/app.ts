@@ -598,6 +598,7 @@ function createPtySocketClient(opts) {
     ws = sock;
 
     sock.onopen = () => {
+      console.log("[pty-ws]", opts.session, "ws.onopen, readyState=", sock.readyState);
       const wasReconnect = hasConnected;
       hasConnected = true;
       _rc.connected();
@@ -938,6 +939,7 @@ function createPtyTerminalController(opts) {
       fitTerminal: fitTerminalPreserveScroll,
       shouldReconnect: opts.shouldReconnect,
       onOpen: (wasReconnect) => {
+        console.log("[pty-ctrl]", opts.session, "onOpen, isCurrent=", isCurrent(), "wasReconnect=", wasReconnect);
         if (!isCurrent()) return;
         // On reconnect, clear stale content and restart hydration —
         // server sends fresh prefill scrollback on the new connection.
@@ -2027,6 +2029,10 @@ async function initTerminal(cached) {
     shouldReconnect: () => !!state.terminalController?.term,
     onOpen: (wasReconnect) => {
       if (wasReconnect) wpMetrics.reconnectCount++;
+      // Successful WS open clears stale conflict overlay. If the server
+      // sees a conflict, onViewerConflict fires after onOpen and re-shows it.
+      _tcState = WP.handleControlGranted(_tcState);
+      removeDesktopConflictOverlay();
       setConnState("live");
     },
     onPtyReady: () => { flushMobileKbProxyPendingInput(); },

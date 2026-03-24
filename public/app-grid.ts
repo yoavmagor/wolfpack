@@ -145,6 +145,13 @@ async function mountGridController(gs, cell, idx) {
     shouldReconnect: () => state.gridSessions.includes(gs),
     canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && state.gridSessions[state.gridFocusIndex] === gs),
     canSendResize: () => !!(gs.controller && gs.controller.isConnected),
+    onOpen: () => {
+      // Successful WS open means we have the session — clear any stale
+      // conflict overlay. If the server sees a conflict, onViewerConflict
+      // fires AFTER onOpen and re-shows the overlay.
+      gs._displaced = false;
+      removeGridCellConflictOverlay(gs);
+    },
     onOutput: () => {
       if (_gridCachedPending) {
         _gridCachedPending = false;
@@ -335,10 +342,29 @@ function showGridCellConflictOverlay(gs) {
 function removeGridCellConflictOverlay(gs) {
   if (gs._takeControlTimer) { clearTimeout(gs._takeControlTimer); gs._takeControlTimer = null; }
   const cell = getGridCellElement(gs);
-  if (!cell) { console.log("[grid-tc]", gs.session, "removeOverlay: cell not found"); return; }
+  if (!cell) { console.log("[grid-tc]", gs.session, "removeOverlay: cell not found!"); return; }
   const overlays = cell.querySelectorAll(".viewer-conflict-overlay");
-  console.log("[grid-tc]", gs.session, "removeOverlay: found", overlays.length, "overlays");
+  console.log("[grid-tc]", gs.session, "removeOverlay: found", overlays.length, "overlays, cell in DOM:", !!cell.parentNode);
   overlays.forEach(el => el.remove());
+  // Verify removal
+  const remaining = cell.querySelectorAll(".viewer-conflict-overlay");
+  if (remaining.length > 0) console.error("[grid-tc]", gs.session, "OVERLAY STILL PRESENT AFTER REMOVAL!");
+}
+
+function showGridCellConflictOverlay(gs) {
+  console.log("[grid-tc]", gs.session, "showOverlay called", new Error().stack?.split("\n").slice(1, 4).join(" <- "));
+  const cell = getGridCellElement(gs);
+  if (!cell) return;
+  // Force hydration complete so overlay is visible (cell may be opacity:0)
+  if (gs.controller && gs.controller.hydration) gs.controller.hydration.finish();
+  removeGridCellConflictOverlay(gs);
+  const overlay = deps.createConflictOverlay("Active on another device", "Take Control", (e) => {
+    e.stopPropagation();
+    // Reclaim ALL displaced cells — not just this one
+    takeControlOfAllDisplacedCells();
+  });
+  overlay.dataset.conflictType = "conflict";
+  cell.appendChild(overlay);
 }
 
 export function hasPreservedGrid() {
