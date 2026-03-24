@@ -304,6 +304,9 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
 
     function cleanupPending() {
       clearInterval(pingTimer);
+      if (existing.pendingViewer && existing.pendingViewer !== ws) {
+        try { existing.pendingViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`cleanupPending: displaced other pending`, { session, error: errMsg(e) }); }
+      }
       ws.removeListener("message", pendingMessage);
       ws.removeListener("close", cleanup);
       ws.removeListener("error", cleanup);
@@ -315,7 +318,8 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
         const str = String(raw);
         const msg = JSON.parse(str);
         if (msg.type === "attach" && typeof msg.cols === "number" && typeof msg.rows === "number") {
-          pendingAttachDims = { cols: msg.cols, rows: msg.rows, prefillMode: msg.prefillMode };
+          const pm = typeof msg.prefillMode === "string" ? msg.prefillMode : undefined;
+          pendingAttachDims = { cols: msg.cols, rows: msg.rows, prefillMode: pm };
           // Immediate takeover: client already knows it wants control
           if (msg.takeControl) {
             cleanupPending();
@@ -327,6 +331,10 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
           return;
         }
         if (msg.type === "take_control") {
+          if (!pendingAttachDims) {
+            log.warn("take_control without prior attach — ignoring", { session });
+            return;
+          }
           cleanupPending();
           performImmediateTakeover(pendingAttachDims);
         }
@@ -542,7 +550,7 @@ function setupNewPtyEntry(
     if (!rl.allow()) return;
     try {
       if (!isBinary) {
-        if (raw.length > MAX_PTY_BINARY_BYTES) return; // reject oversized JSON frames
+        if (raw.length > MAX_WS_MESSAGE_BYTES) return; // reject oversized JSON frames
         const msg = JSON.parse(String(raw));
         if (
           msg.type === "attach" &&

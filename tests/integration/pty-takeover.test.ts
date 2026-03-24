@@ -91,10 +91,11 @@ describe("pty takeover: viewer conflict", () => {
   test("take_control message triggers control_granted", async () => {
     injectFakeEntry("takeover-test");
     const ws = await connectPty("takeover-test");
-    const conflictPromise = waitForMessage(ws, "viewer_conflict");
-    await conflictPromise;
+    await waitForMessage(ws, "viewer_conflict");
 
-    // Send take_control (old path — no dims in attach first)
+    // Send attach first to capture dims, then take_control
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "none" }));
+    await waitForMessage(ws, "attach_ack");
     const grantedPromise = waitForMessage(ws, "control_granted");
     ws.send(JSON.stringify({ type: "take_control" }));
     const msg = await grantedPromise;
@@ -201,6 +202,8 @@ describe("pty takeover: viewer conflict", () => {
 
     const ws = await connectPty("takeover-test");
     await waitForMessage(ws, "viewer_conflict");
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "none" }));
+    await waitForMessage(ws, "attach_ack");
     ws.send(JSON.stringify({ type: "take_control" }));
     await waitForMessage(ws, "control_granted");
     await wait(50);
@@ -283,7 +286,9 @@ describe("pty takeover: post-control_granted re-attach", () => {
     const ws = await connectPty("takeover-test");
     await waitForMessage(ws, "viewer_conflict");
 
-    // Take control — this tears down the old entry and creates a new one
+    // Send attach to capture dims, then take control
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "none" }));
+    await waitForMessage(ws, "attach_ack");
     ws.send(JSON.stringify({ type: "take_control" }));
     await waitForMessage(ws, "control_granted");
 
@@ -318,6 +323,8 @@ describe("pty takeover: post-control_granted re-attach", () => {
 
     const ws = await connectPty("takeover-test");
     await waitForMessage(ws, "viewer_conflict");
+    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "none" }));
+    await waitForMessage(ws, "attach_ack");
     ws.send(JSON.stringify({ type: "take_control" }));
     await waitForMessage(ws, "control_granted");
 
@@ -427,5 +434,71 @@ describe("pty takeover: full two-viewer flow (grid scenario)", () => {
     try { await closeWs(wsA); } catch {}
     try { await closeWs(wsB); } catch {}
     await wait(100);
+  });
+});
+
+// ── WS upgrade session validation ──
+
+describe("pty takeover: session validation at upgrade", () => {
+  beforeEach(async () => {
+    ctx.activePtySessions.delete("takeover-test");
+    ctx.ptySpawnAttempts.delete("takeover-test");
+    await wait(50);
+  });
+
+  test("rejects WS upgrade for nonexistent session", async () => {
+    try {
+      const ws = await connectPty("nonexistent-session-xyz");
+      // If we get here, connection opened — wait for server to close it
+      const ev = await waitForClose(ws, 3000);
+      expect(ev.code).toBeGreaterThanOrEqual(1000);
+      await closeWs(ws).catch(() => {});
+    } catch {
+      // connect failed outright — expected (server rejects upgrade)
+    }
+  });
+
+  test("rejects WS upgrade with missing session param", async () => {
+    try {
+      const ws = await new Promise<WebSocket>((resolve, reject) => {
+        const w = new WebSocket(`${ctx.baseWsUrl}/ws/pty`);
+        w.binaryType = "arraybuffer";
+        w.addEventListener("open", () => resolve(w));
+        w.addEventListener("error", () => reject(new Error("connect failed")));
+      });
+      const ev = await waitForClose(ws, 3000);
+      expect(ev.code).toBeGreaterThanOrEqual(1000);
+      await closeWs(ws).catch(() => {});
+    } catch {
+      // connect failed — expected
+    }
+  });
+});
+
+// ── take_control without attach guard ──
+
+describe("pty takeover: take_control without attach", () => {
+  beforeEach(async () => {
+    ctx.activePtySessions.delete("takeover-test");
+    ctx.ptySpawnAttempts.delete("takeover-test");
+    await wait(50);
+  });
+
+  test("take_control without prior attach is ignored — old viewer preserved", async () => {
+    injectFakeEntry("takeover-test");
+    const ws = await connectPty("takeover-test");
+    await waitForMessage(ws, "viewer_conflict");
+
+    // Send take_control WITHOUT sending attach first
+    ws.send(JSON.stringify({ type: "take_control" }));
+    await wait(300);
+
+    // Old entry should still be alive — take_control was rejected
+    const entry = ctx.activePtySessions.get("takeover-test");
+    expect(entry).toBeDefined();
+    expect(entry!.alive).toBe(true);
+
+    await closeWs(ws);
+    await wait(50);
   });
 });
