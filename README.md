@@ -51,8 +51,13 @@ Install on your phone's home screen for a native app experience — scan the QR 
 
 <p align="center">
   <img src="docs/mobile-sessions.png" width="250" alt="Mobile — session list with multi-machine support" />
-  <img src="docs/mobile-terminal.png" width="250" alt="Mobile — classic terminal mode" />
-  <img src="docs/mobile-ghostty.png" width="250" alt="Mobile — ghostty WASM terminal mode" />
+</p>
+<p align="center">
+  <kbd>Classic</kbd>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<kbd>Ghostty (WASM)</kbd>
+</p>
+<p align="center">
+  <img src="docs/mobile-terminal.png" width="300" alt="Mobile — classic terminal mode" />
+  <img src="docs/mobile-ghostty.png" width="300" alt="Mobile — ghostty WASM terminal mode" />
 </p>
 
 ## Architecture
