@@ -1442,12 +1442,6 @@ body.mobile-no-ghost-focus #desktop-terminal-container textarea {
   opacity: 1;
   visibility: visible;
 }
-/* Hide canvas during mobile keyboard open/close to prevent scroll-through */
-#desktop-terminal-container.kb-transitioning canvas {
-  opacity: 0 !important;
-  visibility: hidden !important;
-  transition: none !important;
-}
 /* Instant hide during resize/loading transitions (no 80ms fade-out) */
 #desktop-terminal-container.hydrating canvas,
 #desktop-terminal-container.transitioning canvas,

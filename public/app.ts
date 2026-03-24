@@ -942,9 +942,9 @@ function createPtyTerminalController(opts) {
       _hydrationStarted = true;
     }
 
-    // If cached snapshot was written during mount() and we're using viewport
-    // prefill, replace the cached buffer with live data on first output.
-    if (_cachedLoaded && opts.prefillMode === "viewport") {
+    // If cached snapshot was written during mount(), replace the cached
+    // buffer with live data on first output (tmux attach redraws the pane).
+    if (_cachedLoaded && opts.prefillMode !== "full") {
       _reconnectPendingReset = true;
       _cachedLoaded = false;
     }
@@ -3594,14 +3594,15 @@ function bindHtmlEventListeners(): void {
     });
   });
 
-  // Mobile terminal mode buttons
+  // Mobile terminal mode buttons — setting takes effect on next session open
   document.querySelectorAll(".term-mobile-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const mode = (btn as HTMLElement).dataset.mode;
-      if (mode) {
+      if (mode && mode !== wpSettings.mobileTerminal) {
         toggleSetting("mobileTerminal", mode);
         document.querySelectorAll(".term-mobile-btn").forEach(b => b.classList.toggle("active", (b as HTMLElement).dataset.mode === mode));
-        document.body.classList.toggle("classic-mobile", mode === "classic");
+        // Don't apply classic-mobile class immediately — it takes effect
+        // on next session open to avoid mid-session transport mismatch.
       }
     });
   });
@@ -3899,8 +3900,8 @@ function destroyClassicMobile() {
   });
 })();
 
-// Apply classic-mobile class on boot if setting is active
-if (useClassicMobile()) document.body.classList.add("classic-mobile");
+// classic-mobile class is applied by initClassicMobile() on session open,
+// not at boot — avoids mid-session transport mismatch if setting changes.
 
 // Unregister any stale service workers (no longer used)
 if ("serviceWorker" in navigator) {
