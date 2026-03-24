@@ -152,16 +152,20 @@ async function mountGridController(gs, cell, idx) {
       }
     },
     onViewerConflict: () => {
+      console.log("[grid-tc]", gs.session, "viewer_conflict, autoTakeControl=", gs._autoTakeControl);
       var r = WP.handleViewerConflict({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
       gs._displaced = r.newState.displaced;
       gs._autoTakeControl = r.newState.autoTakeControl;
       if (r.action === "auto-take-control") {
+        console.log("[grid-tc]", gs.session, "auto-take-control — sending take_control");
         gs.controller.sendTakeControl();
       } else {
+        console.log("[grid-tc]", gs.session, "showing overlay");
         showGridCellConflictOverlay(gs);
       }
     },
     onControlGranted: () => {
+      console.log("[grid-tc]", gs.session, "control_granted — removing overlay");
       var s = WP.handleControlGranted({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
       gs._displaced = s.displaced;
       gs._autoTakeControl = s.autoTakeControl;
@@ -169,9 +173,11 @@ async function mountGridController(gs, cell, idx) {
       if (state.gridSessions[state.gridFocusIndex] === gs) gs.controller.focus();
     },
     onDisconnected: (code, reason) => {
+      console.log("[grid-tc]", gs.session, "disconnected code=", code, "reason=", reason);
       removeGridCellConflictOverlay(gs);
       if (!state.gridSessions.includes(gs)) return;
       var action = WP.classifyDisconnect(code, reason || "");
+      console.log("[grid-tc]", gs.session, "action=", action);
       if (action === "displaced") {
         var ns = WP.handleDisplaced({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
         gs._displaced = ns.displaced;
@@ -268,6 +274,7 @@ export function getGridCellElement(gs) {
 /** Reclaim control of a single grid cell. */
 function takeControlOfCell(gs) {
   if (!gs.controller) return;
+  console.log("[grid-tc]", gs.session, "takeControlOfCell, isConnected=", gs.controller.isConnected);
   if (gs.controller.isConnected) {
     // Socket still open (viewer_conflict path) — send take_control directly
     gs.controller.sendTakeControl();
@@ -296,7 +303,12 @@ function takeControlOfCell(gs) {
   }
 }
 
-/** Take control of ALL displaced grid cells at once. */
+/**
+ * Take control of ALL displaced grid cells at once.
+ * UX decision: reclaiming one cell reclaims all — avoids confusing partial
+ * states where some cells are active and others show conflict overlays.
+ * If per-cell takeover is ever needed, wire a separate "Take All" action.
+ */
 function takeControlOfAllDisplacedCells() {
   for (const gs of state.gridSessions) {
     const cell = getGridCellElement(gs);
@@ -323,8 +335,10 @@ function showGridCellConflictOverlay(gs) {
 function removeGridCellConflictOverlay(gs) {
   if (gs._takeControlTimer) { clearTimeout(gs._takeControlTimer); gs._takeControlTimer = null; }
   const cell = getGridCellElement(gs);
-  if (!cell) return;
-  cell.querySelectorAll(".viewer-conflict-overlay").forEach(el => el.remove());
+  if (!cell) { console.log("[grid-tc]", gs.session, "removeOverlay: cell not found"); return; }
+  const overlays = cell.querySelectorAll(".viewer-conflict-overlay");
+  console.log("[grid-tc]", gs.session, "removeOverlay: found", overlays.length, "overlays");
+  overlays.forEach(el => el.remove());
 }
 
 export function hasPreservedGrid() {
@@ -600,7 +614,7 @@ export function exitGridMode(skipRestore?) {
   }
   // Restore single-terminal mode (skip when navigating away from terminal view)
   if (!skipRestore && restoreSession) {
-      deps.initTerminal();
+    deps.initTerminal();
     deps.renderSidebar();
   }
 }

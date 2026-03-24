@@ -433,6 +433,7 @@ function setupNewPtyEntry(
     if (!rl.allow()) return;
     try {
       if (!isBinary) {
+        if (raw.length > MAX_PTY_BINARY_BYTES) return; // reject oversized JSON frames
         const msg = JSON.parse(String(raw));
         if (
           msg.type === "attach" &&
@@ -456,7 +457,13 @@ function setupNewPtyEntry(
           }
           if (entry.viewer && entry.viewer.readyState === 1) {
             try { entry.viewer.send(JSON.stringify({ type: "attach_ack" })); } catch (e: unknown) { log.debug(`attach_ack send failed`, { session, error: errMsg(e) }); }
-            if (entry.proc) sendPtyReady(entry);
+            if (entry.proc) {
+              sendPtyReady(entry);
+              // Client expects prefill_done after every attach — without it,
+              // binary output is buffered indefinitely. Send it immediately
+              // since we're not doing a fresh capture for an existing proc.
+              sendPrefillDone(entry);
+            }
           }
         } else if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
           const cols = clampCols(msg.cols);
