@@ -42,6 +42,7 @@ export function listDevProjects(): string[] {
   try {
     return readdirSync(DEV_DIR)
       .filter((f) => {
+        if (f.startsWith(".")) return false;
         try {
           return statSync(join(DEV_DIR, f)).isDirectory();
         } catch { /* race: entry removed between readdir and stat */

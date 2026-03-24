@@ -179,11 +179,6 @@ const SETTINGS_PATH = join(homedir(), ".wolfpack", "bridge-settings.json");
 /** Previous pane content per session — used for content-diff triage. */
 const prevPaneContent = new Map<string, string>();
 
-const TRIAGE_PRIORITY: Record<TriageStatus, number> = {
-  "needs-input": 0,
-  "running": 1,
-  "idle": 2,
-};
 
 const AGENT_PRESETS: Record<string, string> = {
   shell: "shell",
@@ -296,7 +291,7 @@ export const routes: Record<
         return { name, lastLine, triage };
       }),
     );
-    results.sort((a, b) => TRIAGE_PRIORITY[a.triage] - TRIAGE_PRIORITY[b.triage]);
+    results.sort((a, b) => a.name.localeCompare(b.name));
     json(res, { sessions: results });
   },
 
