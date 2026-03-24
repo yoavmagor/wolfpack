@@ -35,8 +35,6 @@
              :+**++++++*++*+=-:: .. ...... ..   .:..::
 ```
 
-I got tired of SSHing into 4 machines to check if Claude was stuck on a permission prompt. I wanted one screen — on my phone, on my laptop, wherever — that showed me every running agent across every box, and let me actually interact with them. So I built wolfpack.
-
 Mobile & desktop command center for AI coding agents. Control tmux-based sessions (Claude, Codex, Gemini, or any custom command) across multiple machines from your phone or browser. Secured by [Tailscale](https://tailscale.com/) — zero-config encrypted access, no ports to open.
 
 Install on your phone's home screen for a native app experience — scan the QR code after setup and tap **"Add to Home Screen"**.
