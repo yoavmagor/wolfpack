@@ -7,7 +7,7 @@
  */
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
-export type Component = "pty" | "ws" | "http" | "ralph" | "auth" | "service" | "config" | "setup" | "tmux" | "server";
+export type Component = "pty" | "ws" | "http" | "ralph" | "auth" | "service" | "config" | "setup" | "tmux" | "server" | "worktree" | "routes";
 
 const LEVEL_ORDER: Record<LogLevel, number> = {
   debug: 0,

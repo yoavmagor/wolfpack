@@ -452,6 +452,7 @@ const ITERATION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes per iteration
 
 // track active child for signal handling
 let activeChild: ReturnType<typeof nodeSpawn> | null = null;
+let stopping = false;
 
 function runIteration(prompt: string): Promise<{ exitCode: number; output: string }> {
   return new Promise((resolve) => {
@@ -464,7 +465,7 @@ function runIteration(prompt: string): Promise<{ exitCode: number; output: strin
 
     const timeout = setTimeout(() => {
       appendFileSync(LOG_FILE, `\n=== ⚠️  Iteration timed out after ${ITERATION_TIMEOUT_MS / 60000}min — killing agent ===\n`);
-      if (child.pid) killProcessTree(child.pid);
+      if (child.pid) killProcessTree(child.pid).catch(() => {});
     }, ITERATION_TIMEOUT_MS);
 
     child.stdout?.on("data", (d: Buffer) => {
@@ -496,6 +497,7 @@ process.on("exit", removeLock);
 
 // clean up child process, worktrees, and lock on SIGTERM
 process.on("SIGTERM", () => {
+  stopping = true;
   appendFileSync(LOG_FILE, `\n=== 🛑 Received SIGTERM — cleaning up ===\n`);
   if (activeChild?.pid) {
     killProcessTreeSync(activeChild.pid);
@@ -605,7 +607,7 @@ function syncPlanToProject(): void {
 /** Merge a task sub-worktree branch into mainWorkDir. Returns true on success. */
 function mergeTaskBranch(taskBranch: string): boolean {
   try {
-    execFileSync("git", ["merge", taskBranch, "-m", `ralph: merge ${taskBranch}`], {
+    execFileSync("git", ["merge", "-m", `ralph: merge ${taskBranch}`, "--", taskBranch], {
       cwd: mainWorkDir,
       stdio: "pipe",
     });
@@ -666,7 +668,7 @@ function createMainWorktree(): void {
     execFileSync("git", ["rev-parse", "--verify", branchName], { cwd: PROJECT_DIR, stdio: "pipe" });
     // Branch exists without a worktree — delete it so createWorktree can start clean
     appendFileSync(LOG_FILE, `deleting orphan branch ${branchName} from previous run\n`);
-    execFileSync("git", ["branch", "-D", branchName], { cwd: PROJECT_DIR, stdio: "pipe" });
+    execFileSync("git", ["branch", "-D", "--", branchName], { cwd: PROJECT_DIR, stdio: "pipe" });
   } catch { /* branch doesn't exist — good */ }
 
   try {
@@ -743,7 +745,7 @@ async function main() {
       try { removeWorktree(orphan.path, PROJECT_DIR); } catch (e: unknown) {
         appendFileSync(LOG_FILE, `warning: failed to remove orphan worktree ${orphan.path}: ${errMsg(e)}\n`);
       }
-      try { execFileSync("git", ["branch", "-D", orphan.branch], { cwd: PROJECT_DIR, stdio: "pipe" }); } catch (e: unknown) {
+      try { execFileSync("git", ["branch", "-D", "--", orphan.branch], { cwd: PROJECT_DIR, stdio: "pipe" }); } catch (e: unknown) {
         appendFileSync(LOG_FILE, `warning: failed to delete orphan branch ${orphan.branch}: ${errMsg(e)}\n`);
       }
     }
@@ -763,6 +765,7 @@ async function main() {
   let lastWasSubtaskEmission = false;
 
   for (let i = 1; i <= maxIterations; i++) {
+    if (stopping) break;
     // extract current task from plan
     const result = extractCurrentTask();
     if (!result) {
@@ -1042,7 +1045,7 @@ async function runFinalPhases(): Promise<void> {
 main().then(() => {
   removeLock();
 }).catch((err) => {
-  appendFileSync(LOG_FILE, `\nFATAL: ${err.message}\n`);
+  appendFileSync(LOG_FILE, `\nFATAL: ${errMsg(err)}\n`);
   appendFileSync(LOG_FILE, `finished: ${new Date().toString()}\n`);
   removeLock();
   process.exit(1);
