@@ -335,8 +335,7 @@ function showGridCellConflictOverlay(gs) {
   removeGridCellConflictOverlay(gs);
   const overlay = deps.createConflictOverlay("Active on another device", "Take Control", (e) => {
     e.stopPropagation();
-    // Reclaim ALL displaced cells — not just this one
-    takeControlOfAllDisplacedCells();
+    takeControlOfCell(gs);
   });
   overlay.dataset.conflictType = "conflict";
   cell.appendChild(overlay);
