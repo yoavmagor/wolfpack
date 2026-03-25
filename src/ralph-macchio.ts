@@ -465,7 +465,7 @@ function runIteration(prompt: string): Promise<{ exitCode: number; output: strin
 
     const timeout = setTimeout(() => {
       appendFileSync(LOG_FILE, `\n=== ⚠️  Iteration timed out after ${ITERATION_TIMEOUT_MS / 60000}min — killing agent ===\n`);
-      if (child.pid) killProcessTree(child.pid).catch(() => {});
+      if (child.pid) killProcessTree(child.pid).catch((e) => { appendFileSync(LOG_FILE, `kill error: ${errMsg(e)}\n`); });
     }, ITERATION_TIMEOUT_MS);
 
     child.stdout?.on("data", (d: Buffer) => {
@@ -607,7 +607,7 @@ function syncPlanToProject(): void {
 /** Merge a task sub-worktree branch into mainWorkDir. Returns true on success. */
 function mergeTaskBranch(taskBranch: string): boolean {
   try {
-    execFileSync("git", ["merge", "-m", `ralph: merge ${taskBranch}`, "--", taskBranch], {
+    execFileSync("git", ["merge", "-m", `ralph: merge ${taskBranch}`, taskBranch], {
       cwd: mainWorkDir,
       stdio: "pipe",
     });
