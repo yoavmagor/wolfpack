@@ -306,20 +306,6 @@ function takeControlOfCell(gs) {
   }
 }
 
-/**
- * Take control of ALL displaced grid cells at once.
- * UX decision: reclaiming one cell reclaims all — avoids confusing partial
- * states where some cells are active and others show conflict overlays.
- * If per-cell takeover is ever needed, wire a separate "Take All" action.
- */
-function takeControlOfAllDisplacedCells() {
-  for (const gs of state.gridSessions) {
-    const cell = getGridCellElement(gs);
-    if (!cell || !cell.querySelector(".viewer-conflict-overlay")) continue;
-    takeControlOfCell(gs);
-  }
-}
-
 function removeGridCellConflictOverlay(gs) {
   if (gs._takeControlTimer) { clearTimeout(gs._takeControlTimer); gs._takeControlTimer = null; }
   const cell = getGridCellElement(gs);
