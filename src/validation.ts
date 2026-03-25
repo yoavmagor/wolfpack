@@ -2,6 +2,7 @@
  * Shared pure validation functions.
  * Extracted from serve.ts and cli.ts for testability — zero side effects.
  */
+import { resolve } from "node:path";
 
 // ── Classic terminal WS allowed keys ──
 
@@ -81,4 +82,45 @@ export function xmlEsc(s: string): string {
 
 export function systemdEsc(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "");
+}
+
+// ── Sandbox (srt) settings ──
+
+export interface SrtSettings {
+  network: {
+    allowedDomains: string[];
+    allowLocalBinding: boolean;
+  };
+  filesystem: {
+    denyRead: string[];
+    allowWrite: string[];
+    denyWrite: string[];
+  };
+}
+
+/** Build srt settings scoped to the given working directory. */
+export function buildSrtSettings(allowedWriteDir: string): SrtSettings {
+  const absDir = resolve(allowedWriteDir);
+  return {
+    network: {
+      allowedDomains: [
+        "github.com", "*.github.com",
+        "npmjs.org", "*.npmjs.org", "registry.npmjs.org",
+        "yarnpkg.com", "*.yarnpkg.com",
+        "crates.io", "*.crates.io", "static.crates.io",
+        "pypi.org", "*.pypi.org", "files.pythonhosted.org",
+        "proxy.golang.org", "sum.golang.org",
+        "bun.sh", "*.bun.sh",
+        "api.anthropic.com",
+        "api.openai.com",
+        "generativelanguage.googleapis.com",
+      ],
+      allowLocalBinding: false,
+    },
+    filesystem: {
+      denyRead: ["~/.ssh", "~/.gnupg", "~/.aws/credentials"],
+      allowWrite: [absDir, "/tmp"],
+      denyWrite: [".env", ".env.*", "*.pem", "*.key"],
+    },
+  };
 }
