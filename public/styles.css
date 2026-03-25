@@ -480,6 +480,7 @@ body.no-animations, body.no-animations * {
 body.classic-mobile #terminal { display: block; }
 body.classic-mobile #desktop-terminal-container { display: none !important; }
 body.classic-mobile #mobile-kb-proxy { display: none !important; }
+body.classic-mobile .kb-open { display: none !important; }
 
 body.term-size-small #terminal { font-size: 12px !important; line-height: 1.35 !important; }
 body.term-size-medium #terminal { font-size: 13px !important; line-height: 1.45 !important; }
