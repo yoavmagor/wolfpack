@@ -598,9 +598,10 @@ export const routes: Record<
       worktree?: false | "plan" | "task";
       worktreeBranch?: string;
       worktreeBase?: string;
+      sandbox?: boolean;
     }>(req, res);
     if (!body) return;
-    const { project, iterations, planFile, agent, newBranch, sourceBranch, format, cleanup, auditFix, worktree, worktreeBranch, worktreeBase } = body;
+    const { project, iterations, planFile, agent, newBranch, sourceBranch, format, cleanup, auditFix, worktree, worktreeBranch, worktreeBase, sandbox } = body;
     const projectDir = resolveProjectDir(res, project);
     if (!projectDir) return;
     const existing = parseRalphLog(projectDir);
@@ -738,6 +739,7 @@ export const routes: Record<
       "--worktree", worktreeMode,
       ...(worktreeBranch ? ["--worktree-branch", worktreeBranch] : []),
       ...(worktreeBase ? ["--worktree-base", worktreeBase] : []),
+      "--sandbox", String(sandbox !== false),
     ];
     const child = spawn(RALPH_BIN_ARGS[0], workerArgs, {
       cwd: projectDir,
