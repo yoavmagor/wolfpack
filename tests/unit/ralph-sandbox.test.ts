@@ -54,10 +54,13 @@ describe("buildSrtSettings", () => {
 
   test("settings structure matches srt schema", () => {
     const settings = buildSrtSettings("/tmp/test");
-    // verify top-level keys
-    expect(Object.keys(settings).sort()).toEqual(["filesystem", "network"]);
+    // verify top-level keys (ripgrep is optional)
+    const keys = Object.keys(settings).sort();
+    expect(keys).toContain("filesystem");
+    expect(keys).toContain("network");
     // verify network keys
     expect(settings.network).toHaveProperty("allowedDomains");
+    expect(settings.network).toHaveProperty("deniedDomains");
     expect(settings.network).toHaveProperty("allowLocalBinding");
     // verify filesystem keys
     expect(settings.filesystem).toHaveProperty("denyRead");

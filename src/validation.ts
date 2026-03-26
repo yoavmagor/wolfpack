@@ -2,7 +2,10 @@
  * Shared pure validation functions.
  * Extracted from serve.ts and cli.ts for testability — zero side effects.
  */
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
+import { homedir } from "node:os";
 
 // ── Classic terminal WS allowed keys ──
 
@@ -89,6 +92,7 @@ export function systemdEsc(s: string): string {
 export interface SrtSettings {
   network: {
     allowedDomains: string[];
+    deniedDomains: string[];
     allowLocalBinding: boolean;
   };
   filesystem: {
@@ -96,12 +100,28 @@ export interface SrtSettings {
     allowWrite: string[];
     denyWrite: string[];
   };
+  ripgrep?: {
+    command: string;
+  };
+}
+
+/** Resolve a real binary path for rg (shell functions/aliases don't work in child processes). */
+function resolveRipgrepBin(): { command: string; argv0?: string } | undefined {
+  // Prefer a real rg binary on PATH
+  try {
+    const rgPath = execFileSync("which", ["rg"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (rgPath && !rgPath.includes("not found")) return { command: rgPath };
+  } catch { /* not on PATH */ }
+  // Fallback: claude bundles rg as a multicall binary (ARGV0=rg)
+  const claudeBin = join(homedir(), ".local/bin/claude");
+  try { statSync(claudeBin); return { command: claudeBin, argv0: "rg" }; } catch { /* nope */ }
+  return undefined;
 }
 
 /** Build srt settings scoped to the given working directory. */
 export function buildSrtSettings(allowedWriteDir: string): SrtSettings {
   const absDir = resolve(allowedWriteDir);
-  return {
+  const settings: SrtSettings = {
     network: {
       allowedDomains: [
         "github.com", "*.github.com",
@@ -115,6 +135,7 @@ export function buildSrtSettings(allowedWriteDir: string): SrtSettings {
         "api.openai.com",
         "generativelanguage.googleapis.com",
       ],
+      deniedDomains: [],
       allowLocalBinding: false,
     },
     filesystem: {
@@ -123,4 +144,7 @@ export function buildSrtSettings(allowedWriteDir: string): SrtSettings {
       denyWrite: [".env", ".env.*", "*.pem", "*.key"],
     },
   };
+  const rg = resolveRipgrepBin();
+  if (rg) settings.ripgrep = rg;
+  return settings;
 }

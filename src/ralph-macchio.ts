@@ -18,7 +18,7 @@ import { writeFileSync, appendFileSync, readFileSync, existsSync, unlinkSync, co
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { RALPH_AGENT_CONTEXT, TASK_HEADER, countTasksInContent, validatePlanFormat } from "./wolfpack-context.js";
-import { expandBudget, resolveCleanupDiffBase, buildSrtSettings } from "./validation.js";
+import { expandBudget, resolveCleanupDiffBase, buildSrtSettings, shellEscape } from "./validation.js";
 import { buildAuditFixPrompt } from "./ralph-skill-audit.js";
 import { buildCleanupPrompt } from "./ralph-skill-cleanup.js";
 import { createWorktree, cleanupAllExceptFinal, removeWorktree, listWorktrees, slugifyTaskName } from "./worktree.js";
@@ -493,8 +493,14 @@ function runIteration(prompt: string): Promise<{ exitCode: number; output: strin
     let spawnArgs: string[];
     if (SRT_AVAILABLE) {
       writeSrtSettings(workingDir);
+      // srt joins positional args with spaces then runs via `bash -c`, so args
+      // containing shell metacharacters (e.g. parentheses in --allowedTools)
+      // must be passed through `-c` with proper quoting.
+      const innerCmd = [agent.bin, ...agent.args(prompt)]
+        .map(a => shellEscape(a))
+        .join(" ");
       spawnBin = SRT_BIN;
-      spawnArgs = ["--settings", SRT_SETTINGS_PATH, agent.bin, ...agent.args(prompt)];
+      spawnArgs = ["--settings", SRT_SETTINGS_PATH, "-c", innerCmd];
     } else {
       spawnBin = agent.bin;
       spawnArgs = agent.args(prompt);
