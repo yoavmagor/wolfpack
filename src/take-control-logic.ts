@@ -5,11 +5,13 @@
  * without DOM or WebSocket dependencies.
  */
 
-// ── Close code semantics ──
-
-export const CLOSE_CODE_DISPLACED = 4002;
-export const CLOSE_CODE_SESSION_UNAVAILABLE = 4001;
-export const CLOSE_CODE_NORMAL = 1000;
+// Re-export close codes so existing consumers don't break
+export {
+  CLOSE_CODE_DISPLACED,
+  CLOSE_CODE_SESSION_UNAVAILABLE,
+  CLOSE_CODE_NORMAL,
+  WS_CLOSE_REASONS,
+} from "./ws-constants.js";
 
 // ── Decision types ──
 
@@ -47,7 +49,7 @@ export function handleViewerConflict(state: GridCellTakeControlState): {
   }
   return {
     action: "show-overlay",
-    newState: state,
+    newState: { ...state },
   };
 }
 
@@ -64,7 +66,7 @@ export function handleControlGranted(state: GridCellTakeControlState): GridCellT
 export function classifyDisconnect(code: number, reason: string): DisconnectAction {
   if (code === CLOSE_CODE_DISPLACED) return "displaced";
   if (code === CLOSE_CODE_SESSION_UNAVAILABLE) return "session-ended";
-  if (code === CLOSE_CODE_NORMAL && reason === "pty exited") return "pty-exited";
+  if (code === CLOSE_CODE_NORMAL && reason === WS_CLOSE_REASONS.PTY_EXITED) return "pty-exited";
   return "reconnect";
 }
 
