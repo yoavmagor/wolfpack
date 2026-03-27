@@ -16,8 +16,8 @@ import { homedir, platform } from "node:os";
 import { isValidPort } from "../validation.js";
 import { print, dim, yellow } from "./formatting.js";
 
-const IS_MACOS = platform() === "darwin";
-const IS_LINUX = platform() === "linux";
+export const IS_MACOS = platform() === "darwin";
+export const IS_LINUX = platform() === "linux";
 
 export const WOLFPACK_DIR = join(homedir(), ".wolfpack");
 export const CONFIG_PATH = join(WOLFPACK_DIR, "config.json");
@@ -171,4 +171,22 @@ export function waitForPortFree(port: number, timeoutMs = 10000) {
 export function remoteUrl(config: Config): string | null {
   if (!config.tailscaleHostname) return null;
   return `https://${config.tailscaleHostname}`;
+}
+
+const TAILSCALE_MAC_CLI =
+  "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+
+/** Find tailscale binary — checks PATH first, then macOS app bundle. */
+export function tailscaleBin(): string | null {
+  try {
+    execFileSync("tailscale", ["version"], { stdio: "ignore" });
+    return "tailscale";
+  } catch { /* probe: tailscale not in PATH */ }
+  if (IS_MACOS) {
+    try {
+      execFileSync(TAILSCALE_MAC_CLI, ["version"], { stdio: "ignore" });
+      return TAILSCALE_MAC_CLI;
+    } catch { /* probe: Tailscale.app CLI not found */ }
+  }
+  return null;
 }
