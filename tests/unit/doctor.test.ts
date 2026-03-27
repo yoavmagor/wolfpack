@@ -61,15 +61,14 @@ describe("doctor() integration", () => {
   });
 
   test("returns 0 or 1 without throwing", async () => {
-    // dynamic import to avoid polluting module cache
     const { doctor } = await import("../../src/cli/doctor.ts");
-    const code = doctor();
+    const code = await doctor();
     expect(code === 0 || code === 1).toBe(true);
   });
 
   test("returns number type", async () => {
     const { doctor } = await import("../../src/cli/doctor.ts");
-    expect(typeof doctor()).toBe("number");
+    expect(typeof await doctor()).toBe("number");
   });
 });
 

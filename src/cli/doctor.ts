@@ -1,7 +1,7 @@
 /**
  * `wolfpack doctor` — system health check with optional --fix.
  */
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   accessSync,
   chmodSync,
@@ -9,11 +9,10 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   statSync,
 } from "node:fs";
+import { lookup as dnsLookup } from "node:dns/promises";
 import { join } from "node:path";
-import { homedir, platform } from "node:os";
 import { print, bold, green, red, dim, yellow } from "./formatting.js";
 import {
   WOLFPACK_DIR,
@@ -39,7 +38,7 @@ export interface CheckResult {
   fix?: () => void;
 }
 
-type CheckFn = (fix: boolean) => CheckResult[];
+type CheckFn = () => CheckResult[] | Promise<CheckResult[]>;
 
 // ---------------------------------------------------------------------------
 // Check group 1: Dependencies
@@ -50,7 +49,7 @@ function checkDeps(): CheckResult[] {
 
   // tmux
   try {
-    const ver = execSync("tmux -V", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const ver = execFileSync("tmux", ["-V"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     const match = ver.match(/(\d+\.\d+)/);
     if (match && parseFloat(match[1]) >= 3.0) {
       results.push({ name: "tmux", group: "Dependencies", status: "pass", detail: ver });
@@ -72,7 +71,7 @@ function checkDeps(): CheckResult[] {
   const tsBin = tailscaleBin();
   if (tsBin) {
     try {
-      const ver = execSync(`${tsBin} version`, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
+      const ver = execFileSync(tsBin, ["version"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })
         .trim().split("\n")[0];
       results.push({ name: "tailscale", group: "Dependencies", status: "pass", detail: ver });
     } catch {
@@ -80,11 +79,12 @@ function checkDeps(): CheckResult[] {
     }
 
     // tailscale connected?
-    const sudoPrefix = IS_LINUX ? "sudo " : "";
     try {
-      const status = execSync(`${sudoPrefix}${tsBin} status --self --json`, {
-        encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
-      });
+      const status = execFileSync(
+        IS_LINUX ? "sudo" : tsBin,
+        IS_LINUX ? [tsBin, "status", "--self", "--json"] : ["status", "--self", "--json"],
+        { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] },
+      );
       const parsed = JSON.parse(status);
       const hostname = parsed.Self?.DNSName?.replace(/\.$/, "");
       if (hostname) {
@@ -240,15 +240,15 @@ function checkService(): CheckResult[] {
 // Check group 4: Connectivity
 // ---------------------------------------------------------------------------
 
-function checkConnectivity(): CheckResult[] {
+async function checkConnectivity(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
   const config = loadConfig();
   if (!config) return results;
 
   // localhost
   try {
-    const resp = execSync(
-      `curl -sf --max-time 3 http://localhost:${config.port}/api/info`,
+    const resp = execFileSync(
+      "curl", ["-sf", "--max-time", "3", `http://localhost:${config.port}/api/info`],
       { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] },
     );
     const parsed = JSON.parse(resp);
@@ -266,10 +266,7 @@ function checkConnectivity(): CheckResult[] {
   // tailscale hostname
   if (config.tailscaleHostname) {
     try {
-      execSync(`dig +short ${config.tailscaleHostname} 2>/dev/null`, {
-        encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
-        timeout: 3000,
-      });
+      await dnsLookup(config.tailscaleHostname);
       results.push({
         name: "tailscale hostname", group: "Connectivity", status: "pass",
         detail: config.tailscaleHostname,
@@ -303,11 +300,12 @@ function checkBinary(): CheckResult[] {
       name: "binary", group: "Binary", status: "fail", detail: "missing",
       fix: () => {
         const exe = process.execPath;
-        if (existsSync(exe) && !exe.endsWith("/bun")) {
-          mkdirSync(join(WOLFPACK_DIR, "bin"), { recursive: true });
-          copyFileSync(exe, stableBin);
-          chmodSync(stableBin, 0o755);
+        if (exe.endsWith("/bun") || !existsSync(exe)) {
+          throw new Error("running under bun — rebuild and copy binary manually: bun run scripts/build.ts");
         }
+        mkdirSync(join(WOLFPACK_DIR, "bin"), { recursive: true });
+        copyFileSync(exe, stableBin);
+        chmodSync(stableBin, 0o755);
       },
     });
     return results;
@@ -349,7 +347,7 @@ function checkTmuxRuntime(): CheckResult[] {
 
   // list sessions
   try {
-    const out = execSync("tmux list-sessions 2>/dev/null", {
+    const out = execFileSync("tmux", ["list-sessions"], {
       encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
     }).trim();
     const count = out ? out.split("\n").length : 0;
@@ -364,11 +362,11 @@ function checkTmuxRuntime(): CheckResult[] {
     });
   }
 
-  // create + kill throwaway
-  const testSession = "_wolfpack_doctor";
+  // create + kill throwaway — unique name avoids clobbering existing sessions
+  const testSession = `_wolfpack_doctor_${Date.now()}`;
   try {
-    execSync(`tmux new-session -d -s ${testSession} 2>/dev/null`, { stdio: "ignore" });
-    execSync(`tmux kill-session -t ${testSession} 2>/dev/null`, { stdio: "ignore" });
+    execFileSync("tmux", ["new-session", "-d", "-s", testSession], { stdio: "ignore" });
+    execFileSync("tmux", ["kill-session", "-t", testSession], { stdio: "ignore" });
     results.push({ name: "tmux create/destroy", group: "tmux Runtime", status: "pass", detail: "ok" });
   } catch {
     results.push({
@@ -376,7 +374,7 @@ function checkTmuxRuntime(): CheckResult[] {
       detail: "failed to create test session",
     });
     // cleanup in case creation succeeded but kill failed
-    try { execSync(`tmux kill-session -t ${testSession} 2>/dev/null`, { stdio: "ignore" }); } catch { /* noop */ }
+    try { execFileSync("tmux", ["kill-session", "-t", testSession], { stdio: "ignore" }); } catch { /* noop */ }
   }
 
   return results;
@@ -432,11 +430,11 @@ function checkLogs(): CheckResult[] {
     : `${Math.round(agoMs / 3600000)}h ago`;
   results.push({ name: "wolfpack.log", group: "Logs", status: "pass", detail: `${sizeKB}KB, modified ${ago}` });
 
-  // recent errors
+  // recent errors — read only the tail to avoid loading huge log files
   try {
-    const content = readFileSync(logPath, "utf-8");
-    const lines = content.split("\n");
-    const tail = lines.slice(-100);
+    const tail = execFileSync("tail", ["-n", "100", logPath], {
+      encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
+    }).split("\n");
     const errorLines = tail.filter(l => /\b(error|fatal|crash|SIGKILL|panic)\b/i.test(l));
     if (errorLines.length === 0) {
       results.push({ name: "recent errors", group: "Logs", status: "pass", detail: "none" });
@@ -493,7 +491,15 @@ function printResults(results: CheckResult[]): { pass: number; fail: number; war
   return counts;
 }
 
-export function doctor() {
+async function runCheckGroups(groups: CheckFn[]): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+  for (const group of groups) {
+    results.push(...await group());
+  }
+  return results;
+}
+
+export async function doctor() {
   const doFix = process.argv.includes("--fix");
 
   const checkGroups: CheckFn[] = [
@@ -507,10 +513,7 @@ export function doctor() {
     checkLogs,
   ];
 
-  let allResults: CheckResult[] = [];
-  for (const group of checkGroups) {
-    allResults.push(...group(doFix));
-  }
+  let allResults = await runCheckGroups(checkGroups);
 
   // --fix: attempt fixes then re-run failed checks
   if (doFix) {
@@ -522,14 +525,11 @@ export function doctor() {
           r.fix!();
           print(`    ${green("✓")} fixed: ${r.name}`);
         } catch (e) {
-          print(`    ${red("✗")} fix failed: ${r.name} — ${e}`);
+          print(`    ${red("✗")} fix failed: ${r.name} — ${e instanceof Error ? e.message : e}`);
         }
       }
       // re-run all checks after fixes
-      allResults = [];
-      for (const group of checkGroups) {
-        allResults.push(...group(doFix));
-      }
+      allResults = await runCheckGroups(checkGroups);
     }
   }
 

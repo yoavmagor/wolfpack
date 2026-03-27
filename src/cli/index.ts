@@ -145,7 +145,7 @@ async function main() {
       process.exit(1);
     }
   } else if (cmd === "doctor") {
-    process.exit(doctor());
+    process.exit(await doctor());
   } else if (cmd === "uninstall") {
     uninstall();
   } else if (cmd === "migrate-plan") {
