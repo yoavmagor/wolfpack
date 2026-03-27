@@ -154,6 +154,14 @@ export function __setTestOverrides(overrides: Partial<{
   if (overrides.exec) _execOverride = overrides.exec;
 }
 
+/** Test hook: reset _tmuxListFn back to _realTmuxList.
+ *  Call in beforeEach for tests that need real list/backfill behavior, to undo
+ *  any tmuxList override that integration test modules set at module-load time. */
+export function __resetTmuxListFn(): void {
+  assertTestMode("__resetTmuxListFn");
+  _tmuxListFn = _realTmuxList;
+}
+
 /** Test hook: clear backfill cache for isolation between tests */
 export function __clearBackfillCache(): void {
   assertTestMode("__clearBackfillCache");

@@ -11,6 +11,11 @@ import { createLogger, errMsg } from "./log.js";
 
 const log = createLogger("worktree");
 
+let _cleanupInProgress = false;
+
+/** Test helper — returns true if a cleanup is currently running. */
+export function _isCleanupInProgress(): boolean { return _cleanupInProgress; }
+
 const WORKTREE_DIR = ".wolfpack/worktrees";
 const WORKTREE_ORDER_FILE = ".wolfpack/worktree-order.txt";
 
@@ -59,7 +64,9 @@ export function createWorktree(
     mkdirSync(join(realProjectDir, ".wolfpack"), { recursive: true });
     appendFileSync(orderFile, `${worktreePath}\n`);
   } catch (e: unknown) {
-    log.error("createWorktree: failed to record worktree order", { error: errMsg(e) });
+    // Order file write failed — roll back the worktree to avoid partial state
+    try { removeWorktree(worktreePath); } catch { /* best effort */ }
+    throw e;
   }
   return worktreePath;
 }
@@ -86,14 +93,10 @@ export function removeWorktree(worktreePath: string, projectDir?: string): void 
 }
 
 /**
- * List all git worktrees for the repo at projectDir.
+ * Parse `git worktree list --porcelain` output into WorktreeInfo entries.
+ * Exported for testing — callers should use listWorktrees() instead.
  */
-export function listWorktrees(projectDir: string): WorktreeInfo[] {
-  const output = execFileSync("git", ["worktree", "list", "--porcelain"], {
-    cwd: realpathSync(projectDir),
-    encoding: "utf-8",
-  });
-
+export function parsePorcelainWorktrees(output: string): WorktreeInfo[] {
   const entries: WorktreeInfo[] = [];
   let current: Partial<WorktreeInfo> = {};
 
@@ -119,7 +122,28 @@ export function listWorktrees(projectDir: string): WorktreeInfo[] {
     }
   }
 
+  // Flush final section if output lacks a trailing newline
+  if (current.path) {
+    entries.push({
+      path: current.path,
+      branch: current.branch ?? "",
+      head: current.head ?? "",
+      bare: current.bare ?? false,
+    });
+  }
+
   return entries;
+}
+
+/**
+ * List all git worktrees for the repo at projectDir.
+ */
+export function listWorktrees(projectDir: string): WorktreeInfo[] {
+  const output = execFileSync("git", ["worktree", "list", "--porcelain"], {
+    cwd: realpathSync(projectDir),
+    encoding: "utf-8",
+  });
+  return parsePorcelainWorktrees(output);
 }
 
 /**
@@ -127,6 +151,18 @@ export function listWorktrees(projectDir: string): WorktreeInfo[] {
  * (by numeric-aware sort of directory name, so task 10 sorts after task 9).
  */
 export function cleanupAllExceptFinal(
+  projectDir: string,
+): { removed: string[]; kept: string } {
+  if (_cleanupInProgress) return { removed: [], kept: "" };
+  _cleanupInProgress = true;
+  try {
+    return _cleanupAllExceptFinalImpl(projectDir);
+  } finally {
+    _cleanupInProgress = false;
+  }
+}
+
+function _cleanupAllExceptFinalImpl(
   projectDir: string,
 ): { removed: string[]; kept: string } {
   const realProjectDir = realpathSync(projectDir);

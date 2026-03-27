@@ -38,7 +38,8 @@ describe("handleViewerConflict", () => {
     const s = initialTakeControlState();
     const result = handleViewerConflict(s);
     expect(result.action).toBe("show-overlay");
-    expect(result.newState).toBe(s); // same reference — no mutation needed
+    expect(result.newState).toEqual(s);
+    expect(result.newState).not.toBe(s); // must be a fresh copy, not the original ref
   });
 
   test("auto-takes control when autoTakeControl is true", () => {

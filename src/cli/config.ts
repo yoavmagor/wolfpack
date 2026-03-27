@@ -40,8 +40,12 @@ export function ask(question: string): string {
     hasTTY = false;
     return "";
   }
-  const n = readSync(fd, buf, 0, buf.length, null);
-  closeSync(fd);
+  let n = 0;
+  try {
+    n = readSync(fd, buf, 0, buf.length, null);
+  } finally {
+    closeSync(fd);
+  }
   return buf.subarray(0, n).toString("utf-8").trim();
 }
 

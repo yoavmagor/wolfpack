@@ -6,6 +6,7 @@ import {
 } from "../../src/server/tmux.ts";
 import {
   __setTestOverrides,
+  __resetTmuxListFn,
   __clearBackfillCache,
   __getBackfillCacheSize,
 } from "../../src/test-hooks.ts";
@@ -22,6 +23,9 @@ function makeListOutput(count: number): string {
 
 describe("show-environment backfill cache", () => {
   beforeEach(() => {
+    // Reset _tmuxListFn to _realTmuxList — integration tests set it at module-load
+    // time and in bun 1.3.11+ module state is shared across files in a single run.
+    __resetTmuxListFn();
     sessionDirMap.clear();
     __clearBackfillCache();
   });

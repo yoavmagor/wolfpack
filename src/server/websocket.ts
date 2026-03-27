@@ -8,6 +8,12 @@ import {
   clampRows,
 } from "../validation.js";
 import {
+  CLOSE_CODE_NORMAL,
+  CLOSE_CODE_SESSION_UNAVAILABLE,
+  CLOSE_CODE_DISPLACED,
+  WS_CLOSE_REASONS,
+} from "../ws-constants.js";
+import {
   TMUX,
   DESKTOP_PREFILL_HISTORY_LINES,
   exec,
@@ -143,7 +149,7 @@ export function handleTerminalWs(ws: WebSocket, session: string): void {
         if (!(await isAllowedSession(session))) {
           alive = false;
           updating = false;
-          try { ws.close(4001, "session ended"); } catch (e: unknown) { log.debug(`ws.close failed`, { session, error: errMsg(e) }); }
+          try { ws.close(CLOSE_CODE_SESSION_UNAVAILABLE, WS_CLOSE_REASONS.SESSION_ENDED); } catch (e: unknown) { log.debug(`ws.close failed`, { session, error: errMsg(e) }); }
           return;
         }
       }
@@ -232,11 +238,11 @@ export function teardownPty(session: string): void {
   entry.alive = false;
   activePtySessions.delete(session);
   if (entry.viewer) {
-    try { entry.viewer.close(1000, "pty teardown"); } catch (e: unknown) { log.debug(`teardownPty: viewer close failed`, { session, error: errMsg(e) }); }
+    try { entry.viewer.close(CLOSE_CODE_NORMAL, WS_CLOSE_REASONS.PTY_TEARDOWN); } catch (e: unknown) { log.debug(`teardownPty: viewer close failed`, { session, error: errMsg(e) }); }
     entry.viewer = null;
   }
   if (entry.pendingViewer) {
-    try { entry.pendingViewer.close(1000, "pty teardown"); } catch (e: unknown) { log.debug(`teardownPty: pendingViewer close failed`, { session, error: errMsg(e) }); }
+    try { entry.pendingViewer.close(CLOSE_CODE_NORMAL, WS_CLOSE_REASONS.PTY_TEARDOWN); } catch (e: unknown) { log.debug(`teardownPty: pendingViewer close failed`, { session, error: errMsg(e) }); }
     entry.pendingViewer = null;
   }
   if (entry.proc) {
@@ -267,7 +273,7 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
       const oldViewer = existing.viewer;
       existing.viewer = null;
       if (oldViewer) {
-        try { oldViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`takeover: oldViewer close failed`, { session, error: errMsg(e) }); }
+        try { oldViewer.close(CLOSE_CODE_DISPLACED, WS_CLOSE_REASONS.DISPLACED); } catch (e: unknown) { log.debug(`takeover: oldViewer close failed`, { session, error: errMsg(e) }); }
       }
       const oldProc = existing.proc;
       existing.alive = false;
@@ -277,7 +283,7 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
         try { oldProc.kill(); } catch (e: unknown) { log.debug(`takeover: proc kill failed`, { session, error: errMsg(e) }); }
       }
       if (existing.pendingViewer) {
-        try { existing.pendingViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`displaced pendingViewer close failed`, { session, error: errMsg(e) }); }
+        try { existing.pendingViewer.close(CLOSE_CODE_DISPLACED, WS_CLOSE_REASONS.DISPLACED); } catch (e: unknown) { log.debug(`displaced pendingViewer close failed`, { session, error: errMsg(e) }); }
         existing.pendingViewer = null;
       }
       setupNewPtyEntry(ws, session, dims);
@@ -289,7 +295,7 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
 
     // If there's already a pending viewer, close it
     if (existing.pendingViewer) {
-      try { existing.pendingViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`displaced pendingViewer close failed`, { session, error: errMsg(e) }); }
+      try { existing.pendingViewer.close(CLOSE_CODE_DISPLACED, WS_CLOSE_REASONS.DISPLACED); } catch (e: unknown) { log.debug(`displaced pendingViewer close failed`, { session, error: errMsg(e) }); }
     }
     existing.pendingViewer = ws;
 
@@ -305,7 +311,7 @@ export function handlePtyWs(ws: WebSocket, session: string, reset = false): void
     function cleanupPending() {
       clearInterval(pingTimer);
       if (existing.pendingViewer && existing.pendingViewer !== ws) {
-        try { existing.pendingViewer.close(4002, "displaced"); } catch (e: unknown) { log.debug(`cleanupPending: displaced other pending`, { session, error: errMsg(e) }); }
+        try { existing.pendingViewer.close(CLOSE_CODE_DISPLACED, WS_CLOSE_REASONS.DISPLACED); } catch (e: unknown) { log.debug(`cleanupPending: displaced other pending`, { session, error: errMsg(e) }); }
       }
       ws.removeListener("message", pendingMessage);
       ws.removeListener("close", cleanup);
@@ -406,7 +412,7 @@ function setupNewPtyEntry(
         entry.alive = false;
         activePtySessions.delete(session);
         if (entry.viewer) {
-          try { entry.viewer.close(4001, "session unavailable"); } catch (e: unknown) { log.debug(`session unavailable: viewer close failed`, { session, error: errMsg(e) }); }
+          try { entry.viewer.close(CLOSE_CODE_SESSION_UNAVAILABLE, WS_CLOSE_REASONS.SESSION_UNAVAILABLE); } catch (e: unknown) { log.debug(`session unavailable: viewer close failed`, { session, error: errMsg(e) }); }
           entry.viewer = null;
         }
         return;
@@ -510,8 +516,8 @@ function setupNewPtyEntry(
             entry.alive = false;
             activePtySessions.delete(session);
             const rapid = Date.now() - spawnedAt < RAPID_EXIT_THRESHOLD_MS;
-            const code = rapid ? 4001 : 1000;
-            const reason = rapid ? "session unavailable" : "pty exited";
+            const code = rapid ? CLOSE_CODE_SESSION_UNAVAILABLE : CLOSE_CODE_NORMAL;
+            const reason = rapid ? WS_CLOSE_REASONS.SESSION_UNAVAILABLE : WS_CLOSE_REASONS.PTY_EXITED;
             if (entry.viewer) {
               try { entry.viewer.close(code, reason); } catch (e: unknown) { log.debug(`pty exit: viewer close failed`, { session, error: errMsg(e) }); }
               entry.viewer = null;

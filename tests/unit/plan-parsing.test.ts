@@ -412,9 +412,10 @@ describe("countTasksInContent", () => {
     expect(countTasksInContent(plan)).toEqual({ done: 1, total: 2 });
   });
 
-  test("counts mixed checkboxes and section headers", () => {
+  test("counts mixed checkboxes and section headers — headers win (ISS-09)", () => {
     const plan = "## ~~1. Done task~~\nstuff\n\n## 2. Open task\nmore\n\n- [x] checked\n- [ ] unchecked";
-    expect(countTasksInContent(plan)).toEqual({ done: 2, total: 4 });
+    // Headers present → only headers counted, checkboxes ignored to prevent double-counting
+    expect(countTasksInContent(plan)).toEqual({ done: 1, total: 2 });
   });
 
   test("returns zero for empty content", () => {
@@ -469,13 +470,14 @@ describe("plan corruption detection", () => {
     expect(totalAfter < totalBefore).toBe(false);
   });
 
-  test("no false positive when subtasks are added", () => {
+  test("no false positive when subtasks are added (ISS-09)", () => {
     const before = "## 1. Big task\nstuff\n\n## 2. Other\nmore";
     const after = "## 1. Big task\nstuff\n\n## 2. Other\nmore\n\n- [ ] Sub A\n- [ ] Sub B";
     const totalBefore = countTasksInContent(before).total;
     const totalAfter = countTasksInContent(after).total;
     expect(totalBefore).toBe(2);
-    expect(totalAfter).toBe(4); // 2 headers + 2 checkboxes
+    // Headers still present → checkboxes ignored → total unchanged, no corruption false positive
+    expect(totalAfter).toBe(2);
     expect(totalAfter < totalBefore).toBe(false);
   });
 

@@ -42,7 +42,7 @@ export function isValidPlanFile(name: string): boolean {
 
 /** Expand iteration budget by subtask count, capped at ceiling. */
 export function expandBudget(current: number, subtaskCount: number, ceiling: number): number {
-  return current < ceiling ? Math.min(current + subtaskCount, ceiling) : current;
+  return current < ceiling ? Math.min(current + Math.max(0, subtaskCount), ceiling) : current;
 }
 
 /** Choose git diff base for ralph cleanup scope. */
@@ -71,7 +71,7 @@ export function isValidPort(n: number): boolean {
 // ── Shell escaping ──
 
 export function shellEscape(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
+  return "'" + s.replace(/\0/g, "").replace(/'/g, "'\\''") + "'";
 }
 
 // ── XML/plist escaping ──
@@ -140,7 +140,7 @@ export function buildSrtSettings(allowedWriteDir: string): SrtSettings {
     },
     filesystem: {
       denyRead: ["~/.ssh", "~/.gnupg", "~/.aws/credentials"],
-      allowWrite: [absDir, "/tmp"],
+      allowWrite: [absDir, "/tmp", join(homedir(), ".claude")],
       denyWrite: [".env", ".env.*", "*.pem", "*.key"],
     },
   };

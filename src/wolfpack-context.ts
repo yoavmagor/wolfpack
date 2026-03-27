@@ -85,16 +85,29 @@ export function migratePlanFormat(content: string): { content: string; count: nu
 export function countTasksInContent(content: string): { done: number; total: number } {
   let total = 0;
   let done = 0;
-  const cbDone = (content.match(/^- \[x\] /gm) || []).length;
-  const cbOpen = (content.match(/^- \[ \] /gm) || []).length;
-  done += cbDone;
-  total += cbDone + cbOpen;
-  for (const line of content.split("\n")) {
-    if (TASK_HEADER.test(line)) {
-      total++;
-      if (line.includes("~~")) done++;
-    }
+
+  // Detect which format is present — headers take priority
+  const lines = content.split("\n");
+  let hasHeaders = false;
+  for (const line of lines) {
+    if (TASK_HEADER.test(line)) { hasHeaders = true; break; }
   }
+
+  if (hasHeaders) {
+    for (const line of lines) {
+      if (TASK_HEADER.test(line)) {
+        total++;
+        if (line.includes("~~")) done++;
+      }
+    }
+  } else {
+    // Fallback: count checkboxes only when no headers present
+    const cbDone = (content.match(/^- \[x\] /gm) || []).length;
+    const cbOpen = (content.match(/^- \[ \] /gm) || []).length;
+    done = cbDone;
+    total = cbDone + cbOpen;
+  }
+
   return { done, total };
 }
 

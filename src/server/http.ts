@@ -35,6 +35,8 @@ type RateLimiter = ReturnType<typeof createRateLimiter>;
  * Per-IP rate limiter map. Creates a limiter on first request from each IP.
  * Evicts stale entries every `evictIntervalMs` to prevent unbounded growth.
  */
+const MAX_IP_ENTRIES = 10_000;
+
 export function createPerIpRateLimiter(rate: number, evictIntervalMs = 60_000) {
   const map = new Map<string, { rl: RateLimiter; lastSeen: number }>();
 
@@ -49,6 +51,10 @@ export function createPerIpRateLimiter(rate: number, evictIntervalMs = 60_000) {
     allow(ip: string): boolean {
       let entry = map.get(ip);
       if (!entry) {
+        // Cap at MAX_IP_ENTRIES — evict insertion-order oldest (O(1) via Map key order)
+        if (map.size >= MAX_IP_ENTRIES) {
+          map.delete(map.keys().next().value as string);
+        }
         entry = { rl: createRateLimiter(rate), lastSeen: Date.now() };
         map.set(ip, entry);
       }
@@ -174,6 +180,12 @@ export function serveFile(res: ServerResponse, filename: string): void {
 
 // ── Peer discovery ──
 
+/** Strip C0/C1 control characters and truncate to 64 chars. */
+export function sanitizePeerName(name: unknown): string {
+  if (typeof name !== "string") return "";
+  return name.replace(/[\x00-\x1f\x7f-\x9f]/g, "").slice(0, 64);
+}
+
 // Cached peer list for server-side aggregation (populated by /api/discover)
 export let cachedPeers: { url: string; name: string }[] = [];
 
@@ -188,7 +200,7 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
 
   try {
     const { stdout } = await exec(
-      "/bin/sh", ["-l", "-c", `"${tsBin}" status --json`],
+      tsBin, ["status", "--json"],
       { maxBuffer: TAILSCALE_MAX_BUFFER },
     );
     const status = JSON.parse(stdout);
@@ -209,7 +221,8 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
           const r = await fetch(p.url + "/api/info", { signal: ctrl.signal });
           clearTimeout(timer);
           const info = await r.json();
-          return { ...p, name: info.name || p.hostname, version: info.version, wolfpack: true as const };
+          const sanitized = sanitizePeerName(info.name);
+          return { ...p, name: sanitized || p.hostname, version: info.version, wolfpack: true as const };
         } catch { /* expected: peer unreachable or not running wolfpack */
           return { ...p, name: p.hostname, version: undefined, wolfpack: false as const };
         }
