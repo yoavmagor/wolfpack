@@ -13,40 +13,25 @@ import {
   unlinkSync,
 } from "node:fs";
 import { resolve } from "node:path";
-import { homedir, platform, tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { printQR } from "../qr.js";
 import { print, bold, green, red, dim, yellow, WOLF } from "./formatting.js";
 import {
   CONFIG_PATH,
+  IS_MACOS,
+  IS_LINUX,
   hasTTY,
   ask,
   saveConfig,
   sleepSync,
   remoteUrl,
+  tailscaleBin,
   type Config,
 } from "./config.js";
 import { serviceInstall } from "./service.js";
 import { createLogger } from "../log.js";
 
 const log = createLogger("setup");
-
-const IS_MACOS = platform() === "darwin";
-const IS_LINUX = platform() === "linux";
-
-const TAILSCALE_MAC_CLI =
-  "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
-
-function tailscaleBin(): string | null {
-  try {
-    execSync("tailscale version", { stdio: "ignore" });
-    return "tailscale";
-  } catch { /* probe: tailscale not in PATH */ }
-  try {
-    execSync(`${TAILSCALE_MAC_CLI} version`, { stdio: "ignore" });
-    return TAILSCALE_MAC_CLI;
-  } catch { /* probe: Tailscale.app CLI not found */ }
-  return null;
-}
 
 function check(name: string, cmd: string): boolean {
   try {

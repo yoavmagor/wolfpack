@@ -22,6 +22,7 @@ import {
   uninstall,
 } from "./service.js";
 import { setup } from "./setup.js";
+import { doctor } from "./doctor.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { migratePlanFormat, detectOldPlanFormat } from "../wolfpack-context.js";
@@ -143,6 +144,8 @@ async function main() {
       print("  Usage: wolfpack service [install|uninstall|start|stop|status]");
       process.exit(1);
     }
+  } else if (cmd === "doctor") {
+    process.exit(await doctor());
   } else if (cmd === "uninstall") {
     uninstall();
   } else if (cmd === "migrate-plan") {

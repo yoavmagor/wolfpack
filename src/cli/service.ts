@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { homedir, platform } from "node:os";
+import { homedir } from "node:os";
 import { xmlEsc, systemdEsc } from "../validation.js";
 import { createLogger, errMsg } from "../log.js";
 import { print, bold, green, red, dim } from "./formatting.js";
@@ -22,15 +22,14 @@ import { print, bold, green, red, dim } from "./formatting.js";
 const log = createLogger("service");
 import {
   WOLFPACK_DIR,
+  IS_MACOS,
+  IS_LINUX,
   loadConfig,
   isPortInUse,
   killPortHolder,
   waitForPortFree,
   type Config,
 } from "./config.js";
-
-const IS_MACOS = platform() === "darwin";
-const IS_LINUX = platform() === "linux";
 
 import pkg from "../../package.json";
 const VERSION: string = pkg.version;
