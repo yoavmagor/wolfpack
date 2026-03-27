@@ -76,16 +76,39 @@ describe("parseRalphLog — workdir path boundary check (ISS-02)", () => {
     expect(s.tasksDone).toBe(1);
   });
 
-  test("rejects path with prefix match but no separator", () => {
-    // projectDir = .../project, siblingDir = .../project2
-    // project2 starts with "project" but is not a child
-    writeFileSync(join(siblingDir, "PLAN.md"), "- [x] sneaky\n- [x] sneaky2\n");
-    writeFileSync(join(projectDir, "PLAN.md"), "- [ ] legit\n");
-    writeLog(projectDir, logWithWorkdir(siblingDir));
+  test("rejects absolute planFile path (log injection)", () => {
+    // A corrupted or malicious log with plan: /etc/passwd should not read that file
+    const evilLog = [
+      "🥋 ralph — 3 iterations",
+      "agent: claude",
+      "plan: /etc/passwd",
+      "progress: progress.txt",
+      "pid: 0",
+      "started: Mon Jan 01 2024 12:00:00 GMT-0500",
+      "",
+    ].join("\n");
+    writeLog(projectDir, evilLog);
 
     const s = parseRalphLog(projectDir)!;
-    // Must use projectDir's plan, not siblingDir's
-    expect(s.tasksDone).toBe(0);
-    expect(s.tasksTotal).toBe(1);
+    expect(s.planFile).toBe("");
+    expect(s.tasksTotal).toBe(0);
+  });
+
+  test("rejects planFile with .. traversal", () => {
+    // plan: ../../etc/passwd should be rejected, not passed to readFileSync
+    const evilLog = [
+      "🥋 ralph — 3 iterations",
+      "agent: claude",
+      "plan: ../../etc/passwd",
+      "progress: progress.txt",
+      "pid: 0",
+      "started: Mon Jan 01 2024 12:00:00 GMT-0500",
+      "",
+    ].join("\n");
+    writeLog(projectDir, evilLog);
+
+    const s = parseRalphLog(projectDir)!;
+    expect(s.planFile).toBe("");
+    expect(s.tasksTotal).toBe(0);
   });
 });
