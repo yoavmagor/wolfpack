@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import type { CheckResult } from "../../src/cli/doctor.ts";
 
 /**
@@ -6,10 +6,10 @@ import type { CheckResult } from "../../src/cli/doctor.ts";
  * Since doctor probes real system state, these tests just verify:
  * 1. It returns 0 or 1 (not throws)
  * 2. Output format is correct
- * 3. The --fix flag is parsed
+ * 3. The --fix flag is exercised via the exported applyFixes helper
  *
  * For unit-level isolation we test the CheckResult type contract and
- * the runner logic by constructing synthetic results.
+ * the applyFixes runner with synthetic results.
  */
 
 describe("doctor CheckResult contract", () => {
@@ -49,18 +49,62 @@ describe("doctor CheckResult contract", () => {
   });
 });
 
+describe("applyFixes()", () => {
+  test("calls fix functions on failed results", async () => {
+    const { applyFixes } = await import("../../src/cli/doctor.ts");
+    let called = false;
+    const results: CheckResult[] = [
+      { name: "devDir", group: "Config", status: "fail", detail: "missing", fix: () => { called = true; } },
+    ];
+    const count = applyFixes(results);
+    expect(count).toBe(1);
+    expect(called).toBe(true);
+  });
+
+  test("skips pass and warn results", async () => {
+    const { applyFixes } = await import("../../src/cli/doctor.ts");
+    let called = false;
+    const results: CheckResult[] = [
+      { name: "tmux", group: "Dependencies", status: "pass", detail: "ok" },
+      { name: "PATH", group: "Environment", status: "warn", detail: "missing" },
+      { name: "devDir", group: "Config", status: "fail", detail: "missing", fix: () => { called = true; } },
+    ];
+    const count = applyFixes(results);
+    expect(count).toBe(1);
+    expect(called).toBe(true);
+  });
+
+  test("returns 0 when nothing to fix", async () => {
+    const { applyFixes } = await import("../../src/cli/doctor.ts");
+    const results: CheckResult[] = [
+      { name: "tmux", group: "Dependencies", status: "pass", detail: "ok" },
+    ];
+    expect(applyFixes(results)).toBe(0);
+  });
+
+  test("skips fail results with no fix function", async () => {
+    const { applyFixes } = await import("../../src/cli/doctor.ts");
+    const results: CheckResult[] = [
+      { name: "tailscale", group: "Dependencies", status: "fail", detail: "not found", fixHint: "brew install --cask tailscale" },
+    ];
+    expect(applyFixes(results)).toBe(0);
+  });
+
+  test("continues after a fix function throws", async () => {
+    const { applyFixes } = await import("../../src/cli/doctor.ts");
+    let secondCalled = false;
+    const results: CheckResult[] = [
+      { name: "first", group: "Config", status: "fail", detail: "x", fix: () => { throw new Error("boom"); } },
+      { name: "second", group: "Config", status: "fail", detail: "y", fix: () => { secondCalled = true; } },
+    ];
+    const count = applyFixes(results);
+    expect(count).toBe(2);
+    expect(secondCalled).toBe(true);
+  });
+});
+
 describe("doctor() integration", () => {
-  const originalArgv = process.argv;
-
-  beforeEach(() => {
-    process.argv = ["bun", "wolfpack", "doctor"];
-  });
-
-  afterEach(() => {
-    process.argv = originalArgv;
-  });
-
-  test("returns 0 or 1 without throwing", async () => {
+  test("returns 0 or 1 without throwing (no --fix)", async () => {
     const { doctor } = await import("../../src/cli/doctor.ts");
     const code = await doctor();
     expect(code === 0 || code === 1).toBe(true);
@@ -70,23 +114,17 @@ describe("doctor() integration", () => {
     const { doctor } = await import("../../src/cli/doctor.ts");
     expect(typeof await doctor()).toBe("number");
   });
-});
 
-describe("doctor --fix flag parsing", () => {
-  const originalArgv = process.argv;
-
-  afterEach(() => {
-    process.argv = originalArgv;
+  test("accepts { fix: true } without throwing", async () => {
+    const { doctor } = await import("../../src/cli/doctor.ts");
+    const code = await doctor({ fix: true });
+    expect(code === 0 || code === 1).toBe(true);
   });
 
-  test("--fix is detected from argv", () => {
-    process.argv = ["bun", "wolfpack", "doctor", "--fix"];
-    expect(process.argv.includes("--fix")).toBe(true);
-  });
-
-  test("no --fix when absent", () => {
-    process.argv = ["bun", "wolfpack", "doctor"];
-    expect(process.argv.includes("--fix")).toBe(false);
+  test("accepts { fix: false } explicitly", async () => {
+    const { doctor } = await import("../../src/cli/doctor.ts");
+    const code = await doctor({ fix: false });
+    expect(code === 0 || code === 1).toBe(true);
   });
 });
 
@@ -94,7 +132,6 @@ describe("tailscaleBin shared export", () => {
   test("tailscaleBin is exported from config", async () => {
     const { tailscaleBin } = await import("../../src/cli/config.ts");
     expect(typeof tailscaleBin).toBe("function");
-    // returns string or null
     const result = tailscaleBin();
     expect(result === null || typeof result === "string").toBe(true);
   });

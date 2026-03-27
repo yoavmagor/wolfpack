@@ -33,8 +33,6 @@ import { createLogger } from "../log.js";
 
 const log = createLogger("setup");
 
-
-
 function check(name: string, cmd: string): boolean {
   try {
     execSync(cmd, { stdio: "ignore" });

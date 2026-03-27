@@ -6,7 +6,6 @@ import {
   accessSync,
   chmodSync,
   constants as fsConstants,
-  copyFileSync,
   existsSync,
   mkdirSync,
   statSync,
@@ -27,6 +26,7 @@ import {
   isServiceInstalled,
   isServiceRunning,
   serviceStart,
+  updateStableBinary,
 } from "./service.js";
 
 export interface CheckResult {
@@ -75,7 +75,7 @@ function checkDeps(): CheckResult[] {
         .trim().split("\n")[0];
       results.push({ name: "tailscale", group: "Dependencies", status: "pass", detail: ver });
     } catch {
-      results.push({ name: "tailscale", group: "Dependencies", status: "pass", detail: "installed" });
+      results.push({ name: "tailscale", group: "Dependencies", status: "warn", detail: "installed (version unreadable)" });
     }
 
     // tailscale connected?
@@ -212,7 +212,7 @@ function checkService(): CheckResult[] {
   if (config) {
     if (isPortInUse(config.port)) {
       if (isServiceRunning()) {
-        results.push({ name: `port ${config.port}`, group: "Service", status: "pass", detail: "owned by wolfpack" });
+        results.push({ name: `port ${config.port}`, group: "Service", status: "pass", detail: "in use, service active" });
       } else {
         results.push({
           name: `port ${config.port}`, group: "Service", status: "fail",
@@ -299,13 +299,10 @@ function checkBinary(): CheckResult[] {
     results.push({
       name: "binary", group: "Binary", status: "fail", detail: "missing",
       fix: () => {
-        const exe = process.execPath;
-        if (exe.endsWith("/bun") || !existsSync(exe)) {
-          throw new Error("running under bun — rebuild and copy binary manually: bun run scripts/build.ts");
+        const replaced = updateStableBinary();
+        if (!replaced) {
+          throw new Error("cannot copy binary — rebuild first: bun run scripts/build.ts");
         }
-        mkdirSync(join(WOLFPACK_DIR, "bin"), { recursive: true });
-        copyFileSync(exe, stableBin);
-        chmodSync(stableBin, 0o755);
       },
     });
     return results;
@@ -499,8 +496,23 @@ async function runCheckGroups(groups: CheckFn[]): Promise<CheckResult[]> {
   return results;
 }
 
-export async function doctor() {
-  const doFix = process.argv.includes("--fix");
+/** Run fix functions on failed results. Returns count of fix attempts. */
+export function applyFixes(results: CheckResult[]): number {
+  const fixable = results.filter(r => r.status === "fail" && r.fix);
+  if (fixable.length === 0) return 0;
+  print(bold("\n  Attempting fixes..."));
+  for (const r of fixable) {
+    try {
+      r.fix!();
+      print(`    ${green("✓")} fixed: ${r.name}`);
+    } catch (e) {
+      print(`    ${red("✗")} fix failed: ${r.name} — ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  return fixable.length;
+}
+
+export async function doctor({ fix: doFix = process.argv.includes("--fix") } = {}) {
 
   const checkGroups: CheckFn[] = [
     checkDeps,
@@ -515,22 +527,9 @@ export async function doctor() {
 
   let allResults = await runCheckGroups(checkGroups);
 
-  // --fix: attempt fixes then re-run failed checks
-  if (doFix) {
-    const fixable = allResults.filter(r => r.status === "fail" && r.fix);
-    if (fixable.length > 0) {
-      print(bold("\n  Attempting fixes..."));
-      for (const r of fixable) {
-        try {
-          r.fix!();
-          print(`    ${green("✓")} fixed: ${r.name}`);
-        } catch (e) {
-          print(`    ${red("✗")} fix failed: ${r.name} — ${e instanceof Error ? e.message : e}`);
-        }
-      }
-      // re-run all checks after fixes
-      allResults = await runCheckGroups(checkGroups);
-    }
+  // --fix: attempt fixes then re-run
+  if (doFix && applyFixes(allResults) > 0) {
+    allResults = await runCheckGroups(checkGroups);
   }
 
   const counts = printResults(allResults);
