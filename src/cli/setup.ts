@@ -1,7 +1,7 @@
 /**
  * Interactive setup wizard.
  */
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import {
   closeSync,
   constants as fsConstants,
@@ -9,9 +9,11 @@ import {
   mkdirSync,
   openSync,
   readSync,
+  writeFileSync,
+  unlinkSync,
 } from "node:fs";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { printQR } from "../qr.js";
 import { print, bold, green, red, dim, yellow, WOLF } from "./formatting.js";
 import {
@@ -126,7 +128,27 @@ export async function setup() {
       }
       if (missing.includes("tailscale")) {
         print("  Installing Tailscale...");
-        execSync("curl -fsSL https://tailscale.com/install.sh | sudo sh", { stdio: "inherit" });
+        const tmpScript = `${tmpdir()}/tailscale-install-${process.pid}.sh`;
+        let userDeclined = false;
+        try {
+          execFileSync("curl", ["-fsSL", "-o", tmpScript, "https://tailscale.com/install.sh"]);
+          print(dim(`  Script downloaded to ${tmpScript} — inspect before running.`));
+          if (hasTTY) {
+            const ok = ask("  Run installer now? (y/n) ");
+            if (ok.toLowerCase() !== "y") {
+              userDeclined = true;
+              print(dim(`  Skipped. Run manually: sudo sh ${tmpScript}`));
+            } else {
+              execFileSync("sudo", ["sh", tmpScript], { stdio: "inherit" });
+            }
+          } else {
+            execFileSync("sudo", ["sh", tmpScript], { stdio: "inherit" });
+          }
+        } finally {
+          if (!userDeclined) {
+            try { unlinkSync(tmpScript); } catch { /* best effort */ }
+          }
+        }
       }
     }
 

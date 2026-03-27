@@ -16,11 +16,10 @@ import {
 // ── shellEscape: null bytes, control chars, unicode ──
 
 describe("shellEscape — hostile input", () => {
-  test("null byte is preserved inside quotes (not truncated)", () => {
+  test("null byte is stripped before quoting (ISS-06)", () => {
     const result = shellEscape("a\0b");
-    // Shell single-quoting preserves content literally — null byte stays inside quotes
-    expect(result).toBe("'a\0b'");
-    // Critical: result must still start and end with single quote
+    // NUL bytes are stripped to prevent shell-dependent truncation behavior
+    expect(result).toBe("'ab'");
     expect(result.startsWith("'")).toBe(true);
     expect(result.endsWith("'")).toBe(true);
   });

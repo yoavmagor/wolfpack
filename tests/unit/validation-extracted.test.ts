@@ -9,6 +9,7 @@ import {
   clampRows,
   isValidPort,
   shellEscape,
+  expandBudget,
 } from "../../src/validation.ts";
 
 // ── clampCols ──
@@ -205,5 +206,30 @@ describe("isValidPlanFile", () => {
     expect(isValidPlanFile("../evil.md")).toBe(false);
     expect(isValidPlanFile("plan.txt")).toBe(false);
     expect(isValidPlanFile("")).toBe(false);
+  });
+});
+
+// ── expandBudget (ISS-12) ──
+
+describe("expandBudget", () => {
+  test("adds subtask count within ceiling", () => {
+    expect(expandBudget(5, 3, 20)).toBe(8);
+  });
+
+  test("caps at ceiling", () => {
+    expect(expandBudget(18, 5, 20)).toBe(20);
+  });
+
+  test("no-ops when already at ceiling", () => {
+    expect(expandBudget(20, 5, 20)).toBe(20);
+  });
+
+  test("clamps negative subtaskCount to 0 (ISS-12)", () => {
+    expect(expandBudget(10, -3, 20)).toBe(10);
+    expect(expandBudget(10, -100, 20)).toBe(10);
+  });
+
+  test("zero subtaskCount is a no-op", () => {
+    expect(expandBudget(10, 0, 20)).toBe(10);
   });
 });

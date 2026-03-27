@@ -325,7 +325,8 @@ describe("strict all-done detection", () => {
     expect(extractCurrentTask(planPath, progressPath)).toBeNull();
     // planTotal > 0 → worker would write all_tasks_done: true
     const { total } = countTasksInContent(readFileSync(planPath, "utf-8"));
-    expect(total).toBe(5); // 2 sections + 3 checkboxes
+    // Headers present → only headers counted (ISS-09 fix: no double-counting with checkboxes)
+    expect(total).toBe(2); // 2 section headers only
     expect(total).toBeGreaterThan(0);
   });
 
@@ -345,9 +346,10 @@ describe("strict all-done detection", () => {
 
     const status = parseRalphLog(tmpDir);
     expect(status!.completed).toBe(true);
-    // tasksDone (3) != tasksTotal (5) but completed is still true
+    // tasksDone (3 DONE lines) != tasksTotal (2 headers) but completed=true via all_tasks_done
+    // ISS-09: headers-only counting means total=2, not 5
     expect(status!.tasksDone).toBe(3);
-    expect(status!.tasksTotal).toBe(5);
+    expect(status!.tasksTotal).toBe(2);
   });
 
   test("completed=false when all_tasks_done is NOT in log (tasks remain)", () => {
@@ -479,7 +481,8 @@ describe("parseRalphLog completed status (strict)", () => {
 
     const status = parseRalphLog(tmpDir);
     expect(status!.completed).toBe(true);
-    expect(status!.tasksTotal).toBe(4);
+    // ISS-09: headers-only counting → total=2 (not 4). tasksDone=4 from progress file.
+    expect(status!.tasksTotal).toBe(2);
     expect(status!.tasksDone).toBe(4);
   });
 });
@@ -787,10 +790,11 @@ describe("full lifecycle simulation", () => {
     );
 
     const status = parseRalphLog(tmpDir);
-    // completed=true even though tasksDone(3) != tasksTotal(5)
+    // completed=true even though tasksDone(3) != tasksTotal(2)
+    // ISS-09: headers-only counting → total=2, not 5
     expect(status!.completed).toBe(true);
     expect(status!.tasksDone).toBe(3);
-    expect(status!.tasksTotal).toBe(5);
+    expect(status!.tasksTotal).toBe(2);
 
     const { status: uiStatus } = getRalphStatus(status!);
     expect(uiStatus).toBe("done");

@@ -24,11 +24,10 @@ describe("uniqueSessionName dot normalization", () => {
   const DEV = process.env.WOLFPACK_DEV_DIR!;
 
   function mockSessions(names: string[]) {
-    // Use listSessionsRaw so _tmuxListFn stays as _realTmuxList (no cross-test pollution)
-    const raw = names.map(n => `${n}|||${DEV}/${n}`).join("\n");
+    // Override tmuxList directly — avoids depending on _realTmuxList's filtering
+    // and is immune to integration tests overriding _tmuxListFn at module-load time.
     __setTestOverrides({
-      listSessionsRaw: async () => raw,
-      showEnvironment: async () => "",
+      tmuxList: async () => names,
     });
     sessionDirMap.clear();
   }

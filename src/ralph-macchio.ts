@@ -432,8 +432,8 @@ function parseSubtasks(output: string): string[] {
 }
 
 function appendSubtasksToPlan(subtasks: string[]): void {
-  // sanitize: strip markdown headers and strikethrough markers
-  const safe = subtasks.map(t => t.replace(/^#+\s*/, "").replace(/~~/g, "").trim()).filter(Boolean);
+  // sanitize: collapse embedded newlines first, then strip markdown headers and strikethrough markers
+  const safe = subtasks.map(t => t.replace(/[\r\n]+/g, " ").replace(/^#+\s*/, "").replace(/~~/g, "").trim()).filter(Boolean);
   const lines = safe.map(t => `- [ ] ${t}`).join("\n");
   appendFileSync(PLAN_PATH, "\n" + lines + "\n");
 }

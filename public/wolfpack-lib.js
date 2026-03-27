@@ -90,10 +90,19 @@ function suspendGridState(gridSessions, focusIndex) {
 function resumeGridState(suspendedSessions, focusIndex) {
   return cloneGridState(suspendedSessions, focusIndex);
 }
-// src/take-control-logic.ts
-var CLOSE_CODE_DISPLACED = 4002;
-var CLOSE_CODE_SESSION_UNAVAILABLE = 4001;
+// src/ws-constants.ts
 var CLOSE_CODE_NORMAL = 1000;
+var CLOSE_CODE_SESSION_UNAVAILABLE = 4001;
+var CLOSE_CODE_DISPLACED = 4002;
+var WS_CLOSE_REASONS = {
+  PTY_EXITED: "pty exited",
+  SESSION_UNAVAILABLE: "session unavailable",
+  DISPLACED: "displaced",
+  PTY_TEARDOWN: "pty teardown",
+  SESSION_ENDED: "session ended"
+};
+
+// src/take-control-logic.ts
 function handleViewerConflict(state) {
   if (state.autoTakeControl) {
     return {
@@ -103,7 +112,7 @@ function handleViewerConflict(state) {
   }
   return {
     action: "show-overlay",
-    newState: state
+    newState: { ...state }
   };
 }
 function handleControlGranted(state) {
@@ -114,7 +123,7 @@ function classifyDisconnect(code, reason) {
     return "displaced";
   if (code === CLOSE_CODE_SESSION_UNAVAILABLE)
     return "session-ended";
-  if (code === CLOSE_CODE_NORMAL && reason === "pty exited")
+  if (code === CLOSE_CODE_NORMAL && reason === WS_CLOSE_REASONS.PTY_EXITED)
     return "pty-exited";
   return "reconnect";
 }
