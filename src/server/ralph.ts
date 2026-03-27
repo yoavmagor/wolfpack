@@ -198,13 +198,14 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
       const workdirMatch = content.match(/^workdir:\s*(.+)/m);
       const workdirPath = workdirMatch ? workdirMatch[1].trim() : "";
       // validate workdir is under projectDir to prevent path traversal
-      const planBase = workdirPath && workdirPath.startsWith(projectDir) && existsSync(join(workdirPath, status.planFile))
+      const isUnderProject = workdirPath === projectDir || workdirPath.startsWith(projectDir + "/");
+      const planBase = workdirPath && isUnderProject && existsSync(join(workdirPath, status.planFile))
         ? workdirPath
         : projectDir;
       const tasks = countPlanTasks(join(planBase, status.planFile));
       status.tasksTotal = tasks.total;
       // done count comes from progress.txt DONE: lines (for progress bar display)
-      const progressBase = workdirPath && workdirPath.startsWith(projectDir) && existsSync(join(workdirPath, status.progressFile))
+      const progressBase = workdirPath && isUnderProject && existsSync(join(workdirPath, status.progressFile))
         ? workdirPath
         : projectDir;
       status.tasksDone = countProgressDone(join(progressBase, status.progressFile));
