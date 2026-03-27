@@ -91,9 +91,17 @@ function resumeGridState(suspendedSessions, focusIndex) {
   return cloneGridState(suspendedSessions, focusIndex);
 }
 // src/ws-constants.ts
-var CLOSE_CODE_NORMAL2 = 1000;
-var CLOSE_CODE_SESSION_UNAVAILABLE2 = 4001;
-var CLOSE_CODE_DISPLACED2 = 4002;
+var CLOSE_CODE_NORMAL = 1000;
+var CLOSE_CODE_SESSION_UNAVAILABLE = 4001;
+var CLOSE_CODE_DISPLACED = 4002;
+var WS_CLOSE_REASONS = {
+  PTY_EXITED: "pty exited",
+  SESSION_UNAVAILABLE: "session unavailable",
+  DISPLACED: "displaced",
+  PTY_TEARDOWN: "pty teardown",
+  SESSION_ENDED: "session ended"
+};
+
 // src/take-control-logic.ts
 function handleViewerConflict(state) {
   if (state.autoTakeControl) {
@@ -128,6 +136,6 @@ function handleDisplaced(state) {
 function prepareAutoTakeControl(state) {
   return { ...state, autoTakeControl: true };
 }
-var WP = {suspendGridState, shouldRehydrate, shouldInterceptCopy, serializeBufferTail, scrollTargetAfterResize, resumeGridState, removeFromGridState, prepareAutoTakeControl, handleViewerConflict, handleTakeControlClick, handleDisplaced, handleControlGranted, encodeTerminalBinary, classifyDisconnect, captureScrollState, addToGridState, CLOSE_CODE_SESSION_UNAVAILABLE: CLOSE_CODE_SESSION_UNAVAILABLE2, CLOSE_CODE_NORMAL: CLOSE_CODE_NORMAL2, CLOSE_CODE_DISPLACED: CLOSE_CODE_DISPLACED2};
+var WP = {suspendGridState, shouldRehydrate, shouldInterceptCopy, serializeBufferTail, scrollTargetAfterResize, resumeGridState, removeFromGridState, prepareAutoTakeControl, handleViewerConflict, handleTakeControlClick, handleDisplaced, handleControlGranted, encodeTerminalBinary, classifyDisconnect, captureScrollState, addToGridState, CLOSE_CODE_SESSION_UNAVAILABLE, CLOSE_CODE_NORMAL, CLOSE_CODE_DISPLACED};
 window.WP = WP;
 })();
