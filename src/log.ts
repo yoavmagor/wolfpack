@@ -37,12 +37,13 @@ interface LogEntry {
 
 function emit(level: LogLevel, component: Component, msg: string, extra?: Record<string, unknown>): void {
   if (!shouldLog(level)) return;
+  const ts = new Date().toISOString();
   const entry: LogEntry = {
-    ts: new Date().toISOString(),
+    ...extra,
+    ts,
     level,
     component,
     msg,
-    ...extra,
   };
   const line = JSON.stringify(entry);
   if (level === "error") {

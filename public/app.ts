@@ -522,6 +522,7 @@ function createPtySocketClient(opts) {
   let consumeReset = !!opts.resetPty;
   let _initialPrefillMode = opts.prefillMode || "full";
   let _attachAckTimer = null;
+  let _attachAckReceived = false;
   let _awaitingAttachAck = false;
   let _prefillChunks: Uint8Array[] = [];
   let _awaitingPrefillDone = false;
@@ -553,6 +554,7 @@ function createPtySocketClient(opts) {
     _initialPrefillMode = "full";
     _lastSentResize = dims.cols + "x" + dims.rows;
     _awaitingAttachAck = true;
+    _attachAckReceived = false;
     _prefillChunks = [];
     _awaitingPrefillDone = prefillMode !== "none";
     _sawViewportPrefill = false;
@@ -563,6 +565,7 @@ function createPtySocketClient(opts) {
     // Compatibility fallback: older servers don't implement attach_ack.
     _attachAckTimer = setTimeout(() => {
       _attachAckTimer = null;
+      if (_attachAckReceived) return;
       if (!_awaitingAttachAck) return;
       _awaitingAttachAck = false;
       _lastSentResize = "";
@@ -615,6 +618,7 @@ function createPtySocketClient(opts) {
         try {
           const msg = JSON.parse(ev.data);
           if (msg.type === "attach_ack") {
+            _attachAckReceived = true;
             _awaitingAttachAck = false;
             if (_attachAckTimer) { clearTimeout(_attachAckTimer); _attachAckTimer = null; }
           } else if (msg.type === "pty_ready") {
@@ -1320,8 +1324,8 @@ function errorMessage(err) {
 }
 
 async function api(path, opts, machineUrl) {
-  const base = machineUrl ? machineUrl + "/api" : "/api";
-  const res = await fetch(base + path, opts);
+  const base = machineUrl ? new URL("/api" + path, machineUrl).href : "/api" + path;
+  const res = await fetch(base, opts);
   const body = await res.text();
   let data = {};
   if (body) {
@@ -1568,6 +1572,12 @@ const TRIAGE_MAP = {
   "idle":        { dot: "gray",   card: "idle-session", label: "idle", title: "idle" },
 };
 
+const VALID_TRIAGE = new Set(["needs-input", "running", "idle"]);
+
+function safeTriage(v: string): string {
+  return VALID_TRIAGE.has(v) ? v : "idle";
+}
+
 function triageUi(triage) {
   return TRIAGE_MAP[triage] || TRIAGE_MAP["idle"];
 }
@@ -1593,7 +1603,7 @@ function renderMachineGroupHtml(g, multiMachine) {
         return `<div class="card card-stagger ${anim} ${ui.card}" style="${state.firstLoad ? 'animation-delay:' + i * 30 + 'ms' : ''}" onclick="openSession('${escAttr(s.name)}'${mUrlAttr ? ", '" + mUrlAttr + "'" : ''})">
           <div class="dot ${ui.dot}" title="${ui.title}"></div>
           <div class="card-info">
-            <div class="card-name">${esc(s.name)}<span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
+            <div class="card-name">${esc(s.name)}<span class="triage-badge ${safeTriage(s.triage || "idle")}">${ui.label}</span></div>
             <div class="card-preview">${esc(lastLine)}</div>
           </div>
           <button class="kill-btn" onclick="killSession('${escAttr(s.name)}', event${mUrlAttr ? ", '" + mUrlAttr + "'" : ''})">&times;</button>
@@ -3389,7 +3399,7 @@ function sidebarCardHtml(s, machineUrl) {
     <div class="dot ${ui.dot}" title="${ui.title}"></div>
     <div class="card-info">
       <div class="card-name">${esc(s.name)}</div>
-      <div class="card-status"><span class="triage-badge ${esc(s.triage || "idle")}">${ui.label}</span></div>
+      <div class="card-status"><span class="triage-badge ${safeTriage(s.triage || "idle")}">${ui.label}</span></div>
       <div class="card-preview">${esc(lastLine)}</div>
     </div>
     ${gridBtn}

@@ -29,15 +29,14 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 /**
- * Kill a process and its group. SIGTERM first, SIGKILL after timeout.
+ * Kill a process. SIGTERM first, SIGKILL after timeout.
  * Resolves once the process is confirmed dead (or timeout+SIGKILL).
  */
 export async function killProcessTree(
   pid: number,
   timeoutMs = 5000,
 ): Promise<void> {
-  // Send SIGTERM to process group and individual pid
-  try { process.kill(-pid, "SIGTERM"); } catch (e) { _warn("killProcessTree: SIGTERM to group failed", { pid: -pid, error: errMsg(e) }); }
+  // Send SIGTERM to individual pid
   try { process.kill(pid, "SIGTERM"); } catch (e) { _warn("killProcessTree: SIGTERM to pid failed", { pid, error: errMsg(e) }); }
 
   // Poll until dead or timeout
@@ -48,7 +47,6 @@ export async function killProcessTree(
   }
 
   // Escalate to SIGKILL
-  try { process.kill(-pid, "SIGKILL"); } catch (e) { _warn("killProcessTree: SIGKILL to group failed", { pid: -pid, error: errMsg(e) }); }
   try { process.kill(pid, "SIGKILL"); } catch (e) { _warn("killProcessTree: SIGKILL to pid failed", { pid, error: errMsg(e) }); }
 
   // Brief wait for SIGKILL to take effect
@@ -57,14 +55,12 @@ export async function killProcessTree(
 
 /**
  * Synchronous best-effort kill for use in signal handlers where async won't complete.
- * Sends SIGTERM to group + pid, waits briefly for graceful shutdown, then SIGKILL.
+ * Sends SIGTERM to pid, waits briefly for graceful shutdown, then SIGKILL.
  * Uses spawnSync sleep so the child's SIGTERM handler gets ~500ms to run.
  */
 export function killProcessTreeSync(pid: number): void {
-  try { process.kill(-pid, "SIGTERM"); } catch { /* best effort */ }
   try { process.kill(pid, "SIGTERM"); } catch { /* best effort */ }
   // Give child's SIGTERM handler a moment before escalating
   try { spawnSync("sleep", ["0.5"]); } catch { /* best effort */ }
-  try { process.kill(-pid, "SIGKILL"); } catch { /* best effort */ }
   try { process.kill(pid, "SIGKILL"); } catch { /* best effort */ }
 }

@@ -90,10 +90,11 @@ function suspendGridState(gridSessions, focusIndex) {
 function resumeGridState(suspendedSessions, focusIndex) {
   return cloneGridState(suspendedSessions, focusIndex);
 }
+// src/ws-constants.ts
+var CLOSE_CODE_NORMAL2 = 1000;
+var CLOSE_CODE_SESSION_UNAVAILABLE2 = 4001;
+var CLOSE_CODE_DISPLACED2 = 4002;
 // src/take-control-logic.ts
-var CLOSE_CODE_DISPLACED = 4002;
-var CLOSE_CODE_SESSION_UNAVAILABLE = 4001;
-var CLOSE_CODE_NORMAL = 1000;
 function handleViewerConflict(state) {
   if (state.autoTakeControl) {
     return {
@@ -103,7 +104,7 @@ function handleViewerConflict(state) {
   }
   return {
     action: "show-overlay",
-    newState: state
+    newState: { ...state }
   };
 }
 function handleControlGranted(state) {
@@ -114,7 +115,7 @@ function classifyDisconnect(code, reason) {
     return "displaced";
   if (code === CLOSE_CODE_SESSION_UNAVAILABLE)
     return "session-ended";
-  if (code === CLOSE_CODE_NORMAL && reason === "pty exited")
+  if (code === CLOSE_CODE_NORMAL && reason === WS_CLOSE_REASONS.PTY_EXITED)
     return "pty-exited";
   return "reconnect";
 }
@@ -127,6 +128,6 @@ function handleDisplaced(state) {
 function prepareAutoTakeControl(state) {
   return { ...state, autoTakeControl: true };
 }
-var WP = {suspendGridState, shouldRehydrate, shouldInterceptCopy, serializeBufferTail, scrollTargetAfterResize, resumeGridState, removeFromGridState, prepareAutoTakeControl, handleViewerConflict, handleTakeControlClick, handleDisplaced, handleControlGranted, encodeTerminalBinary, classifyDisconnect, captureScrollState, addToGridState, CLOSE_CODE_SESSION_UNAVAILABLE, CLOSE_CODE_NORMAL, CLOSE_CODE_DISPLACED};
+var WP = {suspendGridState, shouldRehydrate, shouldInterceptCopy, serializeBufferTail, scrollTargetAfterResize, resumeGridState, removeFromGridState, prepareAutoTakeControl, handleViewerConflict, handleTakeControlClick, handleDisplaced, handleControlGranted, encodeTerminalBinary, classifyDisconnect, captureScrollState, addToGridState, CLOSE_CODE_SESSION_UNAVAILABLE: CLOSE_CODE_SESSION_UNAVAILABLE2, CLOSE_CODE_NORMAL: CLOSE_CODE_NORMAL2, CLOSE_CODE_DISPLACED: CLOSE_CODE_DISPLACED2};
 window.WP = WP;
 })();
