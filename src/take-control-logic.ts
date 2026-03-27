@@ -5,13 +5,20 @@
  * without DOM or WebSocket dependencies.
  */
 
+import {
+  CLOSE_CODE_DISPLACED,
+  CLOSE_CODE_SESSION_UNAVAILABLE,
+  CLOSE_CODE_NORMAL,
+  WS_CLOSE_REASONS,
+} from "./ws-constants.js";
+
 // Re-export close codes so existing consumers don't break
 export {
   CLOSE_CODE_DISPLACED,
   CLOSE_CODE_SESSION_UNAVAILABLE,
   CLOSE_CODE_NORMAL,
   WS_CLOSE_REASONS,
-} from "./ws-constants.js";
+};
 
 // ── Decision types ──
 

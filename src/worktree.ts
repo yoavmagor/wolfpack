@@ -93,14 +93,10 @@ export function removeWorktree(worktreePath: string, projectDir?: string): void 
 }
 
 /**
- * List all git worktrees for the repo at projectDir.
+ * Parse `git worktree list --porcelain` output into WorktreeInfo entries.
+ * Exported for testing — callers should use listWorktrees() instead.
  */
-export function listWorktrees(projectDir: string): WorktreeInfo[] {
-  const output = execFileSync("git", ["worktree", "list", "--porcelain"], {
-    cwd: realpathSync(projectDir),
-    encoding: "utf-8",
-  });
-
+export function parsePorcelainWorktrees(output: string): WorktreeInfo[] {
   const entries: WorktreeInfo[] = [];
   let current: Partial<WorktreeInfo> = {};
 
@@ -137,6 +133,17 @@ export function listWorktrees(projectDir: string): WorktreeInfo[] {
   }
 
   return entries;
+}
+
+/**
+ * List all git worktrees for the repo at projectDir.
+ */
+export function listWorktrees(projectDir: string): WorktreeInfo[] {
+  const output = execFileSync("git", ["worktree", "list", "--porcelain"], {
+    cwd: realpathSync(projectDir),
+    encoding: "utf-8",
+  });
+  return parsePorcelainWorktrees(output);
 }
 
 /**

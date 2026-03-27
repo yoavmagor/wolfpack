@@ -142,12 +142,14 @@ export async function setup() {
       if (missing.includes("tailscale")) {
         print("  Installing Tailscale...");
         const tmpScript = `${tmpdir()}/tailscale-install-${process.pid}.sh`;
+        let userDeclined = false;
         try {
           execFileSync("curl", ["-fsSL", "-o", tmpScript, "https://tailscale.com/install.sh"]);
           print(dim(`  Script downloaded to ${tmpScript} — inspect before running.`));
           if (hasTTY) {
             const ok = ask("  Run installer now? (y/n) ");
             if (ok.toLowerCase() !== "y") {
+              userDeclined = true;
               print(dim(`  Skipped. Run manually: sudo sh ${tmpScript}`));
             } else {
               execFileSync("sudo", ["sh", tmpScript], { stdio: "inherit" });
@@ -156,7 +158,9 @@ export async function setup() {
             execFileSync("sudo", ["sh", tmpScript], { stdio: "inherit" });
           }
         } finally {
-          try { unlinkSync(tmpScript); } catch { /* best effort */ }
+          if (!userDeclined) {
+            try { unlinkSync(tmpScript); } catch { /* best effort */ }
+          }
         }
       }
     }

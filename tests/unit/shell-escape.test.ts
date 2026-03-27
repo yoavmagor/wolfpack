@@ -39,4 +39,10 @@ describe("shellEscape", () => {
   test("handles dollar signs and backticks", () => {
     expect(shellEscape("$HOME `whoami`")).toBe("'$HOME `whoami`'");
   });
+
+  test("strips NUL bytes (ISS-06)", () => {
+    expect(shellEscape("hel\0lo")).toBe("'hello'");
+    expect(shellEscape("\0\0\0")).toBe("''");
+    expect(shellEscape("cmd\0;evil")).toBe("'cmd;evil'");
+  });
 });

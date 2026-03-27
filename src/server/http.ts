@@ -51,14 +51,9 @@ export function createPerIpRateLimiter(rate: number, evictIntervalMs = 60_000) {
     allow(ip: string): boolean {
       let entry = map.get(ip);
       if (!entry) {
-        // Cap at MAX_IP_ENTRIES — evict oldest entry before inserting
+        // Cap at MAX_IP_ENTRIES — evict insertion-order oldest (O(1) via Map key order)
         if (map.size >= MAX_IP_ENTRIES) {
-          let oldestIp: string | null = null;
-          let oldestTime = Infinity;
-          for (const [k, v] of map) {
-            if (v.lastSeen < oldestTime) { oldestTime = v.lastSeen; oldestIp = k; }
-          }
-          if (oldestIp !== null) map.delete(oldestIp);
+          map.delete(map.keys().next().value as string);
         }
         entry = { rl: createRateLimiter(rate), lastSeen: Date.now() };
         map.set(ip, entry);
