@@ -9,11 +9,18 @@ import {
   unlinkSync,
 } from "node:fs";
 import { createLogger, errMsg } from "../log.js";
-import { join } from "node:path";
+import { join, normalize, isAbsolute } from "node:path";
 import { countTasksInContent, validatePlanFormat } from "../wolfpack-context.js";
 import { DEV_DIR } from "./tmux.js";
 
 const log = createLogger("ralph");
+
+/** Returns true if p is a safe relative path — no absolute paths, no .. traversal. */
+function isSafeRelativePath(p: string): boolean {
+  if (!p || p.includes("\0")) return false;
+  const n = normalize(p);
+  return !isAbsolute(n) && !n.startsWith("..");
+}
 
 export interface RalphStatus {
   project: string;
@@ -118,9 +125,17 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
       const agentMatch = line.match(/^agent:\s*(.+)/);
       if (agentMatch) status.agent = agentMatch[1].trim();
       const planMatch = line.match(/^plan:\s*(.+)/);
-      if (planMatch) status.planFile = planMatch[1].trim();
+      if (planMatch) {
+        const v = planMatch[1].trim();
+        if (isSafeRelativePath(v)) status.planFile = v;
+        else log.warn("parseRalphLog: rejected unsafe planFile", { dir: projectDir, value: v });
+      }
       const progMatch = line.match(/^progress:\s*(.+)/);
-      if (progMatch) status.progressFile = progMatch[1].trim();
+      if (progMatch) {
+        const v = progMatch[1].trim();
+        if (isSafeRelativePath(v)) status.progressFile = v;
+        else log.warn("parseRalphLog: rejected unsafe progressFile", { dir: projectDir, value: v });
+      }
       const cleanupMatch = line.match(/^phase_cleanup:\s*(on|off)/);
       if (cleanupMatch) status.cleanupEnabled = cleanupMatch[1] === "on";
       const auditFixMatch = line.match(/^phase_audit_fix:\s*(on|off)/);
@@ -198,13 +213,14 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
       const workdirMatch = content.match(/^workdir:\s*(.+)/m);
       const workdirPath = workdirMatch ? workdirMatch[1].trim() : "";
       // validate workdir is under projectDir to prevent path traversal
-      const planBase = workdirPath && workdirPath.startsWith(projectDir) && existsSync(join(workdirPath, status.planFile))
+      const isUnderProject = workdirPath === projectDir || workdirPath.startsWith(projectDir + "/");
+      const planBase = workdirPath && isUnderProject && existsSync(join(workdirPath, status.planFile))
         ? workdirPath
         : projectDir;
       const tasks = countPlanTasks(join(planBase, status.planFile));
       status.tasksTotal = tasks.total;
       // done count comes from progress.txt DONE: lines (for progress bar display)
-      const progressBase = workdirPath && workdirPath.startsWith(projectDir) && existsSync(join(workdirPath, status.progressFile))
+      const progressBase = workdirPath && isUnderProject && existsSync(join(workdirPath, status.progressFile))
         ? workdirPath
         : projectDir;
       status.tasksDone = countProgressDone(join(progressBase, status.progressFile));

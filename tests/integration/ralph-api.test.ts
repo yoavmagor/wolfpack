@@ -1229,7 +1229,7 @@ describe("POST /api/ralph/dismiss", () => {
     expect(existsSync(join(dir, "MY-PLAN.md"))).toBe(false);
   });
 
-  test("path traversal in plan file name → reported in failed", async () => {
+  test("path traversal in plan file name → rejected at parse, dismiss succeeds cleanly", async () => {
     const dir = setupProject("dismiss-traversal");
     writeFileSync(join(dir, ".ralph.log"),
       `ralph — 5 iterations\nagent: claude\nplan: ../../etc/passwd\npid: 2\nstarted: 2025-01-01\nfinished: 2025-01-01\n`,
@@ -1239,7 +1239,8 @@ describe("POST /api/ralph/dismiss", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.ok).toBe(true);
-    expect(data.failed).toContain("../../etc/passwd");
+    // unsafe planFile is rejected at parse time — dismiss has nothing unsafe to delete
+    expect(data.failed).toHaveLength(0);
   });
 
   test("active loop → rejected with 409", async () => {
