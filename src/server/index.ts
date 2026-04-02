@@ -34,6 +34,7 @@ const log = createLogger("server");
 
 const PORT =
   Number(process.env.WOLFPACK_PORT) || Number(process.argv[2]) || 18790;
+const HOST = process.env.WOLFPACK_HOST || "127.0.0.1";
 const VERSION: string = pkg.version;
 
 // inherit user's full PATH from login shell — launchd PATH is minimal
@@ -57,6 +58,23 @@ const ALLOWED_ORIGINS = new Set<string>([
   `http://localhost:${PORT}`,
   `http://127.0.0.1:${PORT}`,
 ]);
+
+// Add local Tailscale IP to allowed origins so the raw 100.x.x.x address works
+{
+  const tsBins = [
+    "/usr/local/bin/tailscale",
+    "/usr/bin/tailscale",
+    "/opt/homebrew/bin/tailscale",
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+  ];
+  const tsBin = tsBins.find(p => { try { execFileSync("test", ["-x", p]); return true; } catch { return false; } });
+  if (tsBin) {
+    try {
+      const ip = execFileSync(tsBin, ["ip", "-4"], { encoding: "utf-8" }).trim();
+      if (ip) ALLOWED_ORIGINS.add(`http://${ip}:${PORT}`);
+    } catch { /* Tailscale not connected or unavailable */ }
+  }
+}
 
 // Extract tailnet suffix from config
 const TAILNET_SUFFIX = (() => {
@@ -206,7 +224,7 @@ export function createServerInstance(): { server: ReturnType<typeof createServer
 // Module-level singleton for production
 const { server, wss } = createServerInstance();
 
-export function startServer(port = PORT, host = "127.0.0.1"): void {
+export function startServer(port = PORT, host = HOST): void {
   cleanupOrphanPtySessions();
 
   server.on("error", (err: NodeJS.ErrnoException) => {
