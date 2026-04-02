@@ -98,7 +98,7 @@ body::after {
   color: var(--text-primary);
 }
 header {
-  padding: 3px 8px;
+  padding: max(3px, env(safe-area-inset-top)) 8px 3px;
   background: var(--bg-header-gradient);
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -2404,7 +2404,6 @@ body.mobile-no-ghost-focus #desktop-terminal-container textarea {
   }
   .header-center .wolfpack-icon { display: none; }
   #terminal-view {
-    padding-top: env(safe-area-inset-top);
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
