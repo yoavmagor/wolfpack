@@ -13,8 +13,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import pkg from "../../package.json";
-import { validateRequestJwt } from "../auth.js";
-import { cleanupOrphanPtySessions, SHELL } from "./tmux.js";
+import { validateRequestJwt, getCachedJwtAuthConfig, verifyJwtAuthAtStartup } from "../auth.js";
+import { SHELL } from "./shell.js";
+import { initBackend, getBackend, getRouter } from "./backend.js";
 import { routes } from "./routes.js";
 import {
   json,
@@ -26,8 +27,8 @@ import {
   cachedPeers,
   createPerIpRateLimiter,
 } from "./http.js";
-import { handlePtyWs, handleTerminalWs } from "./websocket.js";
-import { createLogger } from "../log.js";
+import { handlePtyWs } from "./websocket.js";
+import { createLogger, errMsg } from "../log.js";
 import { isValidSessionName } from "../validation.js";
 
 const log = createLogger("server");
@@ -121,7 +122,25 @@ export function createServerInstance(): { server: ReturnType<typeof createServer
   const wss = new WebSocketServer({ noServer: true });
 
   const server = createServer(async (req, res) => {
-    const origin = req.headers.origin;
+    let origin = req.headers.origin;
+    // Tailscale serve strips the Origin header when proxying to localhost.
+    // Detect this via Tailscale-User-Login (injected by tailscale daemon,
+    // cannot be spoofed when traffic flows through tailscale serve).
+    // TRUST MODEL: This relies on tailscale-user-login being unforgeable.
+    // If wolfpack is ever exposed via a non-Tailscale reverse proxy that
+    // forwards arbitrary client headers, this becomes a CORS bypass.
+    const tsLogin = req.headers["tailscale-user-login"];
+    if (!origin && tsLogin && typeof tsLogin === "string" && tsLogin.length > 0 && TAILNET_SUFFIX) {
+      const referer = req.headers.referer;
+      if (referer) {
+        try {
+          const refUrl = new URL(referer);
+          if (refUrl.protocol === "https:" && refUrl.hostname.endsWith("." + TAILNET_SUFFIX)) {
+            origin = refUrl.origin;
+          }
+        } catch { /* malformed referer — leave origin empty */ }
+      }
+    }
     if (origin) {
       if (isAllowedOrigin(origin)) {
         res.setHeader("Access-Control-Allow-Origin", origin);
@@ -145,6 +164,7 @@ export function createServerInstance(): { server: ReturnType<typeof createServer
     if (shouldAuthenticateApiPath(url.pathname)) {
       const auth = validateRequestJwt(req.headers, url, false);
       if (!auth.ok) {
+        log.debug("jwt auth failed", { path: url.pathname, reason: auth.error });
         writeUnauthorized(res);
         return;
       }
@@ -182,39 +202,44 @@ export function createServerInstance(): { server: ReturnType<typeof createServer
   });
 
   server.on("upgrade", async (req, socket, head) => {
-    const origin = req.headers.origin;
-    if (origin && !isAllowedOrigin(origin)) {
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    const url = new URL(req.url ?? "/", "http://localhost");
+    try {
+      const origin = req.headers.origin;
+      if (origin && !isAllowedOrigin(origin)) {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      const url = new URL(req.url ?? "/", "http://localhost");
 
-    const auth = validateRequestJwt(req.headers, url, true);
-    if (!auth.ok) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
-      return;
-    }
+      const auth = validateRequestJwt(req.headers, url, true);
+      if (!auth.ok) {
+        log.debug("jwt auth failed (ws upgrade)", { path: url.pathname, reason: auth.error });
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
 
-    if (url.pathname !== "/ws/pty" && url.pathname !== "/ws/terminal") {
-      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-      socket.destroy();
-      return;
-    }
+      if (url.pathname !== "/ws/pty") {
+        socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+        socket.destroy();
+        return;
+      }
 
-    const session = url.searchParams.get("session");
-    if (!session || !isValidSessionName(session) || !(await isAllowedSession(session))) {
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
-    }
+      const session = url.searchParams.get("session");
+      if (!session || !isValidSessionName(session) || !(await isAllowedSession(session))) {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
 
-    if (url.pathname === "/ws/terminal") {
-      wss.handleUpgrade(req, socket, head, (ws) => handleTerminalWs(ws, session));
-    } else {
       const reset = url.searchParams.get("reset") === "1";
       wss.handleUpgrade(req, socket, head, (ws) => handlePtyWs(ws, session, reset));
+    } catch (e: unknown) {
+      log.error("ws upgrade error", { error: errMsg(e) });
+      if (!socket.destroyed) {
+        try { socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n"); } catch { /* socket already unusable */ }
+        socket.destroy();
+      }
     }
   });
 
@@ -224,8 +249,46 @@ export function createServerInstance(): { server: ReturnType<typeof createServer
 // Module-level singleton for production
 const { server, wss } = createServerInstance();
 
-export function startServer(port = PORT, host = HOST): void {
-  cleanupOrphanPtySessions();
+export async function startServer(port = PORT, host = HOST): Promise<void> {
+  // Verify JWT auth configuration BEFORE any listeners are bound. We fail
+  // hard on misconfiguration (secret set but rejected) so a typo can never
+  // silently disable authentication. Missing secret is logged loudly but
+  // permitted (matches install.sh behavior — auth is opt-in).
+  const authCfg = getCachedJwtAuthConfig();
+  const authStatus = verifyJwtAuthAtStartup(authCfg);
+  if (authStatus === "invalid") {
+    log.error("refusing to start: WOLFPACK_JWT_SECRET is set but invalid", {
+      reason: authCfg.invalidReason,
+      hint: "unset WOLFPACK_JWT_SECRET to run without auth, or use a 32+ char value",
+    });
+    process.exit(1);
+  }
+  if (authStatus === "missing") {
+    log.error("WOLFPACK_JWT_SECRET is not set — ALL API ENDPOINTS ARE UNAUTHENTICATED", {
+      hint: "set WOLFPACK_JWT_SECRET (32+ chars) to enable authentication",
+    });
+  }
+
+  // Initialize session backend (broker is the only supported backend; the
+  // WOLFPACK_BACKEND env var is accepted for back-compat but ignored).
+  initBackend();
+  log.info("backend initialized", { type: "broker" });
+
+  // Verify the broker handshake before listening so we surface a clear error
+  // before any session-create requests land. The router has already done a
+  // sync socket-file probe; this catches the case where the file exists but
+  // the daemon is dead or unresponsive.
+  const router = getRouter();
+  if (router.isBrokerAvailable()) {
+    const ok = await router.verifyBrokerHandshake();
+    if (!ok) {
+      log.error("broker unreachable", { socketPath: router.getBrokerSocketPath() });
+    } else {
+      log.info("broker reachable", { socketPath: router.getBrokerSocketPath() });
+    }
+  }
+
+  getBackend().cleanupOrphans();
 
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
@@ -248,5 +311,8 @@ export { server, wss };
 
 // Auto-start unless in test mode
 if (!process.env.WOLFPACK_TEST) {
-  startServer();
+  startServer().catch((err: unknown) => {
+    log.error("server start failed", { error: err instanceof Error ? err.message : String(err) });
+    process.exit(1);
+  });
 }

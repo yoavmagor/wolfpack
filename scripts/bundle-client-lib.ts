@@ -50,11 +50,13 @@ const coreCode = esmCode.replace(/export\s*\{[^}]*\};?\s*$/, "").trim();
 // Verify all expected exports were found — catches silent breakage if Bun output format changes
 const REQUIRED_EXPORTS = [
   "captureScrollState", "scrollTargetAfterResize", "serializeBufferTail",
-  "shouldInterceptCopy", "encodeTerminalBinary", "shouldRehydrate",
+  "shouldInterceptCopy", "encodeTerminalBinary", "shouldInsertMessageNewlineFromAccessoryKey", "shouldSubmitMessageInputOnEnter", "shouldRehydrate",
   "addToGridState", "removeFromGridState", "suspendGridState", "resumeGridState",
   "classifyDisconnect", "handleViewerConflict", "handleControlGranted",
   "handleDisplaced", "prepareAutoTakeControl", "handleTakeControlClick",
   "CLOSE_CODE_DISPLACED", "CLOSE_CODE_SESSION_UNAVAILABLE", "CLOSE_CODE_NORMAL",
+  "peerHealthRecordFailure", "peerHealthRecordSuccess", "peerHealthTimeoutMs",
+  "PEER_FAILING_TIMEOUT_MS", "PEER_HEALTHY_TIMEOUT_MS",
 ];
 for (const name of REQUIRED_EXPORTS) {
   if (!exportedNames.includes(name)) {

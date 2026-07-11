@@ -1,11 +1,11 @@
 /**
- * Shared context injected into AI agent sessions spawned by wolfpack.
+ * Plan-format helpers shared between the ralph worker and the server.
  *
- * Two focused contexts replace the old monolithic WOLFPACK_CONTEXT:
- *  - RALPH_AGENT_CONTEXT:  ralph-macchio.ts prepends to the `-p` prompt
- *  - INTERACTIVE_CONTEXT:  serve.ts appends via `claude --append-system-prompt`
- *
- * Plus a validatePlanFormat() helper for checking plan file structure.
+ * Note: prior versions of this module also exported `RALPH_AGENT_CONTEXT`
+ * and `INTERACTIVE_CONTEXT` prompt strings that were auto-injected into
+ * agent commands. That injection was removed — the content now lives at
+ * `skills/wolfpack-{ralph,plan}/SKILL.md` for anyone who wants
+ * to opt in by installing the skills into their own project.
  */
 
 /** Matches plan task headers: ## 1. Title, ### 2a. Title, ## ~~3. Title~~, ## Phase 1. Title */
@@ -13,25 +13,6 @@ export const TASK_HEADER = /^#{2,3} (?:~~)?(?:\w+ )?\d+[a-z]?[\.\):]\s+/;
 
 /** Checkbox task pattern: - [ ] or - [x] */
 const CHECKBOX = /^- \[[ x]\] /;
-
-/** Context for ralph iterations — subtask output protocol + granularity only. */
-export const RALPH_AGENT_CONTEXT = `## Ralph Agent Context
-
-When a task is too large to implement directly, output a <subtasks> block instead of making changes:
-\`\`\`
-<subtasks>
-Implement auth middleware with JWT validation
-Add integration tests for auth endpoints
-</subtasks>
-\`\`\`
-Each subtask = a meaningful deliverable (3-5 per breakdown). NOT single lines of code or imports — a unit of work a senior dev would recognize as coherent.`;
-
-/** Context for interactive claude sessions — plan format + granularity. */
-export const INTERACTIVE_CONTEXT = `## Wolfpack Plan Conventions
-
-Plan task headers MUST use: \`## N. Title\` (e.g. \`## 1. Add auth\`), subtasks: \`## Na. Title\` (e.g. \`## 1a. Tests\`). Completed: wrap in \`~~\` (e.g. \`## ~~1. Done~~\`). No other header styles — the task extractor only recognizes this pattern.
-
-Each task = a meaningful deliverable (3-5 per feature). NOT individual lines of code — a unit of work a senior dev would recognize. Subtask breakdowns follow the same rule: 3-5 max, each coherent.`;
 
 /** Ambiguous header patterns that look like tasks but don't match TASK_HEADER */
 const AMBIGUOUS_HEADERS = [
@@ -109,6 +90,44 @@ export function countTasksInContent(content: string): { done: number; total: num
   }
 
   return { done, total };
+}
+
+export function countRalphProgressFromContent(planContent: string, progressContent: string): { done: number; total: number } {
+  const keys = extractRalphTaskKeys(planContent);
+  const completed = new Set<string>();
+  for (const line of progressContent.split("\n")) {
+    if (line.startsWith("DONE: ")) completed.add(line.slice(6));
+  }
+  return {
+    done: keys.filter(key => completed.has(key)).length,
+    total: keys.length,
+  };
+}
+
+function extractRalphTaskKeys(planContent: string): string[] {
+  const keys: string[] = [];
+  const lines = planContent.split("\n");
+
+  for (const line of lines) {
+    const cbMatch = line.match(/^- \[ \] (.+)$/);
+    if (cbMatch) keys.push(`checkbox: ${cbMatch[1]}`);
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!TASK_HEADER.test(line)) continue;
+    const level = line.match(/^(#{2,3})/)?.[1] || "##";
+    const sectionLines = [line];
+    for (let j = i + 1; j < lines.length; j++) {
+      const nextMatch = lines[j].match(/^(#{1,3}) /);
+      if (nextMatch && nextMatch[1].length <= level.length) break;
+      sectionLines.push(lines[j]);
+    }
+    const hasChildren = sectionLines.some(l => /^- \[ \] /.test(l));
+    if (!hasChildren) keys.push(`section: ${line}`);
+  }
+
+  return keys;
 }
 
 /**

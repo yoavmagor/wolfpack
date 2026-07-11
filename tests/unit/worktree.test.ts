@@ -1,6 +1,6 @@
-import { describe, expect, test, beforeAll, afterAll } from "bun:test";
+import { describe, expect, test, beforeAll, afterAll, spyOn } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync, readFileSync, copyFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync, readFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -94,7 +94,7 @@ describe("worktree lifecycle", () => {
 
   test("createWorktree creates a worktree and returns path", () => {
     const wtPath = createWorktree(repoDir, "ralph/1-test-task", "HEAD");
-    expect(wtPath).toContain(".wolfpack/worktrees/1-test-task");
+    expect(wtPath).toContain(".worktrees/1-test-task");
 
     const wts = listWorktrees(repoDir);
     const found = wts.find((w) => w.branch === "ralph/1-test-task");
@@ -164,6 +164,33 @@ describe("worktree lifecycle", () => {
     }
   });
 
+  test("cleanupAllExceptFinal ignores legacy .wolfpack/worktrees entries", () => {
+    const legacyPath = join(repoDir, ".wolfpack", "worktrees", "19-legacy");
+    execFileSync(
+      "git",
+      ["worktree", "add", legacyPath, "-b", "ralph/19-legacy", "--", "HEAD"],
+      { cwd: repoDir, stdio: "pipe" },
+    );
+    const orderFile = join(repoDir, ".wolfpack", "worktree-order.txt");
+    appendFileSync(orderFile, `${legacyPath}\n`);
+    createWorktree(repoDir, "ralph/20-new", "HEAD");
+
+    const result = cleanupAllExceptFinal(repoDir);
+
+    expect(result.removed).not.toContain("ralph/19-legacy");
+    expect(result.kept).toBe("ralph/20-new");
+
+    const wts = listWorktrees(repoDir);
+    const legacy = wts.find((w) => w.branch === "ralph/19-legacy");
+    expect(legacy?.path).toBe(legacyPath);
+    const kept = wts.find((w) => w.branch === "ralph/20-new");
+    expect(kept?.path).toContain(".worktrees/20-new");
+
+    // Cleanup
+    if (kept) removeWorktree(kept.path, repoDir);
+    if (legacy) removeWorktree(legacy.path, repoDir);
+  });
+
   test("createWorktree tracks creation order in worktree-order.txt", () => {
     createWorktree(repoDir, "ralph/20-first", "HEAD");
     createWorktree(repoDir, "ralph/21-second", "HEAD");
@@ -209,5 +236,25 @@ describe("worktree lifecycle", () => {
 
     const wts = listWorktrees(repoDir);
     expect(wts.find(w => w.branch === "ralph/31-graceful")).toBeUndefined();
+  });
+
+  test("removeWorktree logs a warning when it falls back to --force", () => {
+    const wtPath = createWorktree(repoDir, "ralph/32-force", "HEAD");
+    writeFileSync(join(wtPath, "DIRTY.txt"), "unsaved work\n", "utf-8");
+
+    const logs: string[] = [];
+    const spy = spyOn(process.stdout, "write").mockImplementation((chunk: any) => {
+      logs.push(String(chunk));
+      return true;
+    });
+    try {
+      removeWorktree(wtPath, repoDir);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(logs.join("")).toContain("removeWorktree: graceful remove failed; forcing worktree removal");
+    const wts = listWorktrees(repoDir);
+    expect(wts.find(w => w.branch === "ralph/32-force")).toBeUndefined();
   });
 });

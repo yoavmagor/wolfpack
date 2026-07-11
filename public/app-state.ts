@@ -12,11 +12,13 @@ export function esc(s) {
 
 // JS-safe escaper for use inside onclick="func('...')" attribute contexts.
 // Backslash-escapes characters that could break out of a JS string literal
-// AFTER HTML attribute decoding.
+// AFTER HTML attribute decoding. Note: escAttr is for JS-string-in-HTML-attribute
+// dual contexts (esc() is the right choice for plain HTML attributes).
 export function escAttr(s) {
   if (s == null) return "";
   return String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, '\\"')
-    .replace(/</g, "\\x3c").replace(/>/g, "\\x3e").replace(/&/g, "\\x26");
+    .replace(/</g, "\\x3c").replace(/>/g, "\\x3e").replace(/&/g, "\\x26")
+    .replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
 }
 
 // ── Generic utilities ──
@@ -36,10 +38,10 @@ export function isDesktop() {
   return window.innerWidth > 768;
 }
 
-export function formatSnapshotTtl(seconds) {
-  seconds = +seconds;
-  if (seconds < 60) return seconds + 's';
-  return Math.floor(seconds / 60) + 'm';
+export function formatSnapshotTtl(seconds: number | string): string {
+  const s = +seconds;
+  if (s < 60) return s + 's';
+  return Math.floor(s / 60) + 'm';
 }
 
 export function getTerminalFontFamily() {
@@ -48,26 +50,9 @@ export function getTerminalFontFamily() {
     : '"SF Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Liberation Mono", monospace';
 }
 
-// ── Classic mobile terminal char-dimension probing ──
-
-export var _charDimCache = { key: "", w: 0, h: 0 };
-export function getCharDimensions() {
-  const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
-  const key = tp.fontSize + "|" + tp.lineHeight + "|" + wpSettings.termFont;
-  if (_charDimCache.key === key && _charDimCache.w > 0) return _charDimCache;
-  const probe = document.createElement("span");
-  probe.style.cssText =
-    'position:absolute;visibility:hidden;white-space:pre;font-size:' + tp.fontSize + 'px;line-height:' + tp.lineHeight + ';font-family:inherit';
-  probe.textContent = "X";
-  document.body.appendChild(probe);
-  _charDimCache = { key, w: probe.offsetWidth, h: probe.offsetHeight };
-  document.body.removeChild(probe);
-  return _charDimCache;
-}
-
 // ── Settings (persisted to localStorage) ──
 
-export const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termWrap:false, termFont:"default", snapshotTtl:900, debugPanel:false, ralphEnabled:false, mobileTerminal:"classic"};
+export const wpDefaults = {animations:true, haptics:true, notifications:false, enterSends: window.innerWidth > 768, holdToSend:false, termFontSize:"medium", termFont:"default", soloPrefillMode:"fast", snapshotTtl:900, debugPanel:false, ralphEnabled:false};
 export const wpSettings = Object.assign({}, wpDefaults, loadStoredJson("wp-effects", {}));
 
 export const TERM_PRESETS = { small: {fontSize:12, lineHeight:1.35}, medium: {fontSize:13, lineHeight:1.45}, large: {fontSize:14, lineHeight:1.55} };
@@ -80,28 +65,35 @@ export function toggleSetting(key, val) {
 
 export function applySetting(key, val) {
   if (key === "animations") document.body.classList.toggle("no-animations", !val);
-  if (key === "notifications" && val) requestNotifications();
+  if (key === "notifications") {
+    if (val) requestNotifications();
+    else unsubscribeNotifications();
+  }
   if (key === "enterSends") {
-    const el = document.getElementById("msg-input");
+    const el = document.getElementById("msg-input") as HTMLTextAreaElement | null;
     if (el) el.placeholder = val ? "$ (Enter to send)" : "$ (⚡ to send)";
   }
-  if (key === "termFontSize" || key === "termFont") _charDimCache = { key: "", w: 0, h: 0 };
   if (key === "termFontSize") {
     document.body.classList.remove("term-size-small", "term-size-medium", "term-size-large");
     document.body.classList.add("term-size-" + val);
-    document.querySelectorAll(".term-size-btn").forEach(b => b.classList.toggle("active", b.dataset.size === val));
+    document.querySelectorAll(".term-size-btn").forEach(b => b.classList.toggle("active", (b as HTMLElement).dataset.size === val));
     applyTermToXterm();
-  }
-  if (key === "termWrap") {
-    document.body.classList.toggle("term-wrap", val);
   }
   if (key === "ralphEnabled") {
     document.body.classList.toggle("ralph-hidden", !val);
   }
   if (key === "termFont") {
     document.body.classList.toggle("term-font-alt", val === "alt");
-    document.querySelectorAll(".term-font-btn").forEach(b => b.classList.toggle("active", b.dataset.font === val));
+    document.querySelectorAll(".term-font-btn").forEach(b => b.classList.toggle("active", (b as HTMLElement).dataset.font === val));
     applyTermToXterm();
+  }
+  if (key === "soloPrefillMode") {
+    const mode = isDesktop() ? "full" : (val === "full" ? "full" : "fast");
+    document.querySelectorAll(".solo-prefill-btn").forEach(b => {
+      const button = b as HTMLButtonElement;
+      button.classList.toggle("active", button.dataset.mode === mode);
+      if (button.dataset.mode === "fast") button.disabled = isDesktop();
+    });
   }
 }
 
@@ -126,32 +118,99 @@ export function applyTermToXterm() {
 export function initSettings() {
   Object.entries(wpSettings).forEach(([k, v]) => {
     applySetting(k, v);
-    const el = document.getElementById("setting-" + k);
+    const el = document.getElementById("setting-" + k) as HTMLInputElement | null;
     if (!el) return;
-    if (el.type === "checkbox") el.checked = v;
-    else el.value = v;
+    if (el.type === "checkbox") el.checked = v as boolean;
+    else el.value = v as string;
   });
   const ttlLabel = document.getElementById("snapshot-ttl-val");
   if (ttlLabel) ttlLabel.textContent = formatSnapshotTtl(wpSettings.snapshotTtl);
-  // Set active state on mobile terminal mode buttons
-  document.querySelectorAll(".term-mobile-btn").forEach(b =>
-    b.classList.toggle("active", (b as any).dataset.mode === wpSettings.mobileTerminal)
-  );
 }
 
 export function haptic(pattern) {
   if (wpSettings.haptics && navigator.vibrate) navigator.vibrate(pattern);
 }
 
-// ── Notifications ──
+// ── Push Notifications ──
 
-export function requestNotifications() {
-  if ("Notification" in window && Notification.permission === "default") {
-    Notification.requestPermission().then((p) => {
-      state.notificationsEnabled = p === "granted";
+/** Convert a base64url string to a Uint8Array (for applicationServerKey). */
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+export async function requestNotifications() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    console.warn("Push notifications not supported");
+    return;
+  }
+
+  // Request notification permission
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    state.notificationsEnabled = false;
+    return;
+  }
+
+  try {
+    // Get VAPID public key from server
+    const vapidResp = await fetch("/api/push/vapid-key");
+    const { publicKey } = await vapidResp.json();
+    if (!publicKey) throw new Error("no VAPID key from server");
+
+    // Register service worker
+    const reg = await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.ready;
+
+    // Subscribe to push
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
     });
-  } else if ("Notification" in window && Notification.permission === "granted") {
-    state.notificationsEnabled = true;
+
+    // Send subscription to server
+    const resp = await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sub.toJSON()),
+    });
+
+    if (resp.ok) {
+      state.notificationsEnabled = true;
+      console.log("Push subscription registered");
+    } else {
+      throw new Error(`subscribe failed: ${resp.status}`);
+    }
+  } catch (e) {
+    console.error("Push subscription failed:", e);
+    state.notificationsEnabled = false;
+  }
+}
+
+export async function unsubscribeNotifications() {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return;
+
+    // Tell server to remove subscription
+    await fetch("/api/push/unsubscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint: sub.endpoint }),
+    });
+
+    // Unsubscribe locally
+    await sub.unsubscribe();
+    state.notificationsEnabled = false;
+    console.log("Push subscription removed");
+  } catch (e) {
+    console.error("Push unsubscribe failed:", e);
   }
 }
 
@@ -213,12 +272,15 @@ export const state = {
   currentRalphProject: null,
   currentRalphMachine: "",
   ralphStartMachine: "",
+  viewBeforeRalph: "sessions",
   ralphLogPollTimer: null,
   currentRalphPlanFile: "",
   restartingRalph: false,
   currentRalphWorktreeMode: "false",
   currentRalphWorktreeBranch: "",
   currentRalphAgent: "",
+  currentRalphCleanup: undefined as boolean | undefined,
+  currentRalphAuditFix: undefined as boolean | undefined,
   // desktop/grid terminal state
   terminalController: null,
   desktopResizeHandler: null,
@@ -249,20 +311,39 @@ export const state = {
   isNewProject: false,
   enterRetryTimer: null,
   drawerOpen: false,
-  notificationsEnabled: ("Notification" in window && Notification.permission === "granted"),
+  notificationsEnabled: ("Notification" in window && Notification.permission === "granted" && "PushManager" in window),
   kbAccessoryOpen: false,
   _cachedFallbackTimer: null,
   _ghostInputObserver: null,
-  // classic mobile terminal state
-  mobileWs: null,
-  mobileStreamingActive: false,
-  termFollowMode: true,
-  lastRawPane: "",
-  searchActive: false,
-  searchTerm: "",
+  // peer health: { [machineUrl]: { failures } }. A peer that fails repeatedly
+  // drops to a shorter fetch timeout so it doesn't dominate UI refresh time.
+  // Intentionally NOT persisted across page reloads — stale failure state
+  // is a self-fulfilling prophecy: a peer that was slow yesterday gets the
+  // 1.5s failing-timeout today, fails again because legit cold fetches
+  // sometimes take longer than that, and never recovers. Per-tab in-memory
+  // is the right scope.
+  peerHealth: {} as Record<string, { failures: number }>,
 };
 
 export function setState(patch) { Object.assign(state, patch); }
+
+// Detect OS-level notification permission revoke. Browser permission can be
+// toggled from the URL bar / system settings without the page knowing —
+// re-check on visibility/focus so the UI toggle doesn't silently lie.
+export function syncNotificationsPermission() {
+  if (!("Notification" in window)) return;
+  const granted = Notification.permission === "granted";
+  if (state.notificationsEnabled && !granted) {
+    state.notificationsEnabled = false;
+    // Route through toggleSetting so applySetting("notifications", false) runs
+    // unsubscribeNotifications() — otherwise server retains stale push endpoint.
+    toggleSetting("notifications", false);
+  }
+}
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", syncNotificationsPermission);
+  window.addEventListener("focus", syncNotificationsPermission);
+}
 
 // ── Constants ──
 
@@ -270,4 +351,4 @@ export const SNAPSHOT_KEY_PREFIX = "wp-snap|";
 export const SNAPSHOT_MAX_BYTES = 16384;
 export const SNAPSHOT_SAVE_INTERVAL = 2000;
 export const DESKTOP_TERMINAL_SCROLLBACK = 2000;
-export const GRID_TERMINAL_SCROLLBACK = 1000;
+export const GRID_TERMINAL_SCROLLBACK = 2000;

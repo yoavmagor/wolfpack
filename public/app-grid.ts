@@ -6,20 +6,52 @@ import {
   esc, escAttr, state, setState, wpSettings,
   TERM_PRESETS, GRID_TERMINAL_SCROLLBACK, isDesktop,
 } from "./app-state";
+import { __wfTraceEvent, __wfTraceGet, __wfTraceStart } from "./app-debug";
+import {
+  createTerminalSlowPathIndicator,
+  setTerminalLoadVisualState,
+} from "./terminal-loading-ui";
 
 // ── Dependency injection ──
+
+interface GridTerminalController {
+  readonly isConnected: boolean;
+  readonly hydration?: { finish(): void };
+  readonly term?: { options: { disableStdin: boolean; cursorBlink: boolean } };
+  mount(cell: HTMLElement, opts: { readonly cached?: string | null }): Promise<void>;
+  connect(opts?: { readonly takeControl?: boolean }): void;
+  reconnect(opts?: { readonly takeControl?: boolean }): void;
+  scheduleReconnect(): void;
+  sendTakeControl(): void;
+  forceRepaint(): void;
+  focus(): void;
+  resize(): void;
+  resizeWithTransition(): void;
+  dispose(): void;
+}
+
+interface GridSession {
+  readonly session: string;
+  readonly machine: string;
+  controller?: GridTerminalController | null;
+  _cellElement?: HTMLElement | null;
+  _displaced?: boolean;
+  _autoTakeControl?: boolean;
+  _slowLoad?: ReturnType<typeof createTerminalSlowPathIndicator> | null;
+  [field: string]: unknown;
+}
 
 interface GridDeps {
   showView: (name: string, skipAnimation?: boolean) => void;
   openSession: (name: string, machineUrl?: string) => void;
   destroyTerminal: () => void;
-  initTerminal: (cached?: any) => void;
+  initTerminal: (cached?: string | null) => void;
   backToSessions: () => void;
   renderSidebar: () => void;
-  createPtyTerminalController: (opts: any) => any;
-  createConflictOverlay: (message: string, buttonLabel: string, onClick: (e: any) => void) => HTMLElement;
+  createPtyTerminalController: (opts: { session: string; machine?: string; [k: string]: unknown }) => GridTerminalController;
+  createConflictOverlay: (message: string, buttonLabel: string, onClick: (e: Event) => void) => HTMLElement;
   canUseWasmTerminal?: () => boolean;
-  saveGridCellSnapshot?: (gs: any) => void;
+  saveGridCellSnapshot?: (gs: GridSession) => void;
   flushGridSnapshots?: () => void;
   loadSnapshot?: (machine: string, session: string) => string | null;
 }
@@ -38,47 +70,17 @@ function setGridCellLoading(gs, loading) {
   if (cell) cell.classList.toggle("grid-loading", loading);
 }
 
-function beginGridRelayoutTransition() {
-  state.gridRelayoutTransitionId += 1;
-  const transitionId = state.gridRelayoutTransitionId;
-  for (const gs of state.gridSessions) setGridCellLoading(gs, true);
-  return transitionId;
-}
-
-function isGridRelayoutTransitionCurrent(transitionId) {
-  return transitionId === state.gridRelayoutTransitionId;
-}
-
-function endGridRelayoutTransition(transitionId) {
-  if (!isGridRelayoutTransitionCurrent(transitionId)) return;
-  // Reveal on next paint — fit already rendered canvas content synchronously.
-  requestAnimationFrame(() => {
-    if (!isGridRelayoutTransitionCurrent(transitionId)) return;
-    for (const gs of state.gridSessions) setGridCellLoading(gs, false);
-  });
-}
-
 function cancelGridRelayoutTransition() {
   state.gridRelayoutTransitionId += 1;
-}
-
-/** Run a two-pass relayout while keeping loading overlay visible. */
-function runGridRelayoutTransition(primaryFit) {
-  if (!isGridActive()) return;
-  const transitionId = beginGridRelayoutTransition();
-  requestAnimationFrame(() => {
-    if (!isGridRelayoutTransitionCurrent(transitionId) || !isGridActive()) return;
-    try { primaryFit(); } catch (e) { console.warn("[grid] primaryFit failed:", e); }
-    requestAnimationFrame(() => {
-      if (!isGridRelayoutTransitionCurrent(transitionId) || !isGridActive()) return;
-      fitAllGridCells();
-      endGridRelayoutTransition(transitionId);
-    });
-  });
+  if (_gridRelayoutFitRaf != null) {
+    cancelAnimationFrame(_gridRelayoutFitRaf);
+    _gridRelayoutFitRaf = null;
+  }
 }
 
 // ── Multi-terminal grid state ──
 let _gridRenderGeneration = 0;
+let _gridRelayoutFitRaf: number | null = null;
 const MAX_GRID_CELLS = 6;
 
 export function isGridActive() { return state.gridSessions.length >= 2; }
@@ -106,12 +108,21 @@ export function updateGridLayout() {
 }
 
 function createGridCell(gs, idx) {
+  const existingTrace = __wfTraceGet(gs.session, gs.machine || "");
+  const trace = existingTrace?._meta.mode === "grid" && existingTrace.events.some((event) => event.kind === "addToGrid.start")
+    ? existingTrace
+    : __wfTraceStart(gs.session, gs.machine || "", { mode: "grid", gridIndex: idx });
+  __wfTraceEvent(trace, "dom.cell.created", { gridIndex: idx });
   const cell = document.createElement("div");
   cell.className = "grid-cell" + (idx === state.gridFocusIndex ? " grid-focused" : "") + (gs._loading ? " grid-loading" : "");
   cell.dataset.gridIndex = idx;
   cell.innerHTML = '<div class="grid-cell-header"><div class="grid-cell-label">' + esc(gs.session) + '</div><div class="grid-cell-close" title="Remove from grid">&times;</div></div><div class="grid-cell-loading">Loading terminal</div>';
+  setTerminalLoadVisualState(cell, "prefill-loading");
+  gs._slowLoad = createTerminalSlowPathIndicator(cell);
+  gs._slowLoad.start("waiting for grid cell snapshot");
   cell.addEventListener("click", (e) => {
-    if (e.target.classList.contains("grid-cell-close")) return;
+    const tgt = e.target as HTMLElement | null;
+    if (tgt && tgt.classList.contains("grid-cell-close")) return;
     const sel = window.getSelection ? window.getSelection() : null;
     if (sel && !sel.isCollapsed) return;
     const i = parseInt(cell.dataset.gridIndex, 10);
@@ -129,7 +140,13 @@ function createGridCell(gs, idx) {
 async function mountGridController(gs, cell, idx) {
   if (gs.controller) return; // already mounted
   const cached = deps.loadSnapshot ? deps.loadSnapshot(gs.machine || "", gs.session) : null;
-  if (cached) cell.classList.add("cached-visible");
+  if (cached) {
+    // Grid viewport prefill must not replay cached plaintext into Ghostty.
+    // Cached snapshots are width-bound prose, not terminal state, so keep
+    // the loading screen up until broker viewport prefill hydrates the cell.
+    setTerminalLoadVisualState(cell, "prefill-loading");
+    gs._slowLoad?.start("waiting for grid cell prefill");
+  }
   let _gridCachedPending = !!cached;
   const tp = TERM_PRESETS[wpSettings.termFontSize] || TERM_PRESETS.medium;
   gs.controller = deps.createPtyTerminalController({
@@ -140,7 +157,7 @@ async function mountGridController(gs, cell, idx) {
     cursorBlink: idx === state.gridFocusIndex,
     disableStdin: idx !== state.gridFocusIndex,
     resetPty: gs._resetPty,
-    prefillMode: "none",
+    prefillMode: "viewport",
     shouldFocus: () => state.gridSessions[state.gridFocusIndex] === gs,
     shouldReconnect: () => state.gridSessions.includes(gs),
     canAcceptInput: () => !!(gs.controller && gs.controller.isConnected && state.gridSessions[state.gridFocusIndex] === gs),
@@ -151,12 +168,39 @@ async function mountGridController(gs, cell, idx) {
       // fires AFTER onOpen and re-shows the overlay.
       gs._displaced = false;
       removeGridCellConflictOverlay(gs);
+      setTerminalLoadVisualState(cell, "prefill-loading");
+      gs._slowLoad?.start("waiting for grid cell prefill");
+    },
+    onPtyReady: () => {
+      // Parallel of single-terminal fix in commit 75d6ff3. Without this, the
+      // canvas keeps showing the manual #0a0a0a fillRect from mount() because
+      // the WASM render loop runs with forceAll=false and skips repaint when
+      // dimensions/dirty-cells haven't changed. Fires on every reconnect too,
+      // so post-sleep / long-background recovery also gets a fresh repaint.
+      if (gs.controller) gs.controller.forceRepaint();
+      // pty_ready is sent after prefill_done + broker subscribe. From here the
+      // cell may still be hidden by hydration, but it is no longer waiting for
+      // prefill. Keep the loading UI honest so stale slow-path badges don't sit
+      // on top of an otherwise usable terminal.
+      setTerminalLoadVisualState(cell, "hydrating");
+      gs._slowLoad?.start("hydrating grid cell");
     },
     onOutput: () => {
       if (_gridCachedPending) {
         _gridCachedPending = false;
+        // Drop cached-visible on first live data, but DO NOT add `hydrated`
+        // here — that's the hydration controller's job (gated on minPendingMs;
+        // see comment in createPtyTerminalController/createInitialHydrationController).
+        //
+        // History: this used to also `add("hydrated")` to bypass hydration
+        // and reveal the canvas as soon as live data arrived. That bypass
+        // exposed the canvas during the post-attach resize-redraw burst (or
+        // the new-shell startup burst on `&reset=1` paths), producing the
+        // "scrollback flash" on cells that had a cached snapshot. Without
+        // `hydrated` here the canvas falls back to hidden until hydration
+        // finish() runs (after minPendingMs floor + writes settle). Mirrors
+        // the same fix in public/app.ts onOutput for single-pane.
         cell.classList.remove("cached-visible");
-        cell.classList.add("hydrated");
       }
     },
     onViewerConflict: () => {
@@ -164,6 +208,8 @@ async function mountGridController(gs, cell, idx) {
       var r = WP.handleViewerConflict({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
       gs._displaced = r.newState.displaced;
       gs._autoTakeControl = r.newState.autoTakeControl;
+      gs._slowLoad?.stop();
+      setTerminalLoadVisualState(cell, gs._displaced ? "displaced" : "viewer-conflict");
       if (r.action === "auto-take-control") {
 
         gs.controller.sendTakeControl();
@@ -176,6 +222,8 @@ async function mountGridController(gs, cell, idx) {
       gs._displaced = s.displaced;
       gs._autoTakeControl = s.autoTakeControl;
       removeGridCellConflictOverlay(gs);
+      setTerminalLoadVisualState(cell, "hydrating");
+      gs._slowLoad?.start("restoring grid cell control");
       if (state.gridSessions[state.gridFocusIndex] === gs) gs.controller.focus();
     },
     onDisconnected: (code, reason) => {
@@ -186,10 +234,28 @@ async function mountGridController(gs, cell, idx) {
         var ns = WP.handleDisplaced({ displaced: gs._displaced, autoTakeControl: gs._autoTakeControl });
         gs._displaced = ns.displaced;
         gs._autoTakeControl = ns.autoTakeControl;
+        gs._slowLoad?.stop();
+        setTerminalLoadVisualState(cell, "displaced");
         showGridCellConflictOverlay(gs);
       } else {
         gs.controller.scheduleReconnect();
       }
+    },
+    onReconnecting: () => {
+      setTerminalLoadVisualState(cell, "reconnecting");
+      gs._slowLoad?.start("reconnecting grid cell");
+    },
+    onReconnectExhausted: () => {
+      gs._slowLoad?.stop();
+      setTerminalLoadVisualState(cell, "failed");
+    },
+    onHydrationStart: () => {
+      setTerminalLoadVisualState(cell, "hydrating");
+      gs._slowLoad?.start("hydrating grid cell");
+    },
+    onHydrated: () => {
+      gs._slowLoad?.stop();
+      setTerminalLoadVisualState(cell, "live");
     },
   });
   delete gs._resetPty;
@@ -213,23 +279,39 @@ export function renderGridCells() {
   const existingCells = container.querySelectorAll(".grid-cell");
   const existingMap = new Map();
   existingCells.forEach(cell => {
-    const idx = parseInt(cell.dataset.gridIndex, 10);
+    const idx = parseInt((cell as HTMLElement).dataset.gridIndex || "0", 10);
     existingMap.set(idx, cell);
   });
   // Track which sessions need new cells vs reuse
-  const newCellSessions = [];
-  const mountPromises = [];
+  const existingCellSessions = [];
+  const renderGen = ++_gridRenderGeneration;
   state.gridSessions.forEach((gs, idx) => {
     if (gs._cellElement && gs._cellElement.parentNode === container && gs.controller) {
       // Existing cell — just update index and focus state
       gs._cellElement.dataset.gridIndex = idx;
       gs._cellElement.classList.toggle("grid-focused", idx === state.gridFocusIndex);
+      existingCellSessions.push(gs);
     } else {
-      // New cell needed
+      // New cell needed — show loading synchronously before async WASM mount
+      // can reveal stale cached/full-width terminal content in the new grid size.
+      gs._loading = true;
       const cell = createGridCell(gs, idx);
       container.appendChild(cell);
-      mountPromises.push(mountGridController(gs, cell, idx));
-      newCellSessions.push(gs);
+      void mountGridController(gs, cell, idx).then(() => {
+        if (_gridRenderGeneration !== renderGen) return; // stale render
+        if (!state.gridSessions.includes(gs)) return; // removed during async mount
+        if (gs._cellElement !== cell || cell.parentNode !== container) return; // re-rendered/replaced
+        if (gs._needsConnect && gs.controller) {
+          delete gs._needsConnect;
+          gs.controller.connect();
+        }
+        setGridCellLoading(gs, false);
+      }).catch(err => {
+        setGridCellLoading(gs, false);
+        gs._slowLoad?.stop();
+        setTerminalLoadVisualState(cell, "failed");
+        console.error("[grid] mount failed:", err);
+      });
     }
   });
   // Remove orphaned cells (sessions removed from grid)
@@ -244,28 +326,10 @@ export function renderGridCells() {
     }
   });
   updateGridLayout();
-  // Add-flow relayout + connect in one transition to avoid visible flicker.
-  // Wait for all mounts (WASM init gate) before connecting.
-  // Capture render generation so stale Promise.all callbacks bail out
-  // if renderGridCells is called again before mounts resolve.
-  const renderGen = ++_gridRenderGeneration;
-  if (newCellSessions.length > 0) {
-    Promise.all(mountPromises).then(() => {
-      if (_gridRenderGeneration !== renderGen) return; // stale render
-      runGridRelayoutTransition(() => {
-        fitAllGridCells();
-        newCellSessions.forEach(gs => {
-          if (gs._needsConnect) {
-            delete gs._needsConnect;
-            gs.controller.connect();
-          }
-        });
-      });
-    }).catch(err => console.error("[grid] mount failed:", err));
-  } else {
-    // No new cells — just refit existing (layout may have changed)
-    requestAnimationFrame(() => { fitAllGridCells(); });
-  }
+  // Refitting existing cells is the only layout barrier needed when grid-N
+  // changes. New cells run their first fit inside mount() and connect
+  // independently as soon as that fit is ready.
+  scheduleGridRelayoutFit(existingCellSessions);
 }
 
 export function getGridCellElement(gs) {
@@ -389,8 +453,8 @@ export function suspendGridMode() {
     state.gridResizeHandler = null;
   }
   for (const gs of state.gridSessions) {
-    if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
     if (gs.controller) gs.controller.dispose();
+    if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
   }
   state.gridSessions = [];
   state.gridFocusIndex = 0;
@@ -412,9 +476,10 @@ export function suspendGridMode() {
 
 export function restorePreservedGrid() {
   if (!hasPreservedGrid()) return false;
-  // Stale sessions (tmux exited while grid was suspended) are handled gracefully:
-  // each cell's controller will receive CLOSE_CODE_SESSION_UNAVAILABLE (4001)
-  // and transition to "session-ended" state without crashing the grid.
+  // Stale sessions (broker session exited while grid was suspended) are
+  // handled gracefully: each cell's controller will receive
+  // CLOSE_CODE_SESSION_UNAVAILABLE (4001) and transition to "session-ended"
+  // state without crashing the grid.
   const restored = WP.resumeGridState(state.preservedGridSessions, state.preservedGridFocusIndex);
   state.gridSessions = restored.sessions.map(gs => ({
     session: gs.session,
@@ -435,7 +500,16 @@ export function backFromRalph() {
     returnToTerminalView();
     return;
   }
-  deps.backToSessions();
+  if (state.viewBeforeRalph === "terminal") {
+    if (returnToTerminalView()) return;
+    deps.backToSessions();
+    return;
+  }
+  if (state.viewBeforeRalph === "sessions") {
+    deps.backToSessions();
+    return;
+  }
+  deps.showView(state.viewBeforeRalph || "sessions");
 }
 
 export function backFromSettings() {
@@ -451,9 +525,27 @@ export function backFromSettings() {
   deps.showView(state.viewBeforeSettings || "sessions");
 }
 
-export function addToGrid(session, machine) {
+export function addToGrid(session: string, machine?: string): void {
+  const trace = __wfTraceStart(session, machine || "", { mode: "grid" });
+  __wfTraceEvent(trace, "addToGrid.start");
   if (!(deps.canUseWasmTerminal ? deps.canUseWasmTerminal() : isDesktop())) {
     console.warn("[grid] WebAssembly unavailable — cannot open grid terminal");
+    return;
+  }
+  // Without per-Terminal WASM isolation, all grid cells share one
+  // WebAssembly.Memory. Concurrent fit()/write() across cells produce
+  // out-of-bounds memory accesses that crash every terminal in the tab.
+  // Refuse to enter grid mode in that state and surface a visible warning.
+  if (typeof window.createIsolatedGhostty !== "function") {
+    console.error("[grid] createIsolatedGhostty unavailable — grid mode disabled to prevent WASM OOB crash. Reload to pick up a newer ghostty-web bundle.");
+    if (typeof window !== "undefined" && typeof window.alert === "function") {
+      window.alert(
+        "Grid mode is disabled in this tab.\n\n" +
+        "The terminal WASM bundle does not support per-cell isolation, which is required " +
+        "to safely show multiple terminals at once. (Older versions of ghostty-web are " +
+        "affected.)\n\nReload the page to pick up a fresh bundle.",
+      );
+    }
     return;
   }
   const targetMachine = machine || "";
@@ -477,6 +569,20 @@ export function addToGrid(session, machine) {
   // Must be on terminal view to build a grid — switch if needed
   if (state.currentView !== "terminal") {
     deps.showView("terminal", true);
+  }
+  // If sidebar is auto-expanded (hover), force it collapsed synchronously so
+  // the grid sizes against the final layout. Without this, grid cells fit to
+  // the expanded width and leave a gap on the right after the sidebar closes.
+  if (state.sidebarAutoExpanded) {
+    const sb = document.getElementById("desktop-sidebar");
+    if (sb) {
+      sb.style.transition = "none";
+      sb.classList.add("collapsed");
+      void sb.offsetHeight;
+      sb.style.transition = "";
+    }
+    state.sidebarCollapsed = true;
+    state.sidebarAutoExpanded = false;
   }
   state.sidebarResizeDone = false;
   // Already in grid?
@@ -529,10 +635,9 @@ export function removeFromGrid(idx) {
   const gs = state.gridSessions[idx];
   // Save snapshot before disposing
   if (deps.saveGridCellSnapshot) deps.saveGridCellSnapshot(gs);
-  // Remove cell DOM immediately (avoids full rebuild flash)
-  if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
-  // Cleanup controller
+  // Cleanup controller before removing DOM (dispose needs container for removeEventListener)
   if (gs.controller) gs.controller.dispose();
+  if (gs._cellElement) { gs._cellElement.remove(); gs._cellElement = null; }
   state.gridSessions.splice(idx, 1);
   // Adjust focus — shift left when a cell before the focused one is removed
   if (idx < state.gridFocusIndex) {
@@ -606,11 +711,31 @@ export function exitGridMode(skipRestore?) {
 }
 
 export function fitAllGridCells() {
+  // Force synchronous layout flush before measuring cell widths. Without this,
+  // a fit triggered after display:none→grid + async wasm mount can race the
+  // layout engine and read stale clientWidth, leaving a gap on the right.
+  const container = document.getElementById("desktop-grid-container");
+  if (container) void container.offsetWidth;
   for (const gs of state.gridSessions) {
     if (gs.controller) {
       try { gs.controller.resize(); } catch (e) { console.warn("[grid] cell resize failed:", e); }
     }
   }
+}
+
+function scheduleGridRelayoutFit(sessions = state.gridSessions) {
+  if (_gridRelayoutFitRaf != null) cancelAnimationFrame(_gridRelayoutFitRaf);
+  const cells = sessions.filter(gs => !!gs.controller);
+  _gridRelayoutFitRaf = requestAnimationFrame(() => {
+    _gridRelayoutFitRaf = null;
+    if (!isGridActive()) return;
+    const container = document.getElementById("desktop-grid-container");
+    if (container) void container.offsetWidth;
+    for (const gs of cells) {
+      if (!state.gridSessions.includes(gs) || !gs.controller) continue;
+      try { gs.controller.resize(); } catch (e) { console.warn("[grid] cell resize failed:", e); }
+    }
+  });
 }
 
 /** Hide terminal canvases + show loading overlay (before sidebar CSS transition). */

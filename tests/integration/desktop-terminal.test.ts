@@ -20,6 +20,7 @@ import {
   waitForMessage,
   type PtyTestContext,
 } from "./pty-test-helpers";
+import { CLOSE_CODE_SESSION_UNAVAILABLE } from "../../src/ws-constants.js";
 
 // ── Test setup ──
 
@@ -29,7 +30,7 @@ const FAKE_SESSIONS = ["desktop-test"];
 
 beforeAll(async () => {
   ctx = await bootTestServer({
-    tmuxList: async () => [...FAKE_SESSIONS],
+    sessions: [...FAKE_SESSIONS],
     capturePane: async () => "$ mock-desktop-output\n",
   });
 });
@@ -108,24 +109,20 @@ describe("desktop terminal: open (attach handshake)", () => {
     await wait(100);
   });
 
-  test("attach to an existing proc sends pty_ready after attach_ack", async () => {
+  test("attach to an already-streaming entry sends pty_ready after attach_ack", async () => {
     const ws = await connectPty("desktop-test");
     await wait(10);
     const entry = ctx.activePtySessions.get("desktop-test") as any;
-    entry.proc = {
-      terminal: {
-        write() {},
-        resize() {},
-        close() {},
-      },
-      kill() {},
-    };
+    // Broker streaming uses entry.unsubscribe (the data-listener teardown
+    // function) as the "already attached" marker. Faking it here is enough
+    // for the attach handler to take the existing-stream branch.
+    entry.unsubscribe = () => {};
 
     const msgs = collectJsonMessages(ws);
     ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
     await wait(100);
 
-    expect(msgs.map(m => m.type)).toEqual(["attach_ack", "pty_ready", "prefill_done"]);
+    expect(msgs.map(m => m.type)).toEqual(["attach_ack", "pty_ready"]);
 
     await closeWs(ws);
     await wait(100);
@@ -142,14 +139,19 @@ describe("desktop terminal: open (attach handshake)", () => {
     await wait(100);
   });
 
-  test("spawn failure closes WS with 4001 (session unavailable)", async () => {
-    const ws = await connectPty("desktop-test");
-    const closePromise = waitForClose(ws);
-    // Trigger spawn — will fail (no real tmux session)
-    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
-    const ev = await closePromise;
-    expect(ev.code).toBe(4001);
-    await wait(50);
+  test("attach failure (session not alive) closes WS with 4001", async () => {
+    // Force the broker mock to report the session as dead so attach fails.
+    ctx.mockBackend.setSessionAlive("desktop-test", false);
+    try {
+      const ws = await connectPty("desktop-test");
+      const closePromise = waitForClose(ws);
+      ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
+      const ev = await closePromise;
+      expect(ev.code).toBe(CLOSE_CODE_SESSION_UNAVAILABLE);
+      await wait(50);
+    } finally {
+      ctx.mockBackend.setSessionAlive("desktop-test", null);
+    }
   });
 });
 
@@ -311,14 +313,16 @@ describe("desktop terminal: session lifecycle", () => {
     expect(entry!.alive).toBe(false);
   });
 
-  test("reconnect after spawn failure gets fresh entry + attach_ack", async () => {
-    // First connection — triggers spawn failure
+  test("reconnect after attach failure gets fresh entry + attach_ack", async () => {
+    // First connection — broker reports session dead, attach yields 4001
+    ctx.mockBackend.setSessionAlive("desktop-test", false);
     const ws1 = await connectPty("desktop-test");
     ws1.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
     await waitForClose(ws1);
     await wait(100);
 
-    // Second connection — should get fresh entry
+    // Clear the override — second connect should succeed cleanly
+    ctx.mockBackend.setSessionAlive("desktop-test", null);
     const ws2 = await connectPty("desktop-test");
     const ackPromise = waitForMessage(ws2, "attach_ack");
     ws2.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
@@ -328,18 +332,24 @@ describe("desktop terminal: session lifecycle", () => {
     await wait(100);
   });
 
-  test("full lifecycle: connect → attach_ack → spawn fail → 4001 close", async () => {
-    const ws = await connectPty("desktop-test");
-    const msgs = collectJsonMessages(ws);
-    const closePromise = waitForClose(ws);
+  test("full lifecycle: connect → attach → 4001 close on dead session", async () => {
+    // Note: under broker streaming, isSessionAlive is checked synchronously
+    // inside attachStreamingBackend, so the WS is torn down before the
+    // attach_ack send-guard runs. The original tmux-era test asserted
+    // attach_ack arrived before close — that ordering only held because
+    // tmux spawn was async. The 4001 close-code contract is what matters.
+    ctx.mockBackend.setSessionAlive("desktop-test", false);
+    try {
+      const ws = await connectPty("desktop-test");
+      const closePromise = waitForClose(ws);
 
-    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
+      ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, skipPrefill: true }));
 
-    const ev = await closePromise;
-    // attach_ack received before close
-    expect(msgs.some(m => m.type === "attach_ack")).toBe(true);
-    // Closed with 4001 (session unavailable — no real tmux)
-    expect(ev.code).toBe(4001);
+      const ev = await closePromise;
+      expect(ev.code).toBe(CLOSE_CODE_SESSION_UNAVAILABLE);
+    } finally {
+      ctx.mockBackend.setSessionAlive("desktop-test", null);
+    }
   });
 
   test("rapid connect/disconnect cycles don't leak entries or crash", async () => {
@@ -394,7 +404,7 @@ describe("desktop terminal: two-phase prefill", () => {
     await wait(100);
   });
 
-  test("attach with prefillMode=full sends attach_ack and correct prefill sequence", async () => {
+  test("attach with prefillMode=full sends attach_ack and skips viewport boundary", async () => {
     const ws = await connectPty("desktop-test");
     const msgs = collectJsonMessages(ws);
 
@@ -404,16 +414,13 @@ describe("desktop terminal: two-phase prefill", () => {
 
     const types = msgs.map(m => m.type);
     expect(types).toContain("attach_ack");
-    // Verify ordering: attach_ack < prefill_viewport < prefill_done
+    // Full prefill has no separate viewport boundary; clients flush buffered
+    // full bytes at prefill_done.
     const ackIdx = types.indexOf("attach_ack");
-    const vpIdx = types.indexOf("prefill_viewport");
     const doneIdx = types.indexOf("prefill_done");
-    if (vpIdx >= 0) {
-      expect(vpIdx).toBeGreaterThan(ackIdx);
-    }
+    expect(types).not.toContain("prefill_viewport");
     if (doneIdx >= 0) {
       expect(doneIdx).toBeGreaterThan(ackIdx);
-      if (vpIdx >= 0) expect(doneIdx).toBeGreaterThan(vpIdx);
     }
 
     await closeWs(ws);
@@ -460,22 +467,34 @@ describe("desktop terminal: two-phase prefill", () => {
     await wait(100);
   });
 
-  test("session-unavailable closes with 4001 before any prefill (no real tmux session)", async () => {
-    // In test mode, has-session fails → server closes WS with 4001 before prefill.
-    // This verifies the client gets a clean close code instead of hanging.
-    const ws = await connectPty("desktop-test");
-    const msgs = collectJsonMessages(ws);
-    const closePromise = waitForClose(ws, 5000);
+  test("session-unavailable closes with 4001 before any prefill (unknown session)", async () => {
+    // Connect with a session name NOT in MockBackend's list.
+    // Two acceptable paths, both lock in the "no prefill for unknown session" invariant:
+    //   1. Server rejects at HTTP upgrade (403) → connectPty promise rejects.
+    //   2. Server accepts upgrade then sends WS close 4001 before any prefill.
+    // If the server accepts the upgrade AND any prefill_* leaks through, the
+    // take-control state machine regresses — fail the test.
+    let connectRejected = false;
+    let ws: WebSocket | null = null;
+    try {
+      ws = await connectPty("nonexistent-session-xyz");
+    } catch {
+      connectRejected = true;
+    }
 
-    ws.send(JSON.stringify({ type: "attach", cols: 80, rows: 24, prefillMode: "full" }));
+    if (connectRejected) {
+      // Preferred path: upgrade rejected at HTTP layer. Nothing more to assert.
+      return;
+    }
 
-    const closeEv = await closePromise;
-    expect(closeEv.code).toBe(4001);
-    // No prefill messages should have been sent — session didn't exist
+    // Server accepted the upgrade — must close with CLOSE_CODE_SESSION_UNAVAILABLE
+    // before emitting any prefill frames.
+    const msgs = collectJsonMessages(ws!);
+    const ev = await waitForClose(ws!, 3000);
+    expect(ev.code).toBe(CLOSE_CODE_SESSION_UNAVAILABLE);
     const types = msgs.map(m => m.type);
     expect(types).not.toContain("prefill_viewport");
     expect(types).not.toContain("prefill_done");
-
-    await wait(100);
+    await closeWs(ws!).catch(() => {});
   });
 });

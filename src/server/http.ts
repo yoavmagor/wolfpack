@@ -5,8 +5,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { assets } from "../public-assets.js";
-import { tmuxList } from "./tmux.js";
-import { exec } from "./tmux.js";
+import { exec } from "./shell.js";
+import { getBackend } from "./backend.js";
 import { createLogger } from "../log.js";
 
 const log = createLogger("http");
@@ -70,10 +70,11 @@ export function createPerIpRateLimiter(rate: number, evictIntervalMs = 60_000) {
 // ── Session helpers ──
 
 export async function uniqueSessionName(base: string): Promise<string> {
-  // tmux silently replaces dots with underscores in session names — do it upfront
-  // so the name we return matches what tmux actually creates
+  // Project names allow dots (`my.app`); session names don't (see
+  // isValidSessionName — `^[a-zA-Z0-9_-]+$`). Replace upfront so a project
+  // like `foo.bar` produces a valid session name (`foo_bar`).
   base = base.replace(/\./g, "_");
-  const sessions = await tmuxList();
+  const sessions = await getBackend().list();
   if (!sessions.includes(base)) return base;
   let i = 2;
   while (sessions.includes(`${base}-${i}`)) i++;
@@ -81,7 +82,7 @@ export async function uniqueSessionName(base: string): Promise<string> {
 }
 
 export async function isAllowedSession(session: string): Promise<boolean> {
-  const allowed = await tmuxList();
+  const allowed = await getBackend().list();
   return allowed.includes(session);
 }
 
@@ -183,6 +184,15 @@ export function serveFile(res: ServerResponse, filename: string): void {
     "Content-Type": asset.mime,
     "Cache-Control": "no-cache",
   };
+  // The PWA registers /sw.js as the service worker. Browsers require
+  // `Service-Worker-Allowed` to widen the SW's controllable scope to /
+  // (without it the scope is restricted to the directory containing the
+  // SW script). Previously a dedicated `GET /sw.js` route set this; now
+  // that the file is served by the generic asset handler we set the
+  // header here for the single SW path.
+  if (filename === "sw.js") {
+    headers["Service-Worker-Allowed"] = "/";
+  }
   if (asset.mime === "text/html") {
     const nonce = generateCspNonce();
     headers["Content-Security-Policy"] = buildCsp(nonce);
@@ -208,6 +218,17 @@ export function sanitizePeerName(name: unknown): string {
 // Cached peer list for server-side aggregation (populated by /api/discover)
 export let cachedPeers: { url: string; name: string }[] = [];
 
+// Must invoke via login shell: the macOS App Store Tailscale CLI
+// (/Applications/Tailscale.app/Contents/MacOS/Tailscale) relies on the user's
+// session env to reach the GUI-hosted daemon. Under launchd's stripped env a
+// direct execFile prints "The Tailscale GUI failed to start..." to stdout
+// (exit 0), which then fails JSON.parse. `/bin/sh -l -c` sources the user's
+// login profile so the bridge resolves. Revert warning: do NOT "simplify" to
+// a direct execFile — that silently breaks discovery on App Store installs.
+export function buildTailscaleStatusArgv(tsBin: string): { cmd: string; args: string[] } {
+  return { cmd: "/bin/sh", args: ["-l", "-c", `"${tsBin}" status --json`] };
+}
+
 export async function discoverPeers(): Promise<{ peers: any[]; error?: string }> {
   const tsBin = [
     "/usr/local/bin/tailscale",
@@ -218,8 +239,9 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
   if (!tsBin) return { peers: [], error: "tailscale not found" };
 
   try {
+    const { cmd, args } = buildTailscaleStatusArgv(tsBin);
     const { stdout } = await exec(
-      tsBin, ["status", "--json"],
+      cmd, args,
       { maxBuffer: TAILSCALE_MAX_BUFFER },
     );
     const status = JSON.parse(stdout);
@@ -241,7 +263,7 @@ export async function discoverPeers(): Promise<{ peers: any[]; error?: string }>
           clearTimeout(timer);
           const info = await r.json();
           const sanitized = sanitizePeerName(info.name);
-          return { ...p, name: sanitized || p.hostname, version: info.version, wolfpack: true as const };
+          return { ...p, name: sanitized || p.hostname, version: sanitizePeerName(info.version), wolfpack: true as const };
         } catch { /* expected: peer unreachable or not running wolfpack */
           return { ...p, name: p.hostname, version: undefined, wolfpack: false as const };
         }

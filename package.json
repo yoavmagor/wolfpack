@@ -1,36 +1,62 @@
 {
   "name": "wolfpack-bridge",
-  "version": "1.7.0",
+  "version": "1.6.6-dev.wolfpack.1",
   "type": "module",
-  "description": "Mobile command center for tmux-based AI agent sessions",
+  "description": "Self-hosted browser terminal manager for AI coding agents on your own machines",
+  "homepage": "https://github.com/almogdepaz/wolfpack#readme",
+  "bugs": {
+    "url": "https://github.com/almogdepaz/wolfpack/issues"
+  },
   "bin": {
     "wolfpack": "./bin/run.cjs"
   },
   "files": [
     "bin/run.cjs",
-    "bin/install.cjs"
+    "bin/install.cjs",
+    "llms.txt",
+    "docs/agent-skills.md",
+    "docs/cli-attach.md",
+    "docs/session-control.md",
+    "skills"
   ],
   "scripts": {
     "test": "bun test",
     "test:e2e": "bunx playwright test",
     "test:e2e:headed": "bunx playwright test --headed",
+    "gen:schema": "bun run scripts/gen-control-api-schema.ts",
+    "perf:terminal-load": "bun scripts/terminal-load-perf.ts",
+    "typecheck": "bunx tsc --noEmit -p . && bunx tsc --noEmit -p public/",
     "postinstall": "node bin/install.cjs"
   },
   "optionalDependencies": {
-    "wolfpack-bridge-darwin-arm64": "1.6.0",
-    "wolfpack-bridge-darwin-x64": "1.6.0",
-    "wolfpack-bridge-linux-arm64": "1.6.0",
-    "wolfpack-bridge-linux-x64": "1.6.0"
+    "wolfpack-bridge-darwin-arm64": "1.6.6",
+    "wolfpack-bridge-darwin-x64": "1.6.6",
+    "wolfpack-bridge-linux-arm64": "1.6.6",
+    "wolfpack-bridge-linux-x64": "1.6.6"
   },
   "keywords": [
-    "tmux",
-    "ai",
-    "agents",
-    "mobile",
-    "pwa",
-    "terminal",
+    "ai-agent-terminal",
+    "ai-agents",
+    "ai-coding",
+    "agent-orchestration",
+    "autonomous-agents",
+    "browser-terminal",
     "claude",
-    "codex"
+    "claude-code",
+    "coding-agent",
+    "codex",
+    "developer-tools",
+    "gemini",
+    "multi-agent",
+    "pwa",
+    "remote-development",
+    "remote-terminal",
+    "self-hosted",
+    "tailscale",
+    "tailnet",
+    "terminal",
+    "terminal-dashboard",
+    "web-terminal"
   ],
   "repository": {
     "type": "git",
@@ -40,12 +66,13 @@
   "dependencies": {
     "ghostty-web": "0.4.0",
     "qrcode-terminal": "^0.12.0",
-    "ws": "^8.19.0"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@types/ws": "^8.18.1",
     "bun-types": "^1.3.10",
-    "playwright": "^1.58.2"
+    "playwright": "^1.58.2",
+    "typescript": "^6.0.3"
   }
 }

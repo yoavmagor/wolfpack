@@ -1,12 +1,12 @@
 /**
  * Worktree lifecycle utilities for ralph task isolation.
  *
- * Each task (or plan) gets its own git worktree under .wolfpack/worktrees/,
+ * Each task (or plan) gets its own git worktree under .worktrees/,
  * allowing concurrent agents to work without file conflicts.
  */
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
-import { realpathSync, existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
+import { realpathSync, existsSync, readFileSync, appendFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { createLogger, errMsg } from "./log.js";
 
 const log = createLogger("worktree");
@@ -16,8 +16,12 @@ let _cleanupInProgress = false;
 /** Test helper — returns true if a cleanup is currently running. */
 export function _isCleanupInProgress(): boolean { return _cleanupInProgress; }
 
-const WORKTREE_DIR = ".wolfpack/worktrees";
+const WORKTREE_DIR = ".worktrees";
 const WORKTREE_ORDER_FILE = ".wolfpack/worktree-order.txt";
+
+function worktreeSlug(branchName: string): string {
+  return branchName.replace(/^ralph\//, "").replace(/[^a-z0-9-]/g, "-");
+}
 
 export interface WorktreeInfo {
   path: string;
@@ -42,7 +46,7 @@ export function slugifyTaskName(header: string): string {
 }
 
 /**
- * Create a git worktree at .wolfpack/worktrees/<slug> on a new branch.
+ * Create a git worktree at .worktrees/<slug> on a new branch.
  * Returns the absolute worktree path.
  */
 export function createWorktree(
@@ -50,9 +54,8 @@ export function createWorktree(
   branchName: string,
   baseBranch: string,
 ): string {
-  const slug = branchName.replace(/^ralph\//, "").replace(/[^a-z0-9-]/g, "-");
   const realProjectDir = realpathSync(projectDir);
-  const worktreePath = join(realProjectDir, WORKTREE_DIR, slug);
+  const worktreePath = join(realProjectDir, WORKTREE_DIR, worktreeSlug(branchName));
   execFileSync(
     "git",
     ["worktree", "add", worktreePath, "-b", branchName, "--", baseBranch],
@@ -64,9 +67,8 @@ export function createWorktree(
     mkdirSync(join(realProjectDir, ".wolfpack"), { recursive: true });
     appendFileSync(orderFile, `${worktreePath}\n`);
   } catch (e: unknown) {
-    // Order file write failed — roll back the worktree to avoid partial state
-    try { removeWorktree(worktreePath); } catch { /* best effort */ }
-    throw e;
+    // Worktree was created successfully — don't roll back, just warn
+    log.warn("createWorktree: failed to write order file", { worktreePath, error: errMsg(e) });
   }
   return worktreePath;
 }
@@ -82,6 +84,10 @@ export function removeWorktree(worktreePath: string, projectDir?: string): void 
   try {
     execFileSync("git", ["worktree", "remove", worktreePath], opts);
   } catch (gracefulErr: any) {
+    log.warn("removeWorktree: graceful remove failed; forcing worktree removal (uncommitted changes may be lost)", {
+      worktreePath,
+      error: errMsg(gracefulErr),
+    });
     try {
       execFileSync("git", ["worktree", "remove", worktreePath, "--force"], opts);
     } catch (forceErr: any) {
@@ -90,6 +96,15 @@ export function removeWorktree(worktreePath: string, projectDir?: string): void 
       );
     }
   }
+}
+
+/**
+ * Best-effort directory mtime; returns 0 if stat fails so the caller's
+ * sort treats inaccessible entries as oldest. Used as the fallback for
+ * cleanupAllExceptFinal when the explicit order file is unavailable.
+ */
+function mtimeOrZero(path: string): number {
+  try { return statSync(path).mtimeMs; } catch { return 0; }
 }
 
 /**
@@ -147,8 +162,7 @@ export function listWorktrees(projectDir: string): WorktreeInfo[] {
 }
 
 /**
- * Remove all worktrees under .wolfpack/worktrees/ except the last one
- * (by numeric-aware sort of directory name, so task 10 sorts after task 9).
+ * Remove all managed ralph worktrees except the last one.
  */
 export function cleanupAllExceptFinal(
   projectDir: string,
@@ -162,14 +176,22 @@ export function cleanupAllExceptFinal(
   }
 }
 
+function isPathInsideDir(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+function isManagedWorktreePath(realProjectDir: string, worktreePath: string): boolean {
+  return isPathInsideDir(worktreePath, join(realProjectDir, WORKTREE_DIR));
+}
+
 function _cleanupAllExceptFinalImpl(
   projectDir: string,
 ): { removed: string[]; kept: string } {
   const realProjectDir = realpathSync(projectDir);
   const worktrees = listWorktrees(realProjectDir);
-  const wtDir = join(realProjectDir, WORKTREE_DIR);
 
-  const managed = worktrees.filter((w) => w.path.startsWith(wtDir));
+  const managed = worktrees.filter((w) => isManagedWorktreePath(realProjectDir, w.path));
 
   if (managed.length === 0) {
     return { removed: [], kept: "" };
@@ -190,10 +212,26 @@ function _cleanupAllExceptFinalImpl(
   if (orderedPaths && orderedPaths.length > 0) {
     // Order managed worktrees by creation order
     const pathOrder = new Map(orderedPaths.map((p, i) => [p, i]));
-    managed.sort((a, b) => (pathOrder.get(a.path) ?? 999) - (pathOrder.get(b.path) ?? 999));
+    // Unrecorded worktrees sort after all recorded ones, ordered by mtime
+    // (see fallback below for why mtime beats path sort).
+    managed.sort((a, b) => {
+      const aInOrder = pathOrder.has(a.path);
+      const bInOrder = pathOrder.has(b.path);
+      if (aInOrder && bInOrder) return pathOrder.get(a.path)! - pathOrder.get(b.path)!;
+      if (aInOrder && !bInOrder) return -1;
+      if (!aInOrder && bInOrder) return 1;
+      return mtimeOrZero(a.path) - mtimeOrZero(b.path);
+    });
   } else {
-    // Fallback: numeric-aware path sort
-    managed.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+    // Fallback when the order file is missing or unreadable: sort by
+    // directory mtime instead of numeric path sort. Path sort
+    // breaks when slug names collide and get timestamp suffixes — the
+    // "final" worktree picked for preservation may not be the most recent
+    // and `cleanupAllExceptFinal` would discard the latest agent work.
+    // mtime is creation-time-ish (writes during the agent run keep the
+    // most recent worktree's directory mtime newest).
+    log.warn("cleanupAllExceptFinal: worktree-order file missing or empty; falling back to mtime sort", { orderFile });
+    managed.sort((a, b) => mtimeOrZero(a.path) - mtimeOrZero(b.path));
   }
 
   const final = managed[managed.length - 1];

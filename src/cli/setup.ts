@@ -44,139 +44,89 @@ function check(name: string, cmd: string): boolean {
   }
 }
 
+function installPackages(pkgs: string[]) {
+  if (IS_MACOS) {
+    try {
+      execSync("brew --version", { stdio: "ignore" });
+    } catch { /* expected: homebrew not installed */
+      print(red("  Homebrew is required to install dependencies."));
+      print(dim("  Install from https://brew.sh"));
+      return;
+    }
+    const brewPkgs = pkgs.filter((p) => p !== "tailscale");
+    const brewCasks = pkgs.filter((p) => p === "tailscale");
+    if (brewPkgs.length > 0) {
+      print(`  Installing ${brewPkgs.join(", ")}...`);
+      execSync(`brew install --quiet ${brewPkgs.join(" ")}`, { stdio: "inherit" });
+    }
+    if (brewCasks.length > 0) {
+      print("  Installing Tailscale (GUI app)...");
+      execSync("brew install --cask --quiet tailscale", { stdio: "inherit" });
+    }
+  } else if (IS_LINUX) {
+    try {
+      execSync("apt --version", { stdio: "ignore" });
+    } catch { /* expected: apt not available on this system */
+      print(red("  apt is required to install dependencies."));
+      return;
+    }
+    const aptPkgs = pkgs.filter((p) => p !== "tailscale");
+    if (aptPkgs.length > 0) {
+      print(`  Installing ${aptPkgs.join(", ")}...`);
+      execSync(`sudo apt update -qq && sudo apt install -y -qq ${aptPkgs.join(" ")}`, { stdio: "inherit" });
+    }
+    if (pkgs.includes("tailscale")) {
+      print("  Installing Tailscale...");
+      // Security note: curl-pipe-sh without hash verification. This is the official
+      // Tailscale install pattern (https://tailscale.com/kb/1031/install-linux) and
+      // only runs during interactive user-initiated setup, not unattended. No practical
+      // alternative exists for cross-distro interactive CLI installation.
+      execSync("curl -fsSL https://tailscale.com/install.sh | sudo sh", { stdio: "inherit" });
+    }
+  } else {
+    print(red("  Unsupported platform. Please install manually: " + pkgs.join(", ")));
+  }
+}
+
 export async function setup() {
   print(dim(WOLF));
   print(bold("  WOLFPACK — AI Agent Bridge"));
   print(dim("  Deploy your pack. Command from anywhere."));
   print("");
 
+  // Detect non-interactive shells (CI, piped stdin, redirected stdout)
+  // and announce up-front. Without this, every prompt silently no-ops via
+  // the hasTTY=false flip in `ask()`, leaving operators wondering why
+  // setup "just finished" with nothing changed.
+  // process.stdin.isTTY is undefined when not a TTY — treat any non-true
+  // value as non-interactive.
+  const interactive = Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
+  if (!interactive) {
+    print(yellow("  Non-interactive shell detected (no TTY)."));
+    print(dim("  All prompts will be skipped; defaults applied silently."));
+    print(dim("  Run from an interactive terminal to be prompted."));
+    print("");
+  }
+
   print(bold("  Checking prerequisites...\n"));
 
-  const hasTmux = check("tmux", "tmux -V");
-  if (!hasTmux) {
-    if (IS_MACOS) {
-      print(dim("    → brew install tmux"));
-    } else if (IS_LINUX) {
-      print(dim("    → sudo apt install tmux"));
-    }
-  }
   const tsBin = tailscaleBin();
   const hasTailscale = !!tsBin;
   if (hasTailscale) {
     print(`  ${green("✓")} Tailscale`);
   } else {
-    print(`  ${red("✗")} Tailscale`);
+    print(`  ${red("✗")} Tailscale ${dim("(optional — needed for remote access)")}`);
   }
 
   print("");
 
-  const missing: string[] = [];
-  if (!hasTmux) missing.push("tmux");
-  if (!hasTailscale) missing.push("tailscale");
 
-  if (missing.length > 0) {
-    if (IS_MACOS) {
-      try {
-        execSync("brew --version", { stdio: "ignore" });
-      } catch { /* expected: homebrew not installed */
-        print(red("  Homebrew is required to install missing dependencies."));
-        print(dim("  Install from https://brew.sh"));
-        process.exit(1);
-      }
-    } else if (IS_LINUX) {
-      try {
-        execSync("apt --version", { stdio: "ignore" });
-      } catch { /* expected: apt not available on this system */
-        print(red("  apt is required to install missing dependencies."));
-        process.exit(1);
-      }
-    } else {
-      print(red("  Unsupported platform. Please install manually: " + missing.join(", ")));
-      process.exit(1);
+  // ── Install optional missing deps (tailscale only) ──
+  if (!hasTailscale) {
+    const installTs = hasTTY ? ask("  Install Tailscale for remote access? (y/n) ") : "n";
+    if (installTs.toLowerCase() === "y") {
+      installPackages(["tailscale"]);
     }
-
-    print(`  Will install: ${bold(missing.join(", "))}`);
-    if (hasTTY) {
-      const proceed = ask("  Proceed? (y/n) ");
-      if (proceed.toLowerCase() !== "y") {
-        print(red("  Aborted."));
-        process.exit(1);
-      }
-    }
-
-    if (IS_MACOS) {
-      const brewPkgs = missing.filter((p) => p !== "tailscale");
-      const brewCasks = missing.filter((p) => p === "tailscale");
-      if (brewPkgs.length > 0) {
-        print(`  Installing ${brewPkgs.join(", ")}...`);
-        execSync(`brew install --quiet ${brewPkgs.join(" ")}`, { stdio: "inherit" });
-      }
-      if (brewCasks.length > 0) {
-        print("  Installing Tailscale (GUI app)...");
-        execSync("brew install --cask --quiet tailscale", { stdio: "inherit" });
-      }
-    } else if (IS_LINUX) {
-      const aptPkgMap: Record<string, string> = { tmux: "tmux" };
-      const aptPkgs = missing
-        .filter((p) => p !== "tailscale")
-        .map((p) => aptPkgMap[p] || p);
-      if (aptPkgs.length > 0) {
-        print(`  Installing ${aptPkgs.join(", ")}...`);
-        execSync(`sudo apt update -qq && sudo apt install -y -qq ${aptPkgs.join(" ")}`, { stdio: "inherit" });
-      }
-      if (missing.includes("tailscale")) {
-        print("  Installing Tailscale...");
-        const tmpScript = `${tmpdir()}/tailscale-install-${process.pid}.sh`;
-        let userDeclined = false;
-        try {
-          execFileSync("curl", ["-fsSL", "-o", tmpScript, "https://tailscale.com/install.sh"]);
-          print(dim(`  Script downloaded to ${tmpScript} — inspect before running.`));
-          if (hasTTY) {
-            const ok = ask("  Run installer now? (y/n) ");
-            if (ok.toLowerCase() !== "y") {
-              userDeclined = true;
-              print(dim(`  Skipped. Run manually: sudo sh ${tmpScript}`));
-            } else {
-              execFileSync("sudo", ["sh", tmpScript], { stdio: "inherit" });
-            }
-          } else {
-            execFileSync("sudo", ["sh", tmpScript], { stdio: "inherit" });
-          }
-        } finally {
-          if (!userDeclined) {
-            try { unlinkSync(tmpScript); } catch { /* best effort */ }
-          }
-        }
-      }
-    }
-
-    print("");
-    let verifyFail = false;
-    for (const pkg of missing) {
-      if (pkg === "tailscale") {
-        if (tailscaleBin()) {
-          print(`  ${green("✓")} Tailscale installed`);
-          if (IS_MACOS) {
-            print(dim("  Open Tailscale.app and sign in to enable remote access."));
-          } else {
-            print(dim("  Run 'sudo tailscale up' to sign in."));
-          }
-        } else {
-          print(`  ${red("✗")} Tailscale failed to install`);
-          verifyFail = true;
-        }
-      } else {
-        if (!check(pkg, `${pkg} --version`)) {
-          verifyFail = true;
-        }
-      }
-    }
-
-    if (verifyFail) {
-      print(red("\n  Some dependencies failed to install."));
-      process.exit(1);
-    }
-
     print("");
   }
 
@@ -326,6 +276,13 @@ export async function setup() {
   print(dim("  Scan to open on your phone:"));
   print("");
   printQR(url);
+  print("");
+  print(yellow("  Security: Always use the Tailscale hostname URL — not your machine's IP (it won't work)."));
+  print("");
+  print(bold("  JWT Authentication:"));
+  print(dim("  1. Generate a secret:  openssl rand -base64 48"));
+  print(dim("  2. Export before starting:  export WOLFPACK_JWT_SECRET=\"your-secret\""));
+  print(dim("  3. For services, add to your service environment or shell profile."));
   print("");
 
   if (serviceInstalled) {

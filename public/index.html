@@ -7,6 +7,16 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#0a0a0a" />
+    <meta
+      name="description"
+      content="Wolfpack is a self-hosted browser terminal manager for AI coding agents: Claude Code, Codex, Gemini, shell commands, and custom agent wrappers."
+    />
+    <meta
+      name="keywords"
+      content="AI agents, AI coding agents, Claude Code, Codex, Gemini, browser terminal, web terminal, remote terminal, self-hosted developer tools, Tailscale, terminal dashboard"
+    />
+    <meta name="application-name" content="Wolfpack" />
+    <link rel="canonical" href="https://github.com/almogdepaz/wolfpack" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
@@ -16,11 +26,15 @@
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" type="image/svg+xml" href="/wolfpack-icon.svg" />
     <link rel="apple-touch-icon" href="/wolfpack-icon.svg" />
-    <meta property="og:title" content="Wolfpack" />
-    <meta property="og:description" content="Mobile command center for AI agent sessions" />
+    <meta property="og:title" content="Wolfpack — browser terminal manager for AI coding agents" />
+    <meta property="og:description" content="Self-hosted PWA command center for Claude Code, Codex, Gemini, shell commands, and persistent agent terminal sessions over Tailscale." />
     <meta property="og:image" content="/wolfpack-icon.svg" />
     <meta property="og:type" content="website" />
-    <title>Wolfpack</title>
+    <meta property="og:site_name" content="Wolfpack" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Wolfpack — browser terminal manager for AI coding agents" />
+    <meta name="twitter:description" content="Self-hosted PWA command center for persistent Claude Code, Codex, Gemini, and shell terminal sessions." />
+    <title>Wolfpack — AI agent terminal dashboard</title>
     <link rel="stylesheet" href="/styles.css" />
     <script src="/wolfpack-lib.js"></script>
     <script src="/ghostty-web.bundle.js"></script>
@@ -105,11 +119,6 @@
         <div class="session-name-error" id="session-name-error"></div>
       </div>
       <div id="agent-list" class="list"></div>
-      <div class="custom-cmd-row">
-        <input id="custom-cmd-input" type="text" placeholder="custom command…"
-          class="custom-cmd-input">
-        <button class="custom-cmd-add-btn">+ Add</button>
-      </div>
     </div>
 
     <!-- Settings view -->
@@ -151,16 +160,12 @@
               <button class="term-font-btn preset-btn font-alt" data-font="alt">Alt Mono</button>
             </div>
           </div>
-          <label class="settings-toggle">
-            <input type="checkbox" id="setting-termWrap"> Wrap long lines
-          </label>
-          <div class="settings-subsection mobile-only-setting">
-            <div class="settings-sub-heading">Mobile renderer</div>
+          <div class="settings-subsection">
+            <div class="settings-sub-heading">Solo prefill</div>
             <div class="preset-row">
-              <button class="term-mobile-btn preset-btn" data-mode="classic">Classic</button>
-              <button class="term-mobile-btn preset-btn" data-mode="wasm">Ghostty</button>
+              <button class="solo-prefill-btn preset-btn" data-mode="fast">Fast<br><span class="preset-hint">grid-like</span></button>
+              <button class="solo-prefill-btn preset-btn" data-mode="full">Full<br><span class="preset-hint">history</span></button>
             </div>
-            <div class="settings-description">Classic: lightweight text polling. WASM: full ghostty terminal (experimental).</div>
           </div>
           <div class="settings-subsection">
             <div class="flex-between">
@@ -187,6 +192,18 @@
           <div class="settings-description">
             Ralph is an autonomous agent loop that works through a plan file task-by-task. It spawns AI agents (Claude, Codex, Gemini) as detached processes, each completing one task before handing off to the next. Progress is tracked via strikethrough headers or checkboxes in your plan file. Enable this to show Ralph controls throughout the UI.
           </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-label">Agents</div>
+          <div class="settings-description">
+            Commands shown when creating a session. Toggle to enable, × to remove. If you disable everything, the picker falls back to <code>shell</code>.
+          </div>
+          <div id="agents-list" class="agents-list"></div>
+          <div class="agent-add-row">
+            <input type="text" id="agent-add-input" class="agent-add-input" placeholder="e.g. claude, gemini --context…" autocomplete="off">
+            <button id="agent-add-btn" class="add-cmd-btn">+ Add</button>
+          </div>
+          <div id="agent-add-error" class="agent-add-error"></div>
         </div>
         <div class="settings-section">
           <div class="settings-label">Quick Commands</div>
@@ -223,21 +240,12 @@
 
     <!-- Terminal view -->
     <div id="terminal-view" class="view">
-      <div id="search-bar">
-        <input id="search-input" type="text" placeholder="Search..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
-        <span id="search-count"></span>
-        <button id="search-prev-btn">&#9650;</button>
-        <button id="search-next-btn">&#9660;</button>
-        <button id="search-close-btn">&#10005;</button>
-      </div>
       <div
         id="conn-status"
         class="conn-status"
       >
         Reconnecting...
       </div>
-      <div id="terminal"></div>
-      <button id="jump-to-live">&#9660; Live</button>
       <div id="desktop-terminal-container"></div>
       <input id="mobile-kb-proxy" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" aria-label="Terminal input" />
       <div id="desktop-grid-container"></div>
@@ -250,6 +258,7 @@
         <button class="kb-key" data-key="Left">&#9664;</button>
         <button class="kb-key" data-key="Right">&#9654;</button>
         <button class="kb-key kb-git">git</button>
+        <button class="kb-key kb-copy" aria-label="Copy session to clipboard">copy</button>
         <button class="kb-key kb-open" id="kb-open-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2.5"/><line x1="6" y1="8" x2="6.01" y2="8"/><line x1="10" y1="8" x2="10.01" y2="8"/><line x1="14" y1="8" x2="14.01" y2="8"/><line x1="18" y1="8" x2="18.01" y2="8"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg></button>
       </div>
       <div id="input-bar">

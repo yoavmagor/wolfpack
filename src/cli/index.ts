@@ -15,6 +15,7 @@ import {
   serviceUninstall,
   serviceStop,
   serviceStart,
+  serviceRestart,
   serviceStatus,
   isServiceInstalled,
   isServiceRunning,
@@ -23,6 +24,9 @@ import {
 } from "./service.js";
 import { setup } from "./setup.js";
 import { doctor } from "./doctor.js";
+import { lsSessions, killSession } from "./sessions.js";
+import { attachCommand } from "./attach.js";
+import { runSessionCommand } from "./session-control.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { migratePlanFormat, detectOldPlanFormat } from "../wolfpack-context.js";
@@ -42,6 +46,34 @@ export function planServiceEnsureAction(
 ): "noop" | "start" | "install" {
   if (running) return "noop";
   return installed ? "start" : "install";
+}
+
+export function planBinaryUpdateAction(
+  binaryUpdated: boolean,
+  running: boolean,
+  installed: boolean,
+): "server-restart" | "noop" | "start" | "install" {
+  if (binaryUpdated && running) return "server-restart";
+  return planServiceEnsureAction(running, installed);
+}
+
+export function hasUninstallConfirmationFlag(argv: string[]): boolean {
+  return argv.includes("--yes") || argv.includes("--force");
+}
+
+export type ServiceCommandAction = "install" | "uninstall" | "stop" | "start" | "restart" | "status";
+
+export interface ParsedServiceCommand {
+  readonly action: ServiceCommandAction;
+  readonly broker: boolean;
+}
+
+export function parseServiceCommand(argv: readonly string[]): ParsedServiceCommand | null {
+  const [action, ...flags] = argv;
+  if (!action) return null;
+  if (!["install", "uninstall", "stop", "start", "restart", "status"].includes(action)) return null;
+  if (flags.some(flag => flag !== "--broker")) return null;
+  return { action: action as ServiceCommandAction, broker: flags.includes("--broker") };
 }
 
 async function start() {
@@ -69,14 +101,12 @@ async function start() {
   const binaryUpdated = updateStableBinary();
   const wasRunning = isServiceRunning();
   try {
-    if (binaryUpdated && wasRunning) {
-      // new binary on disk but old version still in memory — reinstall
-      serviceInstall();
-    } else {
-      const action = planServiceEnsureAction(wasRunning, isServiceInstalled());
-      if (action === "start") serviceStart();
-      else if (action === "install") serviceInstall();
-    }
+    const action = planBinaryUpdateAction(binaryUpdated, wasRunning, isServiceInstalled());
+    if (action === "server-restart") {
+      print(dim("  Updated server binary; restarting server only so broker sessions stay attached to the broker."));
+      serviceRestart({ broker: false, skipBrokerSessionWarning: true });
+    } else if (action === "start") serviceStart();
+    else if (action === "install") serviceInstall();
   } catch (e) {
     print(red(`  Service startup failed: ${e}`));
     print(dim("  Run 'wolfpack service install' to retry."));
@@ -135,18 +165,34 @@ async function main() {
   if (cmd === "setup") {
     await setup();
   } else if (cmd === "service") {
-    if (subcmd === "install") serviceInstall();
-    else if (subcmd === "uninstall") serviceUninstall();
-    else if (subcmd === "stop") serviceStop();
-    else if (subcmd === "start") serviceStart();
-    else if (subcmd === "status") serviceStatus();
-    else {
-      print("  Usage: wolfpack service [install|uninstall|start|stop|status]");
+    const serviceCommand = parseServiceCommand(process.argv.slice(3));
+    if (!serviceCommand) {
+      print("  Usage: wolfpack service [install|uninstall|start|stop|restart|status] [--broker]");
       process.exit(1);
     }
+    if (serviceCommand.action === "install") serviceInstall();
+    else if (serviceCommand.action === "uninstall") serviceUninstall();
+    else if (serviceCommand.action === "stop") serviceStop(serviceCommand.broker ? { broker: true } : {});
+    else if (serviceCommand.action === "start") serviceStart();
+    else if (serviceCommand.action === "restart") serviceRestart(serviceCommand.broker ? { broker: true } : {});
+    else if (serviceCommand.action === "status") serviceStatus();
   } else if (cmd === "doctor") {
     process.exit(await doctor());
+  } else if (cmd === "ls" || cmd === "list") {
+    process.exit(await lsSessions());
+  } else if (cmd === "session") {
+    process.exit(await runSessionCommand(process.argv.slice(3)));
+  } else if (cmd === "kill") {
+    process.exit(await killSession(subcmd));
+  } else if (cmd === "attach") {
+    process.exit(await attachCommand(process.argv.slice(3)));
   } else if (cmd === "uninstall") {
+    if (!hasUninstallConfirmationFlag(process.argv.slice(3))) {
+      print(red("  Refusing to uninstall without confirmation."));
+      print(dim("  This will recursively delete ~/.wolfpack/ (keys, secrets, config)."));
+      print(dim("  Re-run with: wolfpack uninstall --yes"));
+      process.exit(1);
+    }
     uninstall();
   } else if (cmd === "migrate-plan") {
     migratePlan(subcmd);

@@ -1,163 +1,63 @@
-# Wolfpack
+# Wolfpack — browser terminal manager for AI coding agents
 
 [![CI](https://github.com/almogdepaz/wolfpack/actions/workflows/test.yml/badge.svg)](https://github.com/almogdepaz/wolfpack/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
 [![Version](https://img.shields.io/github/v/release/almogdepaz/wolfpack?label=version)](https://github.com/almogdepaz/wolfpack/releases)
-[![GitHub stars](https://img.shields.io/github/stars/almogdepaz/wolfpack?style=social)](https://github.com/almogdepaz/wolfpack/stargazers)
 
-```
-        ...:.
-           :=+=:
-       . .-*####+-
-      .- :++**####*=.
-       -  :+***#####*=:.
-       :   .+**######*+==++++++=:..
-       ..   .=*#######*++++====+=--=-.
-       .:.-    -+**######**+*#*+=-:-===:
-     -.  ..     -++++***#**++*#*--:---===:
-     -.:--==+=--=*++*+**********+==------++-
-     .:----=++*++##########******+=====--=+#=-.
-       .::-----=+*#%%%%%%#***###*+===--==+*=++=:.
-         ...::::-=+*#%%############*+-----===+****+=:.
-          :--=-====+******++****##***-.::--++*######**
-         .++-+++++***********#*+*#***=.:---=+**=--=+==
-         -**++*++****+***##*++*****++=. ----=+=.  ..:-
-        .+##***+*+*****##*#=-=**=-=-::. -**-::-==+++++
-        :*%%*+=+=+****##**++****+**+-.. -*=-   .::::-=
-        .-#%#*+*+**#***+++**+****+*++=--+=::-:..:...-+
-         =###***=*+++++-=*=+++++-====-=:-=--:=---==---
-        .:-+***+=*+++**+++===*++++=--:=  ::=::-=----++
-          .+****+++++*##+***++=+*-.:--:..-===---=-:-++
-          .-+###**+++*#****+=---:--==.--=:==-==:::-=++
-            :####*****+++======:.. :...:::---:.=------
-            .=###***+++*++++--:.:::.   :-=::.:..-:---:
-             :+**++++++*++*+=-:: .. ...... ..   .:..::
-```
+Wolfpack is a self-hosted browser terminal dashboard for AI coding agents: Claude Code, Codex, Gemini, shell commands, and custom agent wrappers.
+It runs on your own macOS/Linux machine — laptop, workstation, or cloud VM — and gives you a PWA command center for long-running agent terminal sessions across your Tailscale tailnet.
 
-Mobile & desktop command center for AI coding agents. Control tmux-based sessions (Claude, Codex, Gemini, or any custom command) across multiple machines from your phone or browser. Secured by [Tailscale](https://tailscale.com/) — zero-config encrypted access, no ports to open.
+Sessions live in a Rust PTY broker, not the web server, so server restarts and redeploys do not kill your agents.
+There is no Wolfpack-hosted relay or account; remote access is normally handled by [Tailscale](https://tailscale.com/).
 
-Install on your phone's home screen for a native app experience — scan the QR code after setup and tap **"Add to Home Screen"**.
-
-### Desktop
-<p align="center">
-  <img src="docs/desktop-terminal.png" width="700" alt="Desktop — terminal with collapsible sidebar" />
-</p>
 <p align="center">
   <img src="docs/desktop-grid.png" width="700" alt="Desktop — multi-terminal grid view" />
 </p>
-
-### Mobile
-
 <p align="center">
-  <img src="docs/mobile-sessions.png" width="250" alt="Mobile — session list with multi-machine support" />
-</p>
-<p align="center">
-  <kbd>Classic</kbd>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<kbd>Ghostty (WASM)</kbd>
-</p>
-<p align="center">
-  <img src="docs/mobile-terminal.png" width="300" alt="Mobile — classic terminal mode" />
-  <img src="docs/mobile-ghostty.png" width="300" alt="Mobile — ghostty WASM terminal mode" />
+  <img src="docs/mobile-sessions.png" width="250" alt="Mobile — session list across machines" />
 </p>
 
-## Architecture
-
-```
-┌─────────────┐      ┌───────────┐      ┌──────────────────────────────────┐
-│   Phone /   │      │ Tailscale │      │          Your Machine            │
-│   Browser   │◄────►│  (HTTPS)  │◄────►│                                  │
-│   (PWA)     │      │  mesh VPN │      │  ┌──────────┐ ┌──────┐ ┌─────┐  │
-└─────────────┘      └───────────┘      │  │ wolfpack │ │ tmux │ │Agent│  │
-                                        │  │  server  │◄│      │◄│(any)│  │
-                                        │  │ HTTP/WS  │ │      │ │     │  │
-                                        │  └──────────┘ └──────┘ └─────┘  │
-                                        └──────────────────────────────────┘
-```
-
-**Components:**
-- **PWA** — single-file vanilla JS app (~90KB), no framework. Mobile-optimized touch UI + desktop ANSI terminal
-- **Server** — Bun HTTP + WebSocket. Serves embedded assets, proxies tmux via `capture-pane`/`send-keys`
-- **Ralph** — detached subprocess that iterates through a markdown plan file, invoking agents per-task
-- **Agents** — Claude, Codex, Gemini, or any shell command. Agent-agnostic by design
-
-## Quick Install
-
-```bash
-bunx wolfpack-bridge
-```
-
-Or with npx:
-
-```bash
-npx wolfpack-bridge
-```
-
-Or via shell script (no Node/Bun required):
+## Quickstart
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/almogdepaz/wolfpack/main/install.sh | bash
+wolfpack
 ```
 
-This will download the pre-built binary for your platform, run the setup wizard, and optionally install as a login service.
+The installer downloads the right pre-built binaries for your platform, runs setup, and can install Wolfpack as a login service.
+Supported: macOS arm64/x64 and Linux x64/arm64.
 
-Supported platforms: macOS (Apple Silicon, Intel), Linux (x64, arm64).
-
-### Prerequisites
-
-- **tmux**
-- **Tailscale** — install from [tailscale.com/download](https://tailscale.com/download), sign in, and make sure both your computer and phone are on the same tailnet
-
-### tmux History
-
-Wolfpack can only hydrate history that tmux still retains. Desktop terminal sessions prefill the latest 5,000 lines on connect, so if you want deeper scrollback, raise tmux's history limit:
-
-```tmux
-set -g history-limit 50000
-```
-
-Reload tmux or restart your sessions after changing it.
-
-## Usage
+Want npm instead?
 
 ```bash
-wolfpack                    # Start the server (runs setup on first launch)
-wolfpack setup              # Re-run the setup wizard
-wolfpack service install    # Auto-start on login (launchd / systemd)
-wolfpack service stop       # Stop the background service
-wolfpack service start      # Start the background service
-wolfpack service status     # Check if running
-wolfpack service uninstall  # Remove the launch agent
-wolfpack uninstall          # Remove everything (service, config, global command)
+bunx wolfpack-bridge
+# or
+npx wolfpack-bridge
 ```
 
-### Setup Wizard
+If setup gets weird, run:
 
-On first run, `wolfpack` walks you through:
+```bash
+wolfpack doctor
+```
 
-1. Checking prerequisites (tmux, Tailscale)
-2. Setting your projects directory (default: `~/Dev`)
-3. Choosing a port (default: `18790`)
-4. Enabling Tailscale HTTPS access
-5. Optionally installing as a login service
-6. Displaying a QR code to scan with your phone
+Uninstall is explicit:
 
-## Features
+```bash
+wolfpack uninstall --yes
+```
 
-### Session Management
-- Create, view, and kill tmux agent sessions
-- Agent picker — Claude, Codex, Gemini, or custom commands per session
-- Session triage — running, idle, and needs-input states with color-coded indicators
-- Live terminal output preview on session cards
+## First five minutes
 
-### Desktop
-- **Multi-terminal grid** — view 2-6 sessions side-by-side in a CSS grid layout. Click `+` on any sidebar card to add it to the grid, `×` to remove. Focused cell highlighted with green glow.
-- **Collapsible sidebar** — pin or auto-hide. Shows all sessions across machines with status badges, output preview, and grid/kill buttons.
-- **xterm.js PTY** — full terminal emulator with direct PTY connection (not capture-pane polling)
-- **Keyboard shortcuts:**
-  - `Cmd/Ctrl + ArrowUp/Down` — cycle between sessions
-  - `Cmd/Ctrl + ArrowLeft/Right` — navigate grid cells
-  - `Cmd/Ctrl + T` — new session (project picker)
-  - `Cmd/Ctrl + K` — clear terminal
+1. Run the installer.
+2. Choose your projects directory and port.
+3. Let setup detect your Tailscale hostname and configure `tailscale serve` for HTTPS remote access.
+4. Install the service when prompted if you want Wolfpack to survive login/reboots.
+5. Scan the QR code, open Wolfpack on your phone, then **Add to Home Screen**.
+6. Create a session and pick an agent command.
+
+Local-only browser use works without Tailscale. Phone/remote use is where Tailscale earns its keep.
 
 ### Mobile
 - **Two terminal modes** — choose in Settings:
@@ -169,37 +69,101 @@ On first run, `wolfpack` walks you through:
 - **Haptic feedback** — vibration on key actions (toggleable)
 - **PWA** — install as a standalone app on your phone's home screen
 
-All settings (terminal mode, font size, haptics, etc.) persist in localStorage across sessions.
+## Why use it
 
-### Multi-Machine
-- One phone connects to multiple Wolfpack servers
-- Sessions grouped by machine with online/offline status
-- Auto-discover Tailscale peers running Wolfpack
-- Cross-machine session management from a single UI
+Use Wolfpack when you want a self-hosted alternative to juggling tmux panes, SSH windows, and cloud workspaces for AI agent sessions.
+It is an AI agent terminal orchestrator for developers who need persistent browser/mobile access to coding agents running on machines they control.
 
-### Other
-- **Notifications** — browser notifications + vibration when sessions need attention
-- **Search** — find text in terminal output with match navigation
-- **Reconnect handling** — auto-recovers on connection drop with status indicator
-- **Auto-resize** — terminal resizes to match your screen/grid cell
+- **Phone-first agent control** — respond to Claude/Codex/Gemini while away from your desk.
+- **Multi-machine view** — manage sessions from every machine in your tailnet, including cloud VMs.
+- **Persistent PTYs** — the Rust broker owns sessions, so server restarts do not kill agents.
+- **Session triage** — cards show running/idle/needs-input state and live output previews.
+- **Desktop grid** — view up to 6 terminals side by side.
+- **PWA UX** — install on your home screen, reconnect on drops, receive notifications when sessions need attention.
+- **Agent-agnostic** — use built-in commands or add your own shell command in Settings → Agents.
+- **Ralph loop** — optional autonomous plan runner. See [docs/ralph-macchio.md](docs/ralph-macchio.md).
 
-### Remote Access
+## Agent recipes
 
-1. Install [Tailscale](https://tailscale.com/download) on both your computer and phone
-2. Sign in to the same Tailscale account on both devices
-3. Run `wolfpack setup` and say **y** to "Enable Tailscale HTTPS access?"
-4. Scan the QR code with your phone
-5. Tap **"Add to Home Screen"** for the native app experience
+Wolfpack starts sessions by running a command in the selected project directory.
+Configure commands in **Settings → Agents**.
 
-Tailscale's encrypted mesh network handles auth and routing — no ports to open, no DNS to configure.
+| Agent | Command |
+| --- | --- |
+| Shell | `shell` |
+| Claude Code | `claude` |
+| Codex | `codex` |
+| Gemini | `gemini` |
+| Custom wrapper | any command on `PATH`, for example `opencode` or `my-agent --flag` |
 
-## Ralph Loop
+`cmd` validation intentionally rejects shell metacharacters for session commands. If you need complex setup, put it in a wrapper script on `PATH` and add that command.
 
-Autonomous task runner. Write a markdown plan file, pick an agent, set iterations, and let it rip. Ralph reads the plan, extracts the first incomplete task, hands it to the agent, marks it done, and moves on — implementing, testing, and committing along the way. See [full documentation](docs/ralph-macchio.md).
+## CLI
+
+```text
+wolfpack                 Start the server (runs setup on first launch)
+wolfpack setup           Re-run the setup wizard
+wolfpack ls              List active broker sessions
+wolfpack attach [name]   Attach the local terminal to an existing session
+wolfpack kill <name>     Kill a session
+wolfpack session ...     Scriptable read/send/wait helpers for automation
+wolfpack doctor          Diagnose broker, binaries, JWT, Tailscale
+wolfpack service ...     install / start / stop / restart / status / uninstall (add --broker to include broker)
+wolfpack uninstall --yes Remove everything
+```
+
+Direct terminal attach: [docs/cli-attach.md](docs/cli-attach.md). Scriptable session control: [docs/session-control.md](docs/session-control.md).
+
+Troubleshooting: [docs/troubleshooting.md](docs/troubleshooting.md).
+
+## Trust and security model
+
+Wolfpack is self-hosted software for machines you control. Those machines can be local laptops, workstations, or cloud VMs.
+
+- Browser/PWA talks to the Wolfpack server over HTTP/WebSocket.
+- Remote access is normally private HTTPS through Tailscale.
+- The server talks to the broker over a per-user Unix socket.
+- The broker owns the PTYs and runs your selected commands locally on that machine.
+- Optional JWT auth can be layered on top of Tailscale.
+- Wolfpack does not provide a hosted relay, managed account, or prompt upload service.
+
+Running coding agents is intentionally powerful: those commands execute with your local user permissions in the chosen project directory.
+Treat Wolfpack access like shell access to that machine.
+
+## Architecture
+
+```text
+┌─────────────┐    ┌───────────┐    ┌──────────────────────────────────────────┐
+│   Phone /   │    │ Tailscale │    │       Your machine / cloud VM            │
+│   Browser   │◄──►│  (HTTPS)  │◄──►│                                          │
+│   (PWA)     │    │  mesh VPN │    │  ┌──────────┐  unix   ┌──────────────┐  │
+└─────────────┘    └───────────┘    │  │ wolfpack │ socket  │  wolfpack-   │  │
+                                    │  │  server  │◄───────►│   broker     │  │
+                                    │  │ (Bun)    │         │  (Rust, PTY) │  │
+                                    │  │ HTTP/WS  │         │  owns agents │  │
+                                    │  └──────────┘         └──────────────┘  │
+                                    └──────────────────────────────────────────┘
+```
+
+- **PWA** — vanilla JS, no framework. ghostty-web renders the terminal.
+- **Server** — Bun HTTP + WebSocket. Pure broker client; owns no PTYs.
+- **Broker** — `wolfpack-broker`, Rust daemon. Owns every PTY, keeps per-session output rings. One Unix-domain socket per host (`$XDG_RUNTIME_DIR/wolfpack-broker.sock`, fallback `~/.wolfpack/broker.sock`). Wire protocol in [docs/broker-protocol.md](docs/broker-protocol.md).
+
+## Optional JWT auth
+
+Tailscale already gates who can reach the server. If you want an extra auth layer on top — useful if you share your tailnet with others, or for defense-in-depth — set a JWT secret:
+
+```bash
+export WOLFPACK_JWT_SECRET="$(openssl rand -base64 48)"
+```
+
+Tokens are HS256; the server validates, it does not issue — sign them with any JWT library using the same secret.
+
+Optional: `WOLFPACK_JWT_AUDIENCE`, `WOLFPACK_JWT_ISSUER`, `WOLFPACK_JWT_CLOCK_TOLERANCE_SEC` (default 30s).
 
 ## Config
 
-Stored in `~/.wolfpack/config.json`:
+`~/.wolfpack/config.json` (mode 0600):
 
 ```json
 {
@@ -209,62 +173,23 @@ Stored in `~/.wolfpack/config.json`:
 }
 ```
 
-Agent command and settings stored in `~/.wolfpack/bridge-settings.json`.
+Per-server agent settings live in `~/.wolfpack/bridge-settings.json`.
+
+## Agent skills
+
+Wolfpack exposes repository-local agent skills in `skills/`:
+
+- `wolfpack-plan` — plan-file task header conventions that Ralph can parse.
+- `wolfpack-ralph` — Ralph loop response contract, notifications, and sandbox/socket caveats.
+- `wolfpack-tailnet-control` — discover, inspect, and control Wolfpack terminal sessions across Tailscale hosts.
+
+Copy or symlink these skill directories into an agent's skill path when you want that agent to opt in. Installation/update details: [docs/agent-skills.md](docs/agent-skills.md).
 
 ## Contributing
 
-### Dev Setup
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, the asset pipeline, and PR conventions.
 
-Requires [Bun](https://bun.sh/) (v1.2+).
-
-```bash
-git clone https://github.com/almogdepaz/wolfpack.git
-cd wolfpack
-bun install
-bun run scripts/gen-assets.ts   # generate embedded assets (required once)
-bun run cli.ts                  # start the server locally
-```
-
-### Testing
-
-```bash
-bun test                             # all tests
-bun test tests/unit/                 # unit tests only
-bun test tests/unit/plan-parsing.test.ts  # single file
-```
-
-Tests use Bun's built-in runner. Three categories:
-- `tests/unit/` — plan parsing, ralph log parsing, escaping, validation, grid logic
-- `tests/snapshot/` — launchd plist and systemd unit generation
-- `tests/integration/` — API routes, ralph loop endpoints
-
-### Asset Pipeline
-
-Frontend files live in `public/`. The server doesn't serve from disk — everything is embedded:
-
-1. Edit files in `public/` (HTML, PNG, manifest, etc.)
-2. Run `bun run scripts/gen-assets.ts` — embeds them into `public-assets.ts` (binary→base64, text→string)
-3. **Do NOT edit `public-assets.ts` manually** — it's auto-generated
-
-### Building Binaries
-
-```bash
-bun run scripts/build.ts    # assets + 4 platform binaries in dist/
-```
-
-Compiles for: linux-x64, linux-arm64, darwin-x64, darwin-arm64.
-
-### PR Conventions
-
-- Branch off `main`
-- Tests must pass (`bun test`)
-- Keep PRs focused — one feature or fix per PR
-
-## Community & Support
-
-- 💬 [Open a Discussion](https://github.com/almogdepaz/wolfpack/discussions) — questions, ideas, show & tell
-- 🐛 [File an Issue](https://github.com/almogdepaz/wolfpack/issues) — bugs and feature requests
-- ⭐ **Star the repo** if Wolfpack saves you time — it helps others find it
+Bugs and feature requests: [GitHub Issues](https://github.com/almogdepaz/wolfpack/issues). Questions and ideas: [Discussions](https://github.com/almogdepaz/wolfpack/discussions).
 
 ## License
 

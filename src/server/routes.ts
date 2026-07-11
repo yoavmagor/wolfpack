@@ -8,8 +8,6 @@ import {
   readdirSync,
   mkdirSync,
   statSync,
-  lstatSync,
-  realpathSync,
   existsSync,
   unlinkSync,
   openSync,
@@ -21,6 +19,8 @@ import { hostname, homedir } from "node:os";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createLogger, errMsg } from "../log.js";
+import { isRalphAgent } from "../ralph-agent.js";
+import { isProcessAlive, isRalphProcessAlive } from "../shared/process-cleanup.js";
 import {
   CMD_REGEX,
   BRANCH_REGEX,
@@ -33,26 +33,18 @@ import {
 } from "../validation.js";
 import { cleanupAllExceptFinal } from "../worktree.js";
 import { assets } from "../public-assets.js";
-import { isInputPrompt, isJunkLine, type TriageStatus } from "../triage.js";
+import { isJunkLine, type TriageStatus } from "../triage.js";
+import { getVapidPublicKey, addSubscription, removeSubscription, sendPush, validateSubscription, checkSessionTransitions, checkRalphLoopTransitions, checkNotifyRateLimit, type PushSubscription } from "./push.js";
 import pkg from "../../package.json";
 
 const log = createLogger("routes");
-import {
-  DEV_DIR,
-  TMUX,
-  RALPH_AGENTS,
-  isUnderDevDir,
-  tmuxList,
-  tmuxResize,
-  tmuxNewSession,
-  capturePane,
-  capturePaneForTriage,
-  sessionDirMap,
-  exec,
-} from "./tmux.js";
+import { DEV_DIR } from "./dev-dir.js";
+import { validateProjectDir as validateProjectDirPure } from "./validate-project-dir.js";
+import { getBackend, getRouter, DuplicateSessionError } from "./backend.js";
 import {
   listDevProjects,
   parseRalphLog,
+  pruneStaleRalphLock,
   scanRalphLoops,
   countPlanTasks,
 } from "./ralph.js";
@@ -61,11 +53,14 @@ import {
 const PEER_FETCH_TIMEOUT_MS = 3_000;
 const RALPH_LOG_MAX_TAIL_BYTES = 128 * 1024;
 const RALPH_LOG_MAX_LINES = 500;
+const SESSION_WAIT_DEFAULT_TIMEOUT_MS = 30_000;
+const SESSION_WAIT_MAX_TIMEOUT_MS = 600_000;
+const SESSION_WAIT_BUFFER_MAX_CHARS = 128 * 1024;
 
 // ── Peer ralph-response validation ──
 
 /** Allowed keys on a ralph loop entry from a remote peer. */
-const RALPH_LOOP_SCHEMA: Record<string, "string" | "number" | "boolean"> = {
+const RALPH_LOOP_SCHEMA: Record<string, "string" | "number" | "boolean" | "object" | "array"> = {
   project: "string",
   active: "boolean",
   completed: "boolean",
@@ -86,6 +81,9 @@ const RALPH_LOOP_SCHEMA: Record<string, "string" | "number" | "boolean"> = {
   tasksTotal: "number",
   worktreeMode: "string",
   worktreeBranch: "string",
+  sandbox: "string",
+  statusSource: "object",
+  statusSources: "array",
 };
 
 /**
@@ -117,7 +115,11 @@ export function validatePeerLoops(peerName: string, data: unknown): Record<strin
     }
     const clean: Record<string, unknown> = {};
     for (const [key, expectedType] of Object.entries(RALPH_LOOP_SCHEMA)) {
-      if (key in obj && typeof obj[key] === expectedType) {
+      if (key in obj && (
+        (expectedType === "array" && Array.isArray(obj[key])) ||
+        (expectedType === "object" && typeof obj[key] === "object" && obj[key] !== null && !Array.isArray(obj[key])) ||
+        (expectedType !== "array" && expectedType !== "object" && typeof obj[key] === expectedType)
+      )) {
         clean[key] = obj[key];
       }
     }
@@ -135,23 +137,14 @@ function validateProject(res: ServerResponse, project: string | null | undefined
   return true;
 }
 
-/** Validate project directory exists, is not a symlink, and resolves under DEV_DIR. */
+/** Validate project directory exists, is not a symlink, and resolves under DEV_DIR.
+ *  Thin HTTP wrapper around the pure `validateProjectDirPure` so the security-sensitive
+ *  containment logic lives in one tested place. */
 function validateProjectDir(res: ServerResponse, projectDir: string): boolean {
-  try {
-    if (lstatSync(projectDir).isSymbolicLink() || !statSync(projectDir).isDirectory()) {
-      json(res, { error: "not a directory" }, 400);
-      return false;
-    }
-    // defense-in-depth: verify realpath is contained under DEV_DIR
-    if (!isUnderDevDir(realpathSync(projectDir))) {
-      json(res, { error: "not a directory" }, 400);
-      return false;
-    }
-  } catch { /* expected: stat fails when project dir doesn't exist */
-    json(res, { error: "project directory not found" }, 404);
-    return false;
-  }
-  return true;
+  const result = validateProjectDirPure(projectDir);
+  if (result.ok) return true;
+  json(res, { error: result.error }, result.code === "not_found" ? 404 : 400);
+  return false;
 }
 
 import {
@@ -173,6 +166,7 @@ import {
   pruneOldImages,
 } from "../image-upload.js";
 import { activePtySessions, teardownPty } from "./websocket.js";
+import { inferAgentKind } from "./session-identity.js";
 
 /** Validate project name + directory in one call. Returns resolved path or sends error and returns null. */
 function resolveProjectDir(res: ServerResponse, project: string | null | undefined): string | null {
@@ -182,40 +176,156 @@ function resolveProjectDir(res: ServerResponse, project: string | null | undefin
   return dir;
 }
 
+function parseTimeoutMs(value: unknown): number | null {
+  if (value == null) return SESSION_WAIT_DEFAULT_TIMEOUT_MS;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > SESSION_WAIT_MAX_TIMEOUT_MS) return null;
+  return n;
+}
+
+async function waitForSessionText(session: string, text: string, timeoutMs: number): Promise<"matched" | "timeout" | "unavailable"> {
+  const streaming = getRouter().getStreamingBackendForSession(session);
+  if (!streaming) {
+    const existing = await getBackend().capturePane(session);
+    return existing.includes(text) ? "matched" : "unavailable";
+  }
+
+  const decoder = new TextDecoder();
+  const prefill = await streaming.getSessionPrefill(session);
+  const initial = decoder.decode(prefill.data);
+  if (initial.includes(text)) return "matched";
+  if (prefill.seq === undefined) return "unavailable";
+
+  return await new Promise((resolve) => {
+    let done = false;
+    let buffer = initial.slice(-SESSION_WAIT_BUFFER_MAX_CHARS);
+    let unsubscribe: (() => void) | null = null;
+    const finish = (result: "matched" | "timeout" | "unavailable") => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { unsubscribe?.(); } catch { /* cleanup best effort */ }
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    unsubscribe = streaming.onSessionData(session, (data) => {
+      buffer += decoder.decode(data, { stream: true });
+      if (buffer.length > SESSION_WAIT_BUFFER_MAX_CHARS) {
+        buffer = buffer.slice(-SESSION_WAIT_BUFFER_MAX_CHARS);
+      }
+      if (buffer.includes(text)) finish("matched");
+    }, {
+      sinceSeq: prefill.seq,
+      onSubscribeError: () => finish("unavailable"),
+    });
+    if (!unsubscribe) finish("unavailable");
+  });
+}
+
 const VERSION: string = pkg.version;
-const SETTINGS_PATH = join(homedir(), ".wolfpack", "bridge-settings.json");
+/** Tests override this with WOLFPACK_SETTINGS_PATH so loadSettings/saveSettings
+ *  hit a temp file instead of the user's real ~/.wolfpack/bridge-settings.json.
+ *  Resolved at every call so test setup that mutates env mid-process is honored. */
+function settingsPath(): string {
+  return process.env.WOLFPACK_SETTINGS_PATH || join(homedir(), ".wolfpack", "bridge-settings.json");
+}
 
 /** Previous pane content per session — used for content-diff triage. */
 const prevPaneContent = new Map<string, string>();
 
+/**
+ * Default agent commands shown in a fresh install. Order matters — it's
+ * the order they appear in the settings list and the session-create picker.
+ * `shell` is the always-on fallback when nothing is enabled, so it sits
+ * first.
+ */
+const DEFAULT_CMDS: ReadonlyArray<{ cmd: string; enabled: boolean }> = [
+  { cmd: "shell",  enabled: true },
+  { cmd: "claude", enabled: true },
+  { cmd: "pi",     enabled: true },
+  { cmd: "codex",  enabled: true },
+];
 
-const AGENT_PRESETS: Record<string, string> = {
-  shell: "shell",
-  claude: "claude",
-  "claude --dangerously-skip-permissions":
-    "claude --dangerously-skip-permissions",
-  codex: "codex",
-  agent: "agent",
-};
+interface CmdEntry {
+  cmd: string;
+  enabled: boolean;
+}
 
 interface Settings {
+  /** User's selected default agent for new sessions. May be disabled or absent
+   *  from `cmds`; `effectiveAgentCmd()` resolves the actual fallback. */
   agentCmd: string;
-  customCmds?: string[];
+  /** Full list of known commands. Each toggleable independently. */
+  cmds: CmdEntry[];
+}
+
+/** A command is valid if it's literally `"shell"` or matches CMD_REGEX. */
+function isValidCmd(cmd: string): boolean {
+  return cmd === "shell" || CMD_REGEX.test(cmd);
 }
 
 export function loadSettings(): Settings {
+  let raw: Record<string, unknown> = {};
   try {
-    const s = JSON.parse(readFileSync(SETTINGS_PATH, "utf-8"));
-    const agentCmd = s.agentCmd && CMD_REGEX.test(s.agentCmd) ? s.agentCmd : "claude";
-    const customCmds = (s.customCmds || []).filter((c: string) => CMD_REGEX.test(c));
-    return { agentCmd, customCmds };
-  } catch { /* expected: settings file doesn't exist yet */
-    return { agentCmd: "claude", customCmds: [] };
+    raw = JSON.parse(readFileSync(settingsPath(), "utf-8")) as Record<string, unknown>;
+  } catch { /* expected: settings file doesn't exist yet */ }
+
+  const agentCmd =
+    typeof raw.agentCmd === "string" && isValidCmd(raw.agentCmd) ? raw.agentCmd : "shell";
+
+  // New shape: `cmds: [{cmd, enabled}, ...]` — normalize and drop bad entries.
+  if (Array.isArray(raw.cmds)) {
+    const cmds: CmdEntry[] = [];
+    const seen = new Set<string>();
+    for (const e of raw.cmds as unknown[]) {
+      if (!e || typeof e !== "object") continue;
+      const obj = e as Record<string, unknown>;
+      if (typeof obj.cmd !== "string" || !isValidCmd(obj.cmd)) continue;
+      if (seen.has(obj.cmd)) continue;
+      seen.add(obj.cmd);
+      cmds.push({ cmd: obj.cmd, enabled: obj.enabled !== false });
+    }
+    if (cmds.length === 0) return { agentCmd, cmds: DEFAULT_CMDS.map(c => ({ ...c })) };
+    return { agentCmd, cmds };
   }
+
+  // Legacy shape (pre-PR): `customCmds: string[]`. Merge with the new defaults
+  // so users keep their custom additions without losing the new presets.
+  // Migration runs once per settings file — the next saveSettings() rewrites
+  // it in the new shape and the legacy branch is never hit again.
+  const cmds: CmdEntry[] = DEFAULT_CMDS.map(c => ({ ...c }));
+  const seen = new Set(cmds.map(c => c.cmd));
+  if (Array.isArray(raw.customCmds)) {
+    for (const c of raw.customCmds as unknown[]) {
+      if (typeof c !== "string" || !isValidCmd(c) || seen.has(c)) continue;
+      seen.add(c);
+      cmds.push({ cmd: c, enabled: true });
+    }
+  }
+  return { agentCmd, cmds };
 }
 
 function saveSettings(s: Settings): void {
-  writeFileSync(SETTINGS_PATH, JSON.stringify(s, null, 2));
+  // Persist exactly what we expose in the API response — a clean { agentCmd, cmds }
+  // object. Drop any legacy keys (customCmds) that may still be in the file.
+  writeFileSync(settingsPath(), JSON.stringify({ agentCmd: s.agentCmd, cmds: s.cmds }, null, 2));
+}
+
+/** Resolve the agent that should actually run for a new session.
+ *  Priority: settings.agentCmd if it's enabled → first enabled cmd → "shell". */
+export function effectiveAgentCmd(s: Settings): string {
+  const enabled = s.cmds.filter(c => c.enabled);
+  const requested = enabled.find(c => c.cmd === s.agentCmd);
+  if (requested) return requested.cmd;
+  if (enabled.length > 0) return enabled[0].cmd;
+  return "shell";
+}
+
+/** What the session-create picker should show: enabled cmds, or ["shell"] if
+ *  the user has disabled everything (always-on fallback). */
+export function effectiveCmds(s: Settings): string[] {
+  const enabled = s.cmds.filter(c => c.enabled).map(c => c.cmd);
+  return enabled.length > 0 ? enabled : ["shell"];
 }
 
 // Ralph worker is invoked as a subcommand: `wolfpack worker --plan ...`
@@ -251,10 +361,6 @@ export const routes: Record<
     res.writeHead(200, { "Content-Type": "application/manifest+json" });
     res.end(JSON.stringify(manifest, null, 2));
   },
-  "GET /sw.js": (_req, res) => {
-    res.writeHead(404);
-    res.end("Not Found");
-  },
 
   "GET /api/info": (_req, res) => {
     const name = hostname()
@@ -264,12 +370,13 @@ export const routes: Record<
   },
 
   "GET /api/sessions": async (_req, res) => {
-    const sessions = await tmuxList();
+    const sessions = await getBackend().list();
+    const identities = await getBackend().listIdentities?.() ?? {};
     const activeNames = new Set<string>();
     const results = await Promise.all(
       sessions.map(async (name) => {
         activeNames.add(name);
-        const pane = await capturePaneForTriage(name);
+        const pane = await getBackend().capturePaneForTriage(name);
         const content = pane.trimEnd();
 
         // Walk lines from bottom, skip junk, take first real line for preview
@@ -289,15 +396,10 @@ export const routes: Record<
           triage = "running";
           prevPaneContent.set(name, content);
         } else {
-          // Stable — check last non-junk lines for input prompts
-          const tail: string[] = [];
-          for (let i = lines.length - 1; i >= 0 && tail.length < 3; i--) {
-            if (!isJunkLine(lines[i])) tail.push(lines[i].trim());
-          }
-          triage = tail.some(isInputPrompt) ? "needs-input" : "idle";
+          triage = "idle";
         }
 
-        return { name, lastLine, triage };
+        return { name, lastLine, triage, ...(identities[name] && { identity: identities[name] }) };
       }),
     );
     results.sort((a, b) => a.name.localeCompare(b.name));
@@ -306,6 +408,9 @@ export const routes: Record<
       if (!activeNames.has(key)) prevPaneContent.delete(key);
     }
     json(res, { sessions: results });
+
+    // Fire push notifications for running → idle transitions (async, don't block response)
+    checkSessionTransitions(results);
   },
 
   "GET /api/projects": async (_req, res) => {
@@ -340,7 +445,7 @@ export const routes: Record<
       if (!isValidSessionName(customName)) {
         return json(res, { error: "invalid session name (letters, numbers, hyphens, underscores only)" }, 400);
       }
-      const existing = await tmuxList();
+      const existing = await getBackend().list();
       if (existing.includes(customName)) {
         return json(res, { error: "session name already taken" }, 409);
       }
@@ -354,9 +459,14 @@ export const routes: Record<
     if (!validateProjectDir(res, projectDir)) return;
     const finalName = customName || await uniqueSessionName(folderName);
     try {
-      await tmuxNewSession(finalName, projectDir, cmd, loadSettings);
-    } catch (e: any) {
-      if (e.code === "DUPLICATE_SESSION") {
+      // Backends accept a `loadSettings` thunk that returns the agent to spawn.
+      // Resolve the effective agent (respecting enabled-state + fallbacks) here
+      // so the backend never sees a disabled or missing agentCmd.
+      const settingsResolver = () => ({ agentCmd: effectiveAgentCmd(loadSettings()) });
+      const agentKind = inferAgentKind(cmd || settingsResolver().agentCmd);
+      await getBackend().createSession(finalName, projectDir, cmd, settingsResolver, { agentKind });
+    } catch (e: unknown) {
+      if (e instanceof DuplicateSessionError) {
         return json(res, { error: "session exists", session: finalName, hint: "reconnect or choose a different name" }, 409);
       }
       throw e;
@@ -366,43 +476,98 @@ export const routes: Record<
 
   "GET /api/settings": async (_req, res) => {
     const settings = loadSettings();
-    json(res, { settings, presets: AGENT_PRESETS });
+    // Surface the effective values so the frontend doesn't reimplement the
+    // fallback rules. `effective.cmds` is what the picker should render;
+    // `effective.agentCmd` is the pre-selected default.
+    //
+    // If the stored `settings.agentCmd` points to a disabled command, the
+    // runtime already resolves correctly via effectiveAgentCmd(). Normalize
+    // the raw field in the response so a future settings-UI consumer that
+    // reads `settings.agentCmd` directly doesn't surface a stale/disabled
+    // selection. We don't mutate the on-disk settings — just the returned
+    // view.
+    const enabled = new Set((settings.cmds ?? []).filter((c) => c.enabled).map((c) => c.cmd));
+    const view = settings.agentCmd && !enabled.has(settings.agentCmd)
+      ? { ...settings, agentCmd: "" }
+      : settings;
+    json(res, {
+      settings: view,
+      effective: {
+        cmds: effectiveCmds(settings),
+        agentCmd: effectiveAgentCmd(settings),
+      },
+    });
   },
 
   "POST /api/settings": async (req, res) => {
+    // Single endpoint, multiple ops — each is independently optional and
+    // applied in order. agentCmd is applied last so it can target a cmd added
+    // in the same request. All ops validate strict inputs and reject quietly
+    // with 400 on malformed bodies; on success the full settings + effective
+    // values are echoed back so the frontend can re-render without a refetch.
     const body = await parseBody<{
       agentCmd?: string;
-      addCustomCmd?: string;
-      deleteCustomCmd?: string;
+      addCmd?: string;
+      removeCmd?: string;
+      setCmdEnabled?: { cmd: string; enabled: boolean };
     }>(req, res);
     if (!body) return;
     const settings = loadSettings();
+
+    if (body.addCmd != null) {
+      const cmd = body.addCmd.trim();
+      if (!isValidCmd(cmd)) {
+        return json(res, { error: "invalid characters in command" }, 400);
+      }
+      if (!settings.cmds.some(c => c.cmd === cmd)) {
+        settings.cmds.push({ cmd, enabled: true });
+      }
+    }
+
+    if (body.removeCmd != null) {
+      const cmd = body.removeCmd;
+      settings.cmds = settings.cmds.filter(c => c.cmd !== cmd);
+      // If we removed the current default, drop it back to whatever
+      // effectiveAgentCmd would resolve next time — setting it to "" lets the
+      // resolver fall through to first-enabled → "shell".
+      if (settings.agentCmd === cmd) settings.agentCmd = "";
+    }
+
+    if (body.setCmdEnabled != null) {
+      const target = body.setCmdEnabled;
+      if (typeof target.cmd !== "string" || typeof target.enabled !== "boolean") {
+        return json(res, { error: "setCmdEnabled requires { cmd: string; enabled: boolean }" }, 400);
+      }
+      const entry = settings.cmds.find(c => c.cmd === target.cmd);
+      if (entry) entry.enabled = target.enabled;
+    }
+
     if (body.agentCmd != null) {
       const cmd = body.agentCmd.trim();
-      if (cmd !== "shell" && !CMD_REGEX.test(cmd)) {
+      if (!isValidCmd(cmd)) {
         return json(res, { error: "invalid characters in agent command" }, 400);
       }
       settings.agentCmd = cmd;
     }
-    if (body.addCustomCmd != null) {
-      const cmd = body.addCustomCmd.trim();
-      if (!CMD_REGEX.test(cmd)) {
-        return json(res, { error: "invalid characters in command" }, 400);
-      }
-      if (!settings.customCmds) settings.customCmds = [];
-      if (!settings.customCmds.includes(cmd) && !AGENT_PRESETS[cmd]) {
-        settings.customCmds.push(cmd);
-      }
-      settings.agentCmd = cmd;
-    }
-    if (body.deleteCustomCmd != null) {
-      settings.customCmds = (settings.customCmds || []).filter(c => c !== body.deleteCustomCmd);
-      if (settings.agentCmd === body.deleteCustomCmd) {
-        settings.agentCmd = "claude";
-      }
-    }
+
     saveSettings(settings);
-    json(res, { ok: true, settings });
+    json(res, {
+      ok: true,
+      settings,
+      effective: {
+        cmds: effectiveCmds(settings),
+        agentCmd: effectiveAgentCmd(settings),
+      },
+    });
+  },
+
+  "GET /api/backend": async (_req, res) => {
+    const router = getRouter();
+    const counts = await router.getSessionCounts();
+    json(res, {
+      brokerAvailable: router.isBrokerAvailable(),
+      counts,
+    });
   },
 
   "POST /api/kill": async (req, res) => {
@@ -415,8 +580,68 @@ export const routes: Record<
     // Clean up any associated desktop PTY session (wp_*) before killing
     teardownPty(session);
     prevPaneContent.delete(session);
-    await exec(TMUX, ["kill-session", "-t", session]);
+    await getBackend().killSession(session);
     json(res, { ok: true });
+  },
+
+  "GET /api/session-control/read": async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const session = url.searchParams.get("session");
+    if (!session) return json(res, { error: "missing session" }, 400);
+    if (!(await isAllowedSession(session))) {
+      return json(res, { error: "session not found" }, 404);
+    }
+    try {
+      const output = await getBackend().capturePane(session);
+      json(res, { session, output });
+    } catch (e: unknown) {
+      log.warn("session-control read failed", { session, error: errMsg(e) });
+      json(res, { error: "backend unavailable" }, 503);
+    }
+  },
+
+  "POST /api/session-control/send": async (req, res) => {
+    const body = await parseBody<{ session?: string; text?: string; noEnter?: boolean }>(req, res);
+    if (!body) return;
+    const session = body.session;
+    if (!session) return json(res, { error: "missing session" }, 400);
+    if (typeof body.text !== "string") return json(res, { error: "missing text" }, 400);
+    if (!(await isAllowedSession(session))) {
+      return json(res, { error: "session not found" }, 404);
+    }
+    try {
+      await getBackend().send(session, body.text, body.noEnter === true);
+      json(res, { ok: true, session });
+    } catch (e: unknown) {
+      log.warn("session-control send failed", { session, error: errMsg(e) });
+      json(res, { error: "backend unavailable" }, 503);
+    }
+  },
+
+  "POST /api/session-control/wait": async (req, res) => {
+    const body = await parseBody<{ session?: string; text?: string; timeoutMs?: number }>(req, res);
+    if (!body) return;
+    const session = body.session;
+    if (!session) return json(res, { error: "missing session" }, 400);
+    if (typeof body.text !== "string" || body.text.length === 0) {
+      return json(res, { error: "missing text" }, 400);
+    }
+    const timeoutMs = parseTimeoutMs(body.timeoutMs);
+    if (timeoutMs === null) {
+      return json(res, { error: `timeoutMs must be an integer from 1 to ${SESSION_WAIT_MAX_TIMEOUT_MS}` }, 400);
+    }
+    if (!(await isAllowedSession(session))) {
+      return json(res, { error: "session not found" }, 404);
+    }
+    try {
+      const result = await waitForSessionText(session, body.text, timeoutMs);
+      if (result === "matched") return json(res, { ok: true, session, matched: true });
+      if (result === "timeout") return json(res, { error: "timeout", session, matched: false }, 408);
+      return json(res, { error: "backend unavailable" }, 503);
+    } catch (e: unknown) {
+      log.warn("session-control wait failed", { session, error: errMsg(e) });
+      json(res, { error: "backend unavailable" }, 503);
+    }
   },
 
   "POST /api/resize": async (req, res) => {
@@ -432,7 +657,7 @@ export const routes: Record<
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
     if (!activePtySessions.has(session)) {
-      await tmuxResize(session, clampCols(cols), clampRows(rows));
+      await getBackend().resize(session, clampCols(cols), clampRows(rows));
     }
     json(res, { ok: true });
   },
@@ -449,8 +674,22 @@ export const routes: Record<
     if (!session) return json(res, { error: "missing session param" }, 400);
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
-    const pane = await capturePane(session);
+    const pane = await getBackend().capturePane(session);
     json(res, { pane });
+  },
+
+  "GET /api/copy-text": async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const session = url.searchParams.get("session");
+    if (!session) return json(res, { error: "missing session param" }, 400);
+    if (!(await isAllowedSession(session)))
+      return json(res, { error: "session not found" }, 404);
+    const text = await getBackend().capturePane(session);
+    res.writeHead(200, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    res.end(text);
   },
 
   "GET /api/git-status": async (req, res) => {
@@ -459,7 +698,7 @@ export const routes: Record<
     if (!validateProject(res, session)) return;
     if (!(await isAllowedSession(session)))
       return json(res, { error: "session not found" }, 404);
-    const projectDir = sessionDirMap.get(session);
+    const projectDir = getBackend().sessionDir(session);
     if (!projectDir || !existsSync(projectDir))
       return json(res, { error: "project directory not found" }, 404);
     try {
@@ -470,8 +709,8 @@ export const routes: Record<
         });
       });
       json(res, { status: output });
-    } catch (e: any) {
-      json(res, { error: e.message || "git status failed" }, 500);
+    } catch (e: unknown) {
+      json(res, { error: errMsg(e) || "git status failed" }, 500);
     }
   },
 
@@ -504,7 +743,7 @@ export const routes: Record<
     }
     // Save under the project dir so agents can read it without leaving cwd;
     // fall back to ~/.wolfpack/images when the project dir is unknown.
-    const projectDir = sessionDirMap.get(session);
+    const projectDir = getBackend().sessionDir(session);
     const baseDir = projectDir && existsSync(projectDir) ? projectDir : homedir();
     let imgDir: string;
     try {
@@ -533,7 +772,9 @@ export const routes: Record<
     const localLoops = scanRalphLoops().map(l => ({ ...l, machineName: selfHost, machineUrl: "" }));
 
     if (!aggregate || cachedPeers.length === 0) {
-      return json(res, { loops: localLoops });
+      json(res, { loops: localLoops });
+      checkRalphLoopTransitions(localLoops);
+      return;
     }
 
     const remotePeers = cachedPeers.filter(p => p.name !== selfHost);
@@ -561,7 +802,12 @@ export const routes: Record<
       })
     );
 
-    json(res, { loops: [...localLoops, ...peerResults.flat()] });
+    const allLoops = [...localLoops, ...peerResults.flat()];
+    json(res, { loops: allLoops });
+    // Only fire transitions for LOCAL loops — each peer machine runs its own
+    // /api/ralph poll and fires transitions for its own loops, so feeding
+    // peer loops here would double-notify (once per peer per machine).
+    checkRalphLoopTransitions(localLoops);
   },
 
   "GET /api/ralph/branches": async (req, res) => {
@@ -589,8 +835,9 @@ export const routes: Record<
         }
       }
       json(res, { branches, current });
-    } catch (e: any) {
-      json(res, { error: e.stderr || e.message || "git not available" }, 500);
+    } catch (e: unknown) {
+      const msg = (e as { stderr?: string })?.stderr || errMsg(e) || "git not available";
+      json(res, { error: msg }, 500);
     }
   },
 
@@ -600,11 +847,17 @@ export const routes: Record<
     const projectDir = resolveProjectDir(res, project);
     if (!projectDir) return;
     try {
-      const files = readdirSync(projectDir)
+      const rootPlans = readdirSync(projectDir)
         .filter((f) => f.endsWith(".md") && !f.startsWith(".") && !/^(readme|doc|changelog|contributing|license|code.of.conduct)\.md$/i.test(f))
-        .filter((f) => { try { return statSync(join(projectDir, f)).isFile(); } catch { /* race: file removed between readdir and stat */ return false; } })
-        .sort();
-      json(res, { plans: files });
+        .filter((f) => { try { return statSync(join(projectDir, f)).isFile(); } catch { /* race: file removed between readdir and stat */ return false; } });
+      const dotPlansDir = join(projectDir, ".plans");
+      const dotPlans = existsSync(dotPlansDir)
+        ? readdirSync(dotPlansDir)
+          .map((f) => `.plans/${f}`)
+          .filter((f) => isValidPlanFile(f))
+          .filter((f) => { try { return statSync(join(projectDir, f)).isFile(); } catch { /* race: file removed between readdir and stat */ return false; } })
+        : [];
+      json(res, { plans: [...rootPlans, ...dotPlans].sort() });
     } catch (e: unknown) {
       log.warn("failed to list plan files", { error: errMsg(e) });
       json(res, { plans: [] });
@@ -666,6 +919,9 @@ export const routes: Record<
     if (existing?.active) {
       return json(res, { error: "ralph loop already running", pid: existing.pid }, 409);
     }
+    if (existing && existing.pid > 1) {
+      pruneStaleRalphLock(projectDir, existing.pid);
+    }
 
     const lockPath = join(projectDir, ".ralph.lock");
     // Try atomic create first — avoids TOCTOU between stale-check and create
@@ -678,18 +934,13 @@ export const routes: Record<
       // Lock exists — check if it's stale
       let lockPid = 0;
       try { lockPid = Number(readFileSync(lockPath, "utf-8").trim()); } catch { /* lock may have been removed between wx and read */ }
-      if (lockPid > 1) {
-        try {
-          process.kill(lockPid, 0);
-          // PID is alive — verify it's actually a ralph process (not a reused PID)
-          try {
-            const cmdline = execFileSync("ps", ["-p", String(lockPid), "-o", "command="], { encoding: "utf-8", timeout: 3000 });
-            if (cmdline.includes("ralph-macchio") || cmdline.includes("worker")) {
-              return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
-            }
-            log.warn("lock PID belongs to unrelated process, removing stale lock", { pid: lockPid, command: cmdline.trim() });
-          } catch { /* ps failed — process may have exited between kill(0) and ps, treat as stale */ }
-        } catch { /* expected: process dead — stale lock */ }
+      if (isRalphProcessAlive(lockPid)) {
+        return json(res, { error: "ralph loop already running (lock held)", pid: lockPid }, 409);
+      }
+      if (lockPid > 1 && isProcessAlive(lockPid)) {
+        // Process at PID exists but is not ralph (PID reuse / unrelated
+        // proc). Lock is stale; fall through to remove + retry.
+        log.warn("lock PID belongs to unrelated process, removing stale lock", { pid: lockPid });
       }
       // Stale lock — remove and retry atomic create
       try { unlinkSync(lockPath); } catch (e2: unknown) {
@@ -724,8 +975,8 @@ export const routes: Record<
     if (auditFix != null && typeof auditFix !== "boolean") {
       return json(res, { error: "invalid auditFix flag" }, 400);
     }
-    const VALID_WORKTREE_MODES = [false, "false", "plan", "task"];
-    if (worktree != null && !VALID_WORKTREE_MODES.includes(worktree as any)) {
+    const VALID_WORKTREE_MODES: readonly (boolean | string)[] = [false, "false", "plan", "task"];
+    if (worktree != null && !VALID_WORKTREE_MODES.includes(worktree)) {
       return json(res, { error: "invalid worktree mode — must be false, \"plan\", or \"task\"" }, 400);
     }
     const worktreeMode = (worktree === "plan" || worktree === "task") ? worktree : "false";
@@ -756,8 +1007,8 @@ export const routes: Record<
         execFileSync("git", ["fetch", "origin", `${source}:${source}`], {
           cwd: projectDir, encoding: "utf-8", timeout: 30000,
         });
-      } catch (e: any) {
-        const stderr = e.stderr || e.message || "";
+      } catch (e: unknown) {
+        const stderr = (e as { stderr?: string })?.stderr || errMsg(e) || "";
         try {
           execFileSync("git", ["rev-parse", "--verify", source], {
             cwd: projectDir, encoding: "utf-8", timeout: 5000,
@@ -770,8 +1021,8 @@ export const routes: Record<
         execFileSync("git", ["checkout", "-b", newBranch, source], {
           cwd: projectDir, encoding: "utf-8", timeout: 10000,
         });
-      } catch (e: any) {
-        const stderr = e.stderr || e.message || "branch creation failed";
+      } catch (e: unknown) {
+        const stderr = (e as { stderr?: string })?.stderr || errMsg(e) || "branch creation failed";
         return json(res, { error: stderr }, 400);
       }
     }
@@ -784,12 +1035,13 @@ export const routes: Record<
     // (plan mode creates one worktree at startup, task mode creates per-iteration).
     // The route only passes the mode flag — the worker manages the lifecycle.
 
+    const selectedAgent = isRalphAgent(agent || "claude") ? (agent || "claude") : "claude";
     const workerArgs = [
       ...RALPH_BIN_ARGS.slice(1),
       "worker",
       "--plan", resolvedPlan,
       "--iterations", String(iters),
-      "--agent", RALPH_AGENTS.has(agent || "claude") ? (agent || "claude") : "claude",
+      "--agent", selectedAgent,
       "--progress", "progress.txt",
       "--cleanup", String(cleanupEnabled),
       "--audit-fix", String(auditFixEnabled),
@@ -803,6 +1055,12 @@ export const routes: Record<
       cwd: projectDir,
       detached: true,
       stdio: "ignore",
+      env: {
+        ...process.env,
+        WOLFPACK_PROJECT_DIR: projectDir,
+        WOLFPACK_AGENT_KIND: selectedAgent,
+        WOLFPACK_RALPH_AGENT_KIND: selectedAgent,
+      },
     });
     child.unref();
     spawned = true;
@@ -848,19 +1106,14 @@ export const routes: Record<
     if (!status?.active || !status.pid || status.pid <= 1) {
       return json(res, { error: "no active ralph loop found" }, 404);
     }
-    try {
-      const { stdout: cmdline } = await exec("ps", ["-p", String(status.pid), "-o", "command="]);
-      if (!cmdline.includes("ralph-macchio") && !cmdline.includes("worker")) {
-        return json(res, { error: "PID does not belong to a ralph process" }, 400);
-      }
-    } catch { /* expected: process already exited */
-      return json(res, { error: "process not found" }, 404);
+    // Reuse the same PID-reuse-safe filter parseRalphLog applies so the
+    // cancel and active-detection paths agree. ps -o command= confirms
+    // it's actually a ralph worker, not a reused PID slot.
+    if (!isRalphProcessAlive(status.pid)) {
+      return json(res, { error: "PID does not belong to a ralph process or process not found" }, 404);
     }
     try {
       process.kill(status.pid, "SIGTERM");
-      try { process.kill(-status.pid, "SIGTERM"); } catch (e: unknown) {
-        log.warn("ralph cancel: failed to SIGTERM process group", { error: errMsg(e) });
-      }
       // Clean up progress file so cancelled loop starts fresh on next continue
       if (status.progressFile && SAFE_FILENAME.test(status.progressFile) && !status.progressFile.includes("..")) {
         try { unlinkSync(join(projectDir, status.progressFile)); } catch { /* may not exist */ }
@@ -903,7 +1156,7 @@ export const routes: Record<
     }
 
     if (deletePlan && status.planFile) {
-      if (SAFE_FILENAME.test(status.planFile) && !status.planFile.includes("..")) {
+      if (isValidPlanFile(status.planFile)) {
         tryDelete(join(projectDir, status.planFile), status.planFile);
       } else {
         failed.push(status.planFile);
@@ -925,5 +1178,45 @@ export const routes: Record<
     }
 
     json(res, { ok: true, deleted, failed, ...(worktreeCleanup && { worktreeCleanup }) });
+  },
+
+  // ── Push notifications ──
+
+  "GET /api/push/vapid-key": (_req, res) => {
+    json(res, { publicKey: getVapidPublicKey() });
+  },
+
+  "POST /api/push/subscribe": async (req, res) => {
+    const body = await parseBody<PushSubscription>(req, res);
+    if (!body) return;
+    const sub: PushSubscription = { endpoint: body.endpoint, keys: { p256dh: body.keys?.p256dh, auth: body.keys?.auth } };
+    const validationError = validateSubscription(sub);
+    if (validationError) return json(res, { error: validationError }, 400);
+    const result = addSubscription(sub);
+    if (!result.ok) return json(res, { error: result.error }, 429);
+    json(res, { ok: true });
+  },
+
+  "POST /api/push/unsubscribe": async (req, res) => {
+    const body = await parseBody<{ endpoint?: string }>(req, res);
+    if (!body) return;
+    if (!body.endpoint || typeof body.endpoint !== "string") return json(res, { error: "missing endpoint" }, 400);
+    removeSubscription(body.endpoint);
+    json(res, { ok: true });
+  },
+
+  // ── Agent-triggered notifications ──
+
+  "POST /api/notify": async (req, res) => {
+    const body = await parseBody<{ message?: string }>(req, res);
+    if (!body) return;
+    if (!body.message || typeof body.message !== "string") return json(res, { error: "missing message" }, 400);
+    const message = body.message.slice(0, 500);
+
+    const rateLimitError = checkNotifyRateLimit();
+    if (rateLimitError) return json(res, { error: rateLimitError }, 429);
+
+    const result = await sendPush({ title: "Wolfpack", body: message, tag: "wolfpack-notify" });
+    json(res, { ok: true, ...result });
   },
 };

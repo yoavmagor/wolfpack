@@ -8,7 +8,7 @@ import { createWorktree, listWorktrees, removeWorktree } from "../../src/worktre
 let repoDir: string;
 
 function git(...args: string[]) {
-  return execFileSync("git", args, { cwd: repoDir, encoding: "utf-8", stdio: "pipe" });
+  return execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repoDir, encoding: "utf-8", stdio: "pipe" });
 }
 
 function initRepo() {
@@ -137,11 +137,11 @@ describe("worktree restart/reuse", () => {
     // create task sub-worktree
     const taskWt = createWorktree(repoDir, "ralph/1-add-feature", "ralph/plan-merge");
     writeFileSync(join(taskWt, "feature.ts"), "export const x = 1;\n");
-    execFileSync("git", ["add", "feature.ts"], { cwd: taskWt, stdio: "pipe" });
-    execFileSync("git", ["commit", "-m", "add feature"], { cwd: taskWt, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "add", "feature.ts"], { cwd: taskWt, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add feature"], { cwd: taskWt, stdio: "pipe" });
 
     // merge task branch into main worktree
-    execFileSync("git", ["merge", "ralph/1-add-feature", "-m", "merge task 1"], {
+    execFileSync("git", ["-c", "commit.gpgsign=false", "merge", "ralph/1-add-feature", "-m", "merge task 1"], {
       cwd: mainWt,
       stdio: "pipe",
     });

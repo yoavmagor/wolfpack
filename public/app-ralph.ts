@@ -3,20 +3,44 @@
 // Uses dependency injection to avoid circular imports with app.ts
 
 import { esc, escAttr, state, wpSettings, haptic } from "./app-state";
+export { getRalphStatus, renderRalphCardHtml, sidebarRalphCardHtml } from "../src/ralph-card-render";
+import { getRalphStatus, renderStatusSource, type RalphLoop } from "../src/ralph-card-render";
+
+// ── Types ──
+
+interface MachineEntry {
+  readonly url: string;
+  readonly name: string;
+}
+
+interface StartRalphBody {
+  project: string;
+  iterations: number;
+  planFile?: string;
+  agent: string;
+  format: boolean;
+  cleanup: boolean;
+  auditFix: boolean;
+  worktree: false | "plan" | "task";
+  worktreeBranch?: string;
+  worktreeBase?: string;
+  newBranch?: string;
+  sourceBranch?: string;
+}
 
 // ── Dependency injection ──
 
 interface RalphDeps {
-  api: (path: string, opts?: any, machineUrl?: string) => Promise<any>;
-  errorMessage: (err: any) => string;
+  api: <T = unknown>(path: string, opts?: RequestInit, machineUrl?: string) => Promise<T>;
+  errorMessage: (err: unknown) => string;
   showView: (name: string) => void;
-  getMachines: () => any[];
+  getMachines: () => MachineEntry[];
   backToSessions: () => void;
   loadSessions: () => Promise<void>;
   renderSidebar: () => void;
   startSidebarRefresh: () => void;
-  getSidebarRefreshTimer: () => any;
-  setSidebarRefreshTimer: (v: any) => void;
+  getSidebarRefreshTimer: () => ReturnType<typeof setInterval> | null;
+  setSidebarRefreshTimer: (v: ReturnType<typeof setInterval> | null) => void;
 }
 
 let deps: RalphDeps;
@@ -25,57 +49,10 @@ export function initRalphDeps(d: RalphDeps) {
   deps = d;
 }
 
-// ── Status helpers ──
-
-export function getRalphStatus(loop) {
-  const hitLimit = !loop.active && !loop.completed && loop.finished;
-  return {
-    hitLimit,
-    status: loop.audit ? "audit" : loop.cleanup ? "cleanup" : loop.active ? "running" : loop.completed ? "done" : hitLimit ? "limit" : "idle",
-    statusLabel: loop.audit ? "AUDIT" : loop.cleanup ? "CLEANUP" : loop.active ? "RUNNING" : loop.completed ? "DONE" : hitLimit ? "STOPPED" : "IDLE",
-    dotClass: loop.active ? "purple" : "gray",
-    dotTitle: loop.active ? "active" : "idle",
-  };
-}
-
-// ── Card rendering ──
-
-export function renderRalphCardHtml(loop, machineUrl) {
-  const { status, statusLabel, dotClass, dotTitle } = getRalphStatus(loop);
-  const taskPct = loop.tasksTotal > 0 ? Math.round((loop.tasksDone / loop.tasksTotal) * 100) : 0;
-  const taskLabel = loop.tasksDone + '/' + loop.tasksTotal + ' tasks';
-  const iterLabel = loop.totalIterations > 0 ? loop.iteration + '/' + loop.totalIterations + ' iter' : '';
-  const lastOut = loop.lastOutput ? '<div class="ralph-last-output">' + esc(loop.lastOutput) + '</div>' : '';
-  const mUrl = escAttr(machineUrl || '');
-  return '<div class="ralph-card ' + status + '" onclick="openRalphDetail(\'' + escAttr(loop.project) + '\', \'' + mUrl + '\')">' +
-    '<div class="ralph-card-header">' +
-      '<span class="ralph-card-name"><span class="dot ' + dotClass + '" title="' + dotTitle + '"></span>' + esc(loop.project) + (loop.planFile ? ' <span class="ralph-plan-suffix">— ' + esc(loop.planFile.replace(/\.md$/i, '')) + '</span>' : '') + '</span>' +
-      '<span class="ralph-status ' + status + '">' + statusLabel + '</span>' +
-      '<button class="kill-btn" onclick="dismissRalph(\'' + escAttr(loop.project) + '\', event, \'' + mUrl + '\')">&times;</button>' +
-    '</div>' +
-    '<div class="ralph-progress">' +
-      '<div class="ralph-bar"><div class="ralph-bar-fill ' + status + '" style="width:' + taskPct + '%"></div></div>' +
-      '<span class="ralph-iter">' + taskLabel + '</span>' +
-    '</div>' +
-    (iterLabel ? '<div class="ralph-iter ralph-iter-align">' + iterLabel + '</div>' : '') +
-    lastOut +
-  '</div>';
-}
-
-export function sidebarRalphCardHtml(loop, machineUrl) {
-  const { status, statusLabel, dotClass, dotTitle } = getRalphStatus(loop);
-  const mUrl = escAttr(machineUrl || '');
-  return '<div class="ralph-card sidebar-ralph-card ' + status + '" onclick="openRalphDetail(\'' + escAttr(loop.project) + '\', \'' + mUrl + '\')">' +
-    '<span class="dot ' + dotClass + '" title="' + dotTitle + '"></span>' +
-    '<span class="sidebar-ralph-name">' + esc(loop.project) + '</span>' +
-    '<span class="ralph-status ' + status + '">' + statusLabel + '</span>' +
-    '<button class="kill-btn" onclick="dismissRalph(\'' + escAttr(loop.project) + '\', event, \'' + mUrl + '\')">&times;</button>' +
-  '</div>';
-}
-
 // ── Detail view ──
 
-export function openRalphDetail(project, machineUrl) {
+export function openRalphDetail(project: string, machineUrl?: string): void {
+  state.viewBeforeRalph = state.currentView;
   state.currentRalphProject = project;
   state.currentRalphMachine = machineUrl || "";
   deps.showView("ralph-detail");
@@ -87,7 +64,7 @@ export async function refreshRalphDetail() {
   const logEl = document.getElementById("ralph-log");
   const actions = document.getElementById("ralph-actions");
   try {
-    const data = await deps.api("/ralph", undefined, state.currentRalphMachine);
+    const data = await deps.api<{ loops?: RalphLoop[] }>("/ralph", undefined, state.currentRalphMachine);
     const loop = (data.loops || []).find(l => l.project === state.currentRalphProject);
     if (!loop) {
       header.innerHTML = '<span class="ralph-status failed">NOT FOUND</span>';
@@ -113,6 +90,7 @@ export async function refreshRalphDetail() {
         '<div class="ralph-bar"><div class="ralph-bar-fill ' + status + '" style="width:' + taskPct + '%"></div></div>' +
       '</div>' +
       (loop.planFile ? '<div class="ralph-detail-meta">plan: ' + esc(loop.planFile) + '</div>' : '') +
+      '<div class="ralph-detail-meta">status: ' + renderStatusSource(loop) + '</div>' +
       '<div class="ralph-detail-meta">phases: audit+fix ' + (auditFixEnabled ? "on" : "off") + ', cleanup ' + (cleanupEnabled ? "on" : "off") + '</div>' +
       (loop.started ? '<div class="ralph-detail-meta">started: ' + esc(loop.started) + '</div>' : '') +
       (loop.finished ? '<div class="ralph-detail-meta">finished: ' + esc(loop.finished) + '</div>' : '');
@@ -139,7 +117,7 @@ export async function refreshRalphDetail() {
 
   // fetch log and render iteration cards
   try {
-    const logData = await deps.api("/ralph/log?project=" + encodeURIComponent(state.currentRalphProject), undefined, state.currentRalphMachine);
+    const logData = await deps.api<{ log?: string; totalLines?: number }>("/ralph/log?project=" + encodeURIComponent(state.currentRalphProject), undefined, state.currentRalphMachine);
     if (logData.log != null) {
       const container = document.getElementById("ralph-log-container");
       const wasScrolled = container.scrollTop + container.clientHeight >= container.scrollHeight - 30;
@@ -152,7 +130,7 @@ export async function refreshRalphDetail() {
 
 // ── Iteration parsing/rendering ──
 
-export function parseIterations(log) {
+export function parseIterations(log: string): Array<{ title: string; body: string }> {
   const sections = [];
   const marker = /^=== 🥋 (.+?) ===$/gm;
   let match, lastIdx = 0, lastTitle = null;
@@ -228,12 +206,12 @@ export async function cancelRalph() {
   }
 }
 
-export async function dismissRalph(project, event, machineUrl) {
+export async function dismissRalph(project: string, event: Event, machineUrl: string): Promise<void> {
   event.stopPropagation();
   if (!confirm("dismiss ralph loop for " + project + "?")) return;
   try {
     // Auto-cancel if still active
-    const data = await deps.api("/ralph", undefined, machineUrl);
+    const data = await deps.api<{ loops?: RalphLoop[] }>("/ralph", undefined, machineUrl);
     const loop = (data.loops || []).find(l => l.project === project);
     if (loop && loop.active) {
       await deps.api("/ralph/cancel", {
@@ -264,7 +242,12 @@ export async function dismissRalph(project, event, machineUrl) {
 
 // ── Start form ──
 
-function getStartMachine() {
+function getCheckedRadioValue(name: string, fallback = "false"): string {
+  const radio = document.querySelector<HTMLInputElement>(`input[name="${name}"]:checked`);
+  return radio?.value ?? fallback;
+}
+
+function getStartMachine(): string | undefined {
   return state.ralphStartMachine || undefined;
 }
 
@@ -289,7 +272,7 @@ async function loadStartFormData() {
   const machine = getStartMachine();
   const sel = document.getElementById("ralph-project-select") as HTMLSelectElement;
   try {
-    const data = await deps.api("/projects", undefined, machine);
+    const data = await deps.api<{ projects?: string[] }>("/projects", undefined, machine);
     const projects = data.projects || [];
     sel.innerHTML = projects.map(p => '<option value="' + esc(p) + '">' + esc(p) + '</option>').join("");
     if (state.currentRalphProject && projects.includes(state.currentRalphProject)) {
@@ -300,7 +283,7 @@ async function loadStartFormData() {
   }
   sel.onchange = function() {
     loadPlanFiles(sel.value);
-    const isoVal = ((document.querySelector('input[name="ralph-isolation"]:checked') as HTMLInputElement) || {} as any).value;
+    const isoVal = getCheckedRadioValue("ralph-isolation");
     if (isoVal === "branch") loadBranches(sel.value);
     if (isoVal === "plan" || isoVal === "task") loadWorktreeBranches(sel.value);
   };
@@ -334,27 +317,34 @@ async function loadStartFormData() {
     state.currentRalphAgent = "";
   }
   // Lock all fields except iterations when continuing a stopped loop
-  const lockable = [sel, document.getElementById("ralph-plan-select"), document.getElementById("ralph-agent-select"),
-    document.getElementById("ralph-cleanup-toggle"), document.getElementById("ralph-audit-fix-toggle"),
-    document.getElementById("ralph-worktree-name"), document.getElementById("ralph-worktree-base"),
-    document.getElementById("ralph-branch-name"), document.getElementById("ralph-source-branch")] as HTMLElement[];
+  const lockable: (HTMLInputElement | HTMLSelectElement | null)[] = [
+    sel,
+    document.getElementById("ralph-plan-select") as HTMLSelectElement | null,
+    document.getElementById("ralph-agent-select") as HTMLSelectElement | null,
+    document.getElementById("ralph-cleanup-toggle") as HTMLInputElement | null,
+    document.getElementById("ralph-audit-fix-toggle") as HTMLInputElement | null,
+    document.getElementById("ralph-worktree-name") as HTMLInputElement | null,
+    document.getElementById("ralph-worktree-base") as HTMLSelectElement | null,
+    document.getElementById("ralph-branch-name") as HTMLInputElement | null,
+    document.getElementById("ralph-source-branch") as HTMLSelectElement | null,
+  ];
   if (state.restartingRalph) {
-    lockable.forEach(el => { if (el) (el as any).disabled = true; });
+    lockable.forEach(el => { if (el) el.disabled = true; });
     // Show the actual worktree branch name in the disabled field
     if (state.currentRalphWorktreeBranch) {
       (document.getElementById("ralph-worktree-name") as HTMLInputElement).value = state.currentRalphWorktreeBranch;
     }
     state.currentRalphWorktreeBranch = "";
   } else {
-    lockable.forEach(el => { if (el) (el as any).disabled = false; });
+    lockable.forEach(el => { if (el) el.disabled = false; });
   }
 }
 
-async function loadPlanFiles(project) {
+async function loadPlanFiles(project: string): Promise<void> {
   const planSel = document.getElementById("ralph-plan-select") as HTMLSelectElement;
   if (!project) { planSel.innerHTML = '<option value="">select a project first</option>'; return; }
   try {
-    const data = await deps.api("/ralph/plans?project=" + encodeURIComponent(project), undefined, getStartMachine());
+    const data = await deps.api<{ plans?: string[] }>("/ralph/plans?project=" + encodeURIComponent(project), undefined, getStartMachine());
     const plans = data.plans || [];
     if (plans.length === 0) {
       planSel.innerHTML = '<option value="">no .md files found</option>';
@@ -368,18 +358,18 @@ async function loadPlanFiles(project) {
   syncIterationsFromPlan(project, planSel.value);
 }
 
-async function syncIterationsFromPlan(project, planFile) {
+async function syncIterationsFromPlan(project: string, planFile: string): Promise<void> {
   if (!project || !planFile) return;
   try {
-    const tc = await deps.api("/ralph/task-count?project=" + encodeURIComponent(project) + "&plan=" + encodeURIComponent(planFile), undefined, getStartMachine());
+    const tc = await deps.api<{ total: number; done: number }>("/ralph/task-count?project=" + encodeURIComponent(project) + "&plan=" + encodeURIComponent(planFile), undefined, getStartMachine());
     if (tc.total > 0) {
       (document.getElementById("ralph-iterations-input") as HTMLInputElement).value = String(tc.total - tc.done);
     }
   } catch {}
 }
 
-export function onIsolationChange() {
-  const val = ((document.querySelector('input[name="ralph-isolation"]:checked') as HTMLInputElement) || {} as any).value || "false";
+export function onIsolationChange(): void {
+  const val = getCheckedRadioValue("ralph-isolation");
   const isWorktree = val === "plan" || val === "task";
   document.getElementById("ralph-branch-fields").style.display = val === "branch" ? "flex" : "none";
   document.getElementById("ralph-worktree-fields").style.display = isWorktree ? "flex" : "none";
@@ -391,18 +381,18 @@ export function onIsolationChange() {
   }
 }
 
-function updateWorktreePlaceholder(mode) {
+function updateWorktreePlaceholder(mode: string): void {
   const input = document.getElementById("ralph-worktree-name") as HTMLInputElement;
   input.placeholder = mode === "task" ? "ralph/1-task-slug (auto per task)" : "ralph/plan-my-feature";
   if (mode === "task") { input.value = ""; input.disabled = true; }
   else { input.disabled = false; }
 }
 
-async function loadWorktreeBranches(project) {
+async function loadWorktreeBranches(project: string): Promise<void> {
   const sel = document.getElementById("ralph-worktree-base") as HTMLSelectElement;
   if (!project) { sel.innerHTML = '<option value="">select a project first</option>'; return; }
   try {
-    const data = await deps.api("/ralph/branches?project=" + encodeURIComponent(project), undefined, getStartMachine());
+    const data = await deps.api<{ branches?: string[]; current?: string }>("/ralph/branches?project=" + encodeURIComponent(project), undefined, getStartMachine());
     const branches = data.branches || [];
     sel.innerHTML = branches.map(b => '<option value="' + escAttr(b) + '"' + (b === "main" ? " selected" : "") + '>' + esc(b) + '</option>').join("");
   } catch {
@@ -410,11 +400,11 @@ async function loadWorktreeBranches(project) {
   }
 }
 
-async function loadBranches(project) {
+async function loadBranches(project: string): Promise<void> {
   const sel = document.getElementById("ralph-source-branch") as HTMLSelectElement;
   if (!project) { sel.innerHTML = '<option value="">select a project first</option>'; return; }
   try {
-    const data = await deps.api("/ralph/branches?project=" + encodeURIComponent(project), undefined, getStartMachine());
+    const data = await deps.api<{ branches?: string[]; current?: string }>("/ralph/branches?project=" + encodeURIComponent(project), undefined, getStartMachine());
     const branches = data.branches || [];
     if (branches.length === 0) {
       sel.innerHTML = '<option value="">no branches found</option>';
@@ -443,7 +433,7 @@ export async function startRalph() {
   // Warn if plan has format issues — worker will auto-number
   let format = false;
   try {
-    const tc = await deps.api("/ralph/task-count?project=" + encodeURIComponent(project) + "&plan=" + encodeURIComponent(planFile), undefined, machine);
+    const tc = await deps.api<{ total: number; done: number; issues?: string[] }>("/ralph/task-count?project=" + encodeURIComponent(project) + "&plan=" + encodeURIComponent(planFile), undefined, machine);
     if (tc.issues && tc.issues.length > 0) {
       const msg = "Plan format issues in " + planFile + ":\n\n" +
         tc.issues.map(i => "• " + i).join("\n") +
@@ -456,9 +446,9 @@ export async function startRalph() {
     }
   } catch {}
 
-  const isoVal = ((document.querySelector('input[name="ralph-isolation"]:checked') as HTMLInputElement) || {} as any).value || "false";
-  const worktree = (isoVal === "plan" || isoVal === "task") ? isoVal : false;
-  const body: any = { project, iterations, planFile, agent, format, cleanup, auditFix, worktree };
+  const isoVal = getCheckedRadioValue("ralph-isolation");
+  const worktree: false | "plan" | "task" = (isoVal === "plan" || isoVal === "task") ? isoVal : false;
+  const body: StartRalphBody = { project, iterations, planFile, agent, format, cleanup, auditFix, worktree };
   if (worktree) {
     const wtName = (document.getElementById("ralph-worktree-name") as HTMLInputElement).value.trim();
     const wtBase = (document.getElementById("ralph-worktree-base") as HTMLSelectElement).value;
@@ -487,7 +477,7 @@ export async function startRalph() {
   }
 }
 
-export function continueRalph(planFile, agent, cleanup, auditFix, worktreeMode, worktreeBranch?) {
+export function continueRalph(planFile: string, agent: string, cleanup: boolean, auditFix: boolean, worktreeMode: string, worktreeBranch?: string): void {
   state.currentRalphPlanFile = planFile || "";
   state.currentRalphAgent = agent || "";
   state.currentRalphCleanup = cleanup;
@@ -513,18 +503,20 @@ export async function discardRalph() {
   }
 }
 
-export function showRalphStart(machineUrl) {
+export function showRalphStart(machineUrl?: string): void {
   if (!wpSettings.ralphEnabled) return;
+  state.viewBeforeRalph = state.currentView;
   state.ralphStartMachine = machineUrl || "";
   state.restartingRalph = false;
   deps.showView("ralph-start");
 }
 
 // ── Notification helpers ──
+// Push notifications are handled server-side. Frontend only tracks state for haptic feedback.
 
 const prevRalphStates: Record<string, string> = {};
 
-export function getRalphNotificationStatus(loop) {
+function getRalphNotificationStatus(loop: RalphLoop): string {
   if (loop.audit) return "running";
   if (loop.cleanup) return "running";
   if (loop.active) return "running";
@@ -533,7 +525,7 @@ export function getRalphNotificationStatus(loop) {
   return "idle";
 }
 
-export function checkRalphTransitions(loops, mUrl, mName) {
+export function checkRalphTransitions(loops: RalphLoop[] | undefined, mUrl: string, _mName: string): void {
   if (!loops) return;
   for (const loop of loops) {
     const key = mUrl + "|" + loop.project;
@@ -541,12 +533,6 @@ export function checkRalphTransitions(loops, mUrl, mName) {
     const cur = getRalphNotificationStatus(loop);
     prevRalphStates[key] = cur;
     if ((prev === "running") && (cur === "done" || cur === "idle" || cur === "limit")) {
-      const title = deps.getMachines().length > 0 ? `${mName}: ralph` : "Wolfpack: ralph";
-      const labels = { done: "All tasks complete", idle: "Stopped", limit: "Hit iteration limit" };
-      new Notification(title, {
-        body: `${loop.project}: ${labels[cur] || cur}`,
-        tag: "wolfpack-ralph-" + key,
-      });
       haptic([200, 100, 200]);
     }
   }

@@ -8,8 +8,12 @@ process.env.WOLFPACK_JWT_SECRET = "wolfpack-test-secret-long-enough-for-validati
 process.env.WOLFPACK_JWT_AUDIENCE = "wolfpack-client";
 
 // Reset cached auth config + dynamic import so env vars take effect
-const { __resetJwtAuthConfig, __setTestOverrides } = await import("../../src/test-hooks.ts");
+const { __resetJwtAuthConfig } = await import("../../src/test-hooks.ts");
+const { __setTestBackend } = await import("../../src/server/backend.ts");
+const { MockBackend } = await import("../../src/server/mock-backend.ts");
 __resetJwtAuthConfig();
+
+__setTestBackend(new MockBackend({ sessions: ["auth-session"] }));
 
 const { createServerInstance } = await import("../../src/server/index.ts");
 const { server } = createServerInstance();
@@ -20,8 +24,6 @@ const AUTH_AUDIENCE = "wolfpack-client";
 let port = 0;
 let baseUrl = "";
 let baseWsUrl = "";
-
-__setTestOverrides({ tmuxList: async () => ["auth-session"] });
 
 function b64url(input: string): string {
   return Buffer.from(input, "utf-8")
@@ -183,16 +185,6 @@ describe("JWT auth middleware", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { projects: string[] };
     expect(Array.isArray(body.projects)).toBe(true);
-  });
-
-  test("reaches endpoint validation logic when authorized", async () => {
-    const token = createValidToken();
-    const res = await fetch(`${baseUrl}/api/poll`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect(res.status).toBe(400);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("missing session param");
   });
 
   test("rejects websocket upgrade without token", async () => {

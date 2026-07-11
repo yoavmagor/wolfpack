@@ -37,6 +37,18 @@ describe("parseConfig", () => {
     });
   });
 
+  test("strips unknown fields like legacy 'backend'", () => {
+    expect(parseConfig({
+      devDir: "/Users/home/Dev",
+      port: 18790,
+      backend: "broker",  // ignored — not part of Config any longer
+    })).toEqual({
+      devDir: "/Users/home/Dev",
+      port: 18790,
+      tailscaleHostname: undefined,
+    });
+  });
+
   test("returns null for missing devDir", () => {
     expect(parseConfig({ port: 18790 })).toBeNull();
   });

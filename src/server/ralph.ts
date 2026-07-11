@@ -9,11 +9,36 @@ import {
   unlinkSync,
 } from "node:fs";
 import { createLogger, errMsg } from "../log.js";
+import { isProcessAlive, isRalphProcessAlive } from "../shared/process-cleanup.js";
 import { join, normalize, isAbsolute } from "node:path";
 import { countTasksInContent, validatePlanFormat } from "../wolfpack-context.js";
-import { DEV_DIR } from "./tmux.js";
+import { DEV_DIR } from "./dev-dir.js";
+import {
+  collectAgentStatus,
+  collectAgentStatusSources,
+  statusStateFromRalphFlags,
+  type AgentStatusSource,
+} from "./agent-status.js";
+import {
+  detectAgentUiStatusFromManifests,
+  loadAgentUiDetectionManifests,
+  type LoadAgentUiDetectionManifestsOptions,
+  type AgentUiDetectionDiagnostics,
+} from "../agent-ui-detection-manifest.js";
 
 const log = createLogger("ralph");
+
+function agentUiManifestLoadOptions(): LoadAgentUiDetectionManifestsOptions {
+  const userManifestPaths = process.env.WOLFPACK_AGENT_UI_MANIFEST
+    ?.split(":")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const cachedManifestPath = process.env.WOLFPACK_AGENT_UI_MANIFEST_CACHE?.trim();
+  return {
+    userManifestPaths,
+    cachedManifestPath: cachedManifestPath || undefined,
+  };
+}
 
 /** Returns true if p is a safe relative path — no absolute paths, no .. traversal. */
 function isSafeRelativePath(p: string): boolean {
@@ -44,6 +69,9 @@ export interface RalphStatus {
   worktreeMode: string;
   worktreeBranch: string;
   sandbox: string;
+  statusSource: AgentStatusSource;
+  statusSources: AgentStatusSource[];
+  detectionManifest?: AgentUiDetectionDiagnostics;
 }
 
 export function listDevProjects(): string[] {
@@ -114,6 +142,17 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
     worktreeMode: "false",
     worktreeBranch: "",
     sandbox: "",
+    statusSource: {
+      state: "unknown",
+      authority: "identity",
+      freshness: "unknown",
+      source: "session-identity",
+      label: "identity only",
+      stale: false,
+      observedAt: new Date().toISOString(),
+      message: "status not collected yet",
+    },
+    statusSources: [],
   };
 
   try {
@@ -172,24 +211,30 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
       status.finished = finishedMatch[1].trim();
     }
 
-    // detect active: pid alive check
-    if (status.pid > 1) {
-      try {
-        process.kill(status.pid, 0);
-        status.active = true;
-        status.completed = false;
-        if (content.includes("=== 🥋 Wax Inspect —") && !content.includes("Wax Inspect complete") && !content.includes("Wax Inspect FAILED")) {
-          status.audit = true;
-        }
-        if (content.includes("=== 🥋 Wax Off —") && !content.includes("Wax Off complete") && !content.includes("Wax Off FAILED")) {
-          status.cleanup = true;
-        }
-      } catch { /* expected: process exited — mark inactive */
-        status.active = false;
-        const lockPath = join(projectDir, ".ralph.lock");
-        try { if (existsSync(lockPath)) unlinkSync(lockPath); } catch (e: unknown) {
-          log.warn("parseRalphLog: failed to remove stale lock", { error: e instanceof Error ? e.message : String(e) });
-        }
+    // detect active: PID-reuse-safe liveness via `ps -o command=` filter.
+    // `kill(pid, 0)` alone would report "active" for any unrelated process
+    // the kernel happened to assign the recycled PID to after the ralph
+    // worker reaped — leaving the UI showing a dead loop as live and the
+    // cancel button as a no-op (the cancel endpoint applies the same filter
+    // and would refuse to kill).
+    if (status.pid > 1 && isRalphProcessAlive(status.pid)) {
+      status.active = true;
+      status.completed = false;
+      if (content.includes("=== 🥋 Wax Inspect —") && !content.includes("Wax Inspect complete") && !content.includes("Wax Inspect FAILED")) {
+        status.audit = true;
+      }
+      if (content.includes("=== 🥋 Wax Off —") && !content.includes("Wax Off complete") && !content.includes("Wax Off FAILED")) {
+        status.cleanup = true;
+      }
+      if (!status.audit && !status.cleanup) {
+        const manifestMatch = detectAgentUiStatusFromManifests(
+          loadAgentUiDetectionManifests(agentUiManifestLoadOptions()),
+          "ralph",
+          content,
+        );
+        if (manifestMatch?.status === "audit") status.audit = true;
+        if (manifestMatch?.status === "cleanup") status.cleanup = true;
+        if (manifestMatch) status.detectionManifest = manifestMatch.diagnostics;
       }
     }
 
@@ -226,10 +271,33 @@ export function parseRalphLog(projectDir: string): RalphStatus | null {
       status.tasksDone = countProgressDone(join(progressBase, status.progressFile));
     }
 
+    const fallbackStatus = {
+      state: statusStateFromRalphFlags(status),
+      stale: false,
+    };
+    status.statusSource = collectAgentStatus(projectDir, fallbackStatus);
+    status.statusSources = collectAgentStatusSources(projectDir, fallbackStatus);
+
     return status;
   } catch (e: unknown) {
     log.warn("failed to parse ralph log", { dir: projectDir, error: errMsg(e) });
     return null;
+  }
+}
+
+/**
+ * Write-path stale-lock cleanup.
+ *
+ * Intentionally NOT called from parseRalphLog/read endpoints: callers decide
+ * when mutating the filesystem is appropriate.
+ */
+export function pruneStaleRalphLock(projectDir: string, pid: number): void {
+  if (pid <= 1 || isProcessAlive(pid)) return;
+  const lockPath = join(projectDir, ".ralph.lock");
+  try {
+    if (existsSync(lockPath)) unlinkSync(lockPath);
+  } catch (e: unknown) {
+    log.warn("pruneStaleRalphLock: failed to remove stale lock", { error: errMsg(e) });
   }
 }
 
